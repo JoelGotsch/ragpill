@@ -180,7 +180,7 @@ def _render_attribute_breakdown(eo: EvaluationOutput) -> str:
         block = [f"### `{attr_key}`", "", "| Value | Pass rate | n |", "|---|---|---|"]
         for value, accuracy in rows:
             n = counts.get(attr_key, {}).get(value, 0)
-            block.append(f"| `{value}` | {accuracy * 100:.0f}% | {n} |")
+            block.append(f"| `{value}` | {round(accuracy, 3) * 100:.1f}% | {n} |")
         sections.append("\n".join(block))
     if not sections:
         return ""
@@ -214,7 +214,7 @@ def _render_tag_breakdown(eo: EvaluationOutput) -> str:
     lines = ["## Pass rate by tag", "", "| Tag | Pass rate | n |", "|---|---|---|"]
     for tag, accuracy in rows:
         n = counts.get(tag, 0)
-        lines.append(f"| `{tag}` | {accuracy * 100:.0f}% | {n} |")
+        lines.append(f"| `{tag}` | {round(accuracy, 3) * 100:.1f}% | {n} |")
     return "\n".join(lines)
 
 

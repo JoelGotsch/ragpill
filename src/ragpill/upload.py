@@ -88,9 +88,9 @@ def _slug(name: str) -> str:
 
 
 def _log_accuracy_metrics(prefix: str, scores: dict[str, float]) -> None:
-    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``."""
+    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``, rounded to 3 decimals."""
     for name, value in scores.items():
-        mlflow.log_metric(f"{prefix}_{_slug(name)}", value)
+        mlflow.log_metric(f"{prefix}_{_slug(name)}", round(value, 3))
 
 
 def _log_table_and_metrics(

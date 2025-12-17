@@ -164,18 +164,15 @@ def test_per_attribute_accuracy_all_drops_attributes_with_no_usable_rows() -> No
     assert eo.per_attribute_accuracy_all() == {}
 
 
-def test_accuracy_values_are_rounded_to_three_decimals() -> None:
-    """Repeating decimals like 1/3 and 2/3 are rounded; not full-float precision."""
+def test_api_returns_full_float_precision() -> None:
+    """The Python API gives callers raw means — rounding lives at upload/triage."""
+    import math
+
     eo = _eo(
         [
-            # 1 of 3 passes -> 0.333... -> 0.333
             _case("c1", {"difficulty": "hard"}, [_run(0, {"e": _result("e", True)})]),
             _case("c2", {"difficulty": "hard"}, [_run(0, {"e": _result("e", False)})]),
             _case("c3", {"difficulty": "hard"}, [_run(0, {"e": _result("e", False)})]),
-            # 2 of 3 passes -> 0.666... -> 0.667
-            _case("c4", {"difficulty": "easy"}, [_run(0, {"e": _result("e", True)})]),
-            _case("c5", {"difficulty": "easy"}, [_run(0, {"e": _result("e", True)})]),
-            _case("c6", {"difficulty": "easy"}, [_run(0, {"e": _result("e", False)})]),
         ]
     )
-    assert eo.per_attribute_accuracy("difficulty") == {"hard": 0.333, "easy": 0.667}
+    assert math.isclose(eo.per_attribute_accuracy("difficulty")["hard"], 1 / 3)

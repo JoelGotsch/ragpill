@@ -206,10 +206,10 @@ def test_tag_breakdown_section_appears_when_runs_have_tags():
     eo = EvaluationOutput(runs=runs_df, cases=pd.DataFrame(), case_results=[failing])
     out = render_evaluation_output_as_triage(eo)
     assert "## Pass rate by tag" in out
-    # Worst tag (flaky, 33%) listed before baseline (100%).
+    # Worst tag (flaky, 33.3%) listed before baseline (100.0%).
     assert out.index("`flaky`") < out.index("`baseline`")
-    assert "33%" in out
-    assert "100%" in out
+    assert "33.3%" in out
+    assert "100.0%" in out
 
 
 def test_attribute_breakdown_renders_per_attribute_section():
@@ -237,10 +237,10 @@ def test_attribute_breakdown_renders_per_attribute_section():
     out = render_evaluation_output_as_triage(_eval_output(cases))
     assert "## Pass rate by attribute" in out
     assert "### `difficulty`" in out
-    # hard (50%) sorts before easy (100%) — worst first
+    # hard (50.0%) sorts before easy (100.0%) — worst first
     assert out.index("`hard`") < out.index("`easy`")
-    assert "50%" in out
-    assert "100%" in out
+    assert "50.0%" in out
+    assert "100.0%" in out
 
 
 def test_attribute_breakdown_skips_single_value_attributes():

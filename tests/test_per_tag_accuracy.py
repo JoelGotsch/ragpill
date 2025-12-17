@@ -112,16 +112,15 @@ def test_return_type_is_plain_dict_with_python_floats():
     assert isinstance(value, float)
 
 
-def test_accuracy_values_are_rounded_to_three_decimals():
-    """Repeating decimals like 1/3 are rounded; not full-float precision."""
+def test_api_returns_full_float_precision():
+    """The Python API gives callers raw means — rounding lives at upload/triage."""
+    import math
+
     eo = _eval_output(
         [
             {"tags": {"alpha"}, "evaluator_result": True},
             {"tags": {"alpha"}, "evaluator_result": False},
-            {"tags": {"alpha"}, "evaluator_result": False},  # 1/3 -> 0.333
-            {"tags": {"beta"}, "evaluator_result": True},
-            {"tags": {"beta"}, "evaluator_result": True},
-            {"tags": {"beta"}, "evaluator_result": False},  # 2/3 -> 0.667
+            {"tags": {"alpha"}, "evaluator_result": False},  # 1/3 -> 0.333...
         ]
     )
-    assert eo.per_tag_accuracy() == {"alpha": 0.333, "beta": 0.667}
+    assert math.isclose(eo.per_tag_accuracy()["alpha"], 1 / 3)

@@ -119,6 +119,55 @@ def test_upload_ends_run_even_on_exception(mlflow_mock):
     assert mlflow_mock.end_run.called
 
 
+def test_upload_rounds_accuracy_metrics_to_three_decimals(mlflow_mock):
+    """Per-tag and per-attribute accuracies upload as 3-decimal-rounded floats."""
+    # Two cases tagged "alpha" — one pass, two fail — and the same attribute split.
+    base = _make_evaluation_output()
+    rr_fail = RunResult(
+        run_index=0,
+        input_key="k_1",
+        run_span_id="",
+        output="out",
+        duration=0.1,
+        assertions={"e1": _make_assertion("e1", False)},
+    )
+    rr_pass = base.case_results[0].run_results[0]
+    cases = [
+        CaseResult(
+            case_name=f"c{i}",
+            inputs="i",
+            metadata=TestCaseMetadata(tags={"alpha"}, attributes={"difficulty": "hard"}),
+            base_input_key=f"k{i}",
+            trace_id="",
+            run_results=[rr_pass if i == 0 else rr_fail],
+            aggregated=AggregatedResult(
+                passed=(i == 0),
+                pass_rate=1.0 if i == 0 else 0.0,
+                threshold=1.0,
+                summary="x",
+                per_evaluator_pass_rates={"e1": 1.0 if i == 0 else 0.0},
+            ),
+        )
+        for i in range(3)
+    ]
+    runs_df = pd.DataFrame(
+        [
+            {"inputs": "i", "output": "out", "evaluator_result": True, "tags": {"alpha"}, "evaluator_name": "e1"},
+            {"inputs": "i", "output": "out", "evaluator_result": False, "tags": {"alpha"}, "evaluator_name": "e1"},
+            {"inputs": "i", "output": "out", "evaluator_result": False, "tags": {"alpha"}, "evaluator_name": "e1"},
+        ]
+    )
+    evaluation = EvaluationOutput(runs=runs_df, cases=pd.DataFrame(), case_results=cases, dataset_run=base.dataset_run)
+
+    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+
+    metric_calls = {args[0]: args[1] for args, _kw in (c for c in mlflow_mock.log_metric.call_args_list)}
+    # 1/3 = 0.3333... → 0.333. The float carries no further precision.
+    assert metric_calls["accuracy_tag_alpha"] == 0.333
+    assert metric_calls["accuracy_attr_difficulty_hard"] == 0.333
+    assert metric_calls["overall_accuracy"] == 0.333
+
+
 def test_upload_logs_assessment_when_trace_id_set(mlflow_mock):
     evaluation = _make_evaluation_output()
     # Give the case a real trace_id so assessment logging fires
