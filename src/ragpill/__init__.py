@@ -1,4 +1,6 @@
+from ragpill.backends import CaptureSpanKind, configure_backend, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata, TestCaseMetadata
+from ragpill.csv.testset import default_evaluator_classes, load_testset
 from ragpill.eval_types import (
     Case,
     Dataset,
@@ -19,15 +21,16 @@ from ragpill.evaluators import (
 )
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput, execute_dataset
 from ragpill.llm_judge import GradingOutput, judge_input_output, judge_output
-from ragpill.mlflow_helper import evaluate_testset_with_mlflow
-from ragpill.settings import LLMJudgeSettings, configure_llm_judge, get_llm_judge_settings
+from ragpill.mlflow_helper import evaluate_testset
+from ragpill.settings import LLMJudgeSettings, TrackingSettings, configure_llm_judge, get_llm_judge_settings
+from ragpill.trace import Trace
 from ragpill.types import AggregatedResult, CaseResult, EvaluationOutput, RunResult
-from ragpill.upload import upload_to_mlflow
-from ragpill.utils import merge_settings
+from ragpill.upload import upload_results
 
 __all__ = [
     "AggregatedResult",
     "BaseEvaluator",
+    "CaptureSpanKind",
     "Case",
     "CaseResult",
     "CaseRunOutput",
@@ -50,14 +53,19 @@ __all__ = [
     "RunResult",
     "TaskRunOutput",
     "TestCaseMetadata",
+    "Trace",
     "TraceUnavailableError",
+    "TrackingSettings",
+    "configure_backend",
     "configure_llm_judge",
+    "default_evaluator_classes",
     "evaluate_results",
-    "evaluate_testset_with_mlflow",
+    "evaluate_testset",
     "execute_dataset",
+    "get_backend",
     "get_llm_judge_settings",
     "judge_input_output",
     "judge_output",
-    "merge_settings",
-    "upload_to_mlflow",
+    "load_testset",
+    "upload_results",
 ]

@@ -2,13 +2,13 @@
 
 import pytest
 
-from ragpill.mlflow_helper import evaluate_testset_with_mlflow
+from ragpill.mlflow_helper import evaluate_testset
 
 
 @pytest.mark.anyio
 async def test_both_task_and_factory_raises():
     with pytest.raises(ValueError, match="not both"):
-        await evaluate_testset_with_mlflow(
+        await evaluate_testset(
             testset=None,  # type: ignore[arg-type]
             task=lambda x: x,
             task_factory=lambda: lambda x: x,
@@ -18,7 +18,7 @@ async def test_both_task_and_factory_raises():
 @pytest.mark.anyio
 async def test_neither_task_nor_factory_raises():
     with pytest.raises(ValueError, match="Provide either"):
-        await evaluate_testset_with_mlflow(
+        await evaluate_testset(
             testset=None,  # type: ignore[arg-type]
             task=None,
             task_factory=None,

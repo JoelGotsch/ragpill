@@ -6,9 +6,51 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–2 of the review follow-up: correctness blockers that could produce a
-silent wrong answer, plus honest failure attribution. No public API renames yet
-(those land in a later phase).
+Phases 1–3 of the review follow-up: correctness blockers, honest failure
+attribution, and a backend-neutral API clean break. Backwards compatibility is
+a non-goal pre-1.0, so the renames below have no deprecated aliases.
+
+### Breaking
+
+- **`MLFlowSettings` → `TrackingSettings`**, with the env prefix changed from
+  the double-prefixed `MLFLOW_RAGPILL_*` to `RAGPILL_*` and the redundant
+  `ragpill_` field-name prefix dropped: `tracking_uri`, `experiment_name`,
+  `run_description`, `repeat`, `threshold`, `trace_fetch_timeout_s`,
+  `trace_fetch_poll_interval_s` (env `RAGPILL_TRACKING_URI`, `RAGPILL_REPEAT`, …).
+- **`tracking_uri` now defaults to `None`** (a private temp SQLite store /
+  zero-server capture) instead of a silent `http://localhost:5000`. The
+  dead `tracking_username` / `tracking_password` fields are removed — set
+  `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` in the environment,
+  which mlflow reads directly.
+- **`upload_to_mlflow` → `upload_results`**; **`evaluate_testset_with_mlflow` →
+  `evaluate_testset`**; **`execute_dataset(mlflow_tracking_uri=…)` →
+  `tracking_uri=`**; the `upload_results` / `evaluate_testset` settings param is
+  now `settings`. `evaluate_testset` requires a `tracking_uri` (it uploads to a
+  server) and raises a clear error when none is set — use
+  `execute_dataset` + `evaluate_results` for a zero-server run.
+- **Write-side `ragpill.backends.SpanKind` → `CaptureSpanKind`** (the
+  ingest-side `ragpill.trace.SpanKind` keeps its name), removing the same-name
+  collision between the two enums.
+- **Keyword-only booleans**: `execute_dataset`'s `settings` / `tracking_uri` /
+  `capture_traces` and `upload_results`'s `model_params` / `upload_traces` are
+  now keyword-only.
+- **Curated public exports**: `load_testset`, `default_evaluator_classes`,
+  `configure_backend`, `get_backend`, `Trace`, `TrackingSettings`, and
+  `CaptureSpanKind` are now exported from `ragpill`; the backend adapter classes
+  are exported lazily from `ragpill.backends`. `merge_settings` was removed from
+  the top-level export (still importable from `ragpill.utils`).
+
+### Changed
+
+- **`LLMJudgeSettings` honors its documented defaults.** `base_url` and
+  `api_key` are genuinely optional now: when unset, the OpenAI client resolves
+  them from `OPENAI_BASE_URL` / `OPENAI_API_KEY`, and only a fully-missing API
+  key fails — matching the field descriptions instead of pre-raising when all
+  three of api_key/base_url/model_name weren't set.
+- **`.env` files are loaded.** All settings classes set `env_file=".env"`, so
+  the documented dotenv workflow works.
+- **Trace-adapter entry-point discovery is cached** (`functools.cache`), so
+  `parse_otel` no longer re-scans installed distributions once per span.
 
 ### Fixed
 

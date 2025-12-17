@@ -20,10 +20,10 @@ import pytest
 from ragpill.backends import (
     Assessment,
     Backend,
+    CaptureSpanKind as SpanKind,
     LifecycleBackend,
     ResultsBackend,
     RunHandle,
-    SpanKind,
     TraceCaptureBackend,
     TraceQueryBackend,
     configure_backend,

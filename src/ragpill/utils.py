@@ -407,7 +407,7 @@ def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, An
 
     Each settings object's fields are flattened and prefixed with the given string,
     producing a dict suitable for passing as ``model_params`` to
-    [`evaluate_testset_with_mlflow`][ragpill.mlflow_helper.evaluate_testset_with_mlflow].
+    [`evaluate_testset`][ragpill.mlflow_helper.evaluate_testset].
 
     Args:
         settings_prefixes: Sequence of ``(settings_object, prefix)`` tuples. Each
@@ -422,7 +422,7 @@ def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, An
         from ragpill import merge_settings
 
         params = merge_settings([
-            (mlflow_settings, "mlflow"),
+            (settings, "mlflow"),
             (agent_settings, "agent"),
             (llm_settings, "llm"),
         ])
@@ -438,8 +438,8 @@ def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> Non
 
 
 def _get_pydantic_ai_llm_model(  # pyright: ignore[reportUnusedFunction]
-    base_url: str,
-    api_key: str,
+    base_url: str | None,
+    api_key: str | None,
     model_name: str,
     temperature: float = 0.0,
     ssl_ca_cert: str | None = None,

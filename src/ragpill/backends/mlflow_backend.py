@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from ragpill.trace import Trace as NeutralTrace
 
 from ragpill.backends._common import poll_for_trace
-from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
+from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 # MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
 # other backends have their own rules, so the slugging lives here, not in the
@@ -49,15 +49,15 @@ def _is_not_found(exc: Any) -> bool:
     return False
 
 
-_SPAN_KIND_TO_MLFLOW: dict[SpanKind, str] = {
-    SpanKind.AGENT: SpanType.AGENT,
-    SpanKind.CHAT_MODEL: SpanType.CHAT_MODEL,
-    SpanKind.LLM: SpanType.LLM,
-    SpanKind.RERANKER: SpanType.RERANKER,
-    SpanKind.RETRIEVER: SpanType.RETRIEVER,
-    SpanKind.TASK: SpanType.TASK,
-    SpanKind.TOOL: SpanType.TOOL,
-    SpanKind.UNKNOWN: SpanType.UNKNOWN,
+_SPAN_KIND_TO_MLFLOW: dict[CaptureSpanKind, str] = {
+    CaptureSpanKind.AGENT: SpanType.AGENT,
+    CaptureSpanKind.CHAT_MODEL: SpanType.CHAT_MODEL,
+    CaptureSpanKind.LLM: SpanType.LLM,
+    CaptureSpanKind.RERANKER: SpanType.RERANKER,
+    CaptureSpanKind.RETRIEVER: SpanType.RETRIEVER,
+    CaptureSpanKind.TASK: SpanType.TASK,
+    CaptureSpanKind.TOOL: SpanType.TOOL,
+    CaptureSpanKind.UNKNOWN: SpanType.UNKNOWN,
 }
 
 
@@ -121,7 +121,7 @@ class MLflowBackend:
     def start_span(
         self,
         name: str,
-        span_type: SpanKind,
+        span_type: CaptureSpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         inner = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])

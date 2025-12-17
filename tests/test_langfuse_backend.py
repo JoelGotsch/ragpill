@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from ragpill.backends import Backend, SpanKind as WriteSpanKind
+from ragpill.backends import Backend, CaptureSpanKind as WriteSpanKind
 from ragpill.backends._types import Assessment
 from ragpill.backends.langfuse_backend import LangfuseBackend
 from ragpill.trace import SpanKind  # ingest-side kind span.kind carries
@@ -213,7 +213,7 @@ async def test_langfuse_end_to_end_capture_and_fetch():
             ds,
             task=echo,
             capture_traces=True,
-            mlflow_tracking_uri=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+            tracking_uri=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
         )
         tr = out.cases[0].task_runs[0]
         assert tr.output == "echo:hello"

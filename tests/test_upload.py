@@ -1,4 +1,4 @@
-"""Unit tests for ``ragpill.upload.upload_to_mlflow`` with mocked MLflow."""
+"""Unit tests for ``ragpill.upload.upload_results`` with mocked MLflow."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import pytest
 from ragpill.base import TestCaseMetadata
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.execution import DatasetRunOutput
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.types import AggregatedResult, CaseResult, EvaluationOutput, RunResult
-from ragpill.upload import upload_to_mlflow
+from ragpill.upload import upload_results
 
 
 def _make_assertion(name: str, value: bool) -> EvaluationResult:
@@ -68,16 +68,16 @@ def _make_evaluation_output() -> EvaluationOutput:
     )
 
 
-def _settings() -> MLFlowSettings:
-    return MLFlowSettings(
-        ragpill_tracking_uri="http://fake",
-        ragpill_experiment_name="fake-exp",
+def _settings() -> TrackingSettings:
+    return TrackingSettings(
+        tracking_uri="http://fake",
+        experiment_name="fake-exp",
     )
 
 
 @pytest.fixture
 def mlflow_mock():
-    """Inject a fully-mocked Backend so upload_to_mlflow never touches a real backend.
+    """Inject a fully-mocked Backend so upload_results never touches a real backend.
 
     The fixture pretends a run is active until ``end_run`` is called once, so
     the upload's ``finally`` block can call ``end_run`` exactly once.
@@ -112,7 +112,7 @@ def mlflow_mock():
 
 def test_upload_calls_log_table(mlflow_mock):
     evaluation = _make_evaluation_output()
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_table.called
     args, _kwargs = mlflow_mock.log_table.call_args
     assert args[1] == "evaluation_results.json"
@@ -120,7 +120,7 @@ def test_upload_calls_log_table(mlflow_mock):
 
 def test_upload_reattaches_existing_run(mlflow_mock):
     evaluation = _make_evaluation_output()
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.start_run.called
     _, kwargs = mlflow_mock.start_run.call_args
     assert kwargs.get("run_id") == "fake-run"
@@ -128,7 +128,7 @@ def test_upload_reattaches_existing_run(mlflow_mock):
 
 def test_upload_ends_run_in_finally(mlflow_mock):
     evaluation = _make_evaluation_output()
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.end_run.called
 
 
@@ -136,14 +136,14 @@ def test_upload_ends_run_even_on_exception(mlflow_mock):
     evaluation = _make_evaluation_output()
     mlflow_mock.log_table.side_effect = RuntimeError("boom")
     with pytest.raises(RuntimeError):
-        upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+        upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.end_run.called
 
 
 def test_upload_logs_assessment_when_trace_id_set(mlflow_mock):
     evaluation = _make_evaluation_output()
     evaluation.case_results[0].trace_id = "trace-1"
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_assessment.called
     args, _kwargs = mlflow_mock.log_assessment.call_args
     # First positional arg is the trace id.
@@ -152,13 +152,13 @@ def test_upload_logs_assessment_when_trace_id_set(mlflow_mock):
 
 def test_upload_skips_assessments_when_trace_id_empty(mlflow_mock):
     evaluation = _make_evaluation_output()
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert not mlflow_mock.log_assessment.called
 
 
 def test_upload_traces_writes_artifact(mlflow_mock):
     evaluation = _make_evaluation_output()
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=True)
+    upload_results(evaluation, settings=_settings(), upload_traces=True)
     assert mlflow_mock.log_artifact.called
     _args, kwargs = mlflow_mock.log_artifact.call_args
     assert kwargs.get("artifact_path") == "ragpill_traces"
@@ -167,7 +167,7 @@ def test_upload_traces_writes_artifact(mlflow_mock):
 def test_upload_without_dataset_run_still_works(mlflow_mock):
     evaluation = _make_evaluation_output()
     evaluation.dataset_run = None
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_table.called
     _, kwargs = mlflow_mock.start_run.call_args
     assert "run_id" not in kwargs
@@ -182,7 +182,7 @@ def test_upload_logs_assessments_to_per_run_traces_in_session_mode(mlflow_mock):
     cr.run_results[0].trace_id = "run-trace-1"
     cr.metadata = TestCaseMetadata(attributes={"team": "a"}, tags={"t1"})
 
-    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+    upload_results(evaluation, settings=_settings(), upload_traces=False)
 
     assert mlflow_mock.log_assessment.called
     args, _kwargs = mlflow_mock.log_assessment.call_args

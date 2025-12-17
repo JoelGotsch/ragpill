@@ -105,7 +105,7 @@ async def test_explicit_uri_traces_to_that_uri():
             ds,
             task=_echo_task,
             capture_traces=True,
-            mlflow_tracking_uri=server_uri,
+            tracking_uri=server_uri,
         )
         assert run_output.tracking_uri == server_uri
 
@@ -167,7 +167,7 @@ async def test_repeats_share_mlflow_session_id():
             ds,
             task=_echo_task,
             capture_traces=True,
-            mlflow_tracking_uri=server_uri,
+            tracking_uri=server_uri,
         )
         runs = run_output.cases[0].task_runs
         assert len(runs) == 3

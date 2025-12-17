@@ -114,7 +114,7 @@ class CaseResult:
 
 @dataclass
 class EvaluationOutput:
-    """Top-level output returned by ``evaluate_testset_with_mlflow``.
+    """Top-level output returned by ``evaluate_testset``.
 
     Provides three views of the evaluation data:
     - ``.runs``: One row per (run x evaluator) — the most granular view.

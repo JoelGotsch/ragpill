@@ -165,14 +165,14 @@ def test_setup_local_tracing_passes_none_uri_to_remote_backends():
 
     from ragpill.backends import RunHandle
     from ragpill.execution import _setup_tracing
-    from ragpill.settings import MLFlowSettings
+    from ragpill.settings import TrackingSettings
 
     backend = MagicMock()
     backend.supports_local_file_store = False
     backend.get_tracking_uri.return_value = None
     backend.start_run.return_value = RunHandle(run_id="r", experiment_id="e")
     with patch("ragpill.execution.get_backend", return_value=backend):
-        ctx = _setup_tracing(None, MLFlowSettings())
+        ctx = _setup_tracing(None, TrackingSettings())
     (uri, _experiment), _ = backend.set_destination.call_args
     assert uri is None
     assert ctx.temp_dir is None
@@ -183,14 +183,14 @@ def test_setup_local_tracing_builds_temp_sqlite_for_file_store_backends():
 
     from ragpill.backends import RunHandle
     from ragpill.execution import _setup_tracing, _teardown_tracing
-    from ragpill.settings import MLFlowSettings
+    from ragpill.settings import TrackingSettings
 
     backend = MagicMock()
     backend.supports_local_file_store = True
     backend.get_tracking_uri.return_value = None
     backend.start_run.return_value = RunHandle(run_id="r", experiment_id="e")
     with patch("ragpill.execution.get_backend", return_value=backend):
-        ctx = _setup_tracing(None, MLFlowSettings())
+        ctx = _setup_tracing(None, TrackingSettings())
         (uri, _experiment), _ = backend.set_destination.call_args
         assert uri is not None and uri.startswith("sqlite:///")
         assert ctx.temp_dir is not None

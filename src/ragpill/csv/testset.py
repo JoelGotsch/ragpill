@@ -248,7 +248,7 @@ def _create_case_from_rows(
     _remove_common_metadata_from_evaluators(evaluators, case_tags, case_attributes)
 
     # Extract repeat/threshold (must be consistent across rows for same question)
-    # Use None when absent — resolve_repeat() will apply global defaults from MLFlowSettings
+    # Use None when absent — resolve_repeat() will apply global defaults from TrackingSettings
     repeat_values: set[int | None] = set()
     threshold_values: set[float | None] = set()
     for row in rows:

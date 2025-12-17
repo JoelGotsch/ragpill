@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Literal
 
 
-class SpanKind(StrEnum):
+class CaptureSpanKind(StrEnum):
     """Subset of OpenTelemetry / OpenInference span kinds ragpill actually uses.
 
     Each adapter maps these to its backend-native enum (e.g. MLflow's

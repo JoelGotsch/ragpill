@@ -8,16 +8,16 @@ The execute layer is one of three independent layers in ragpill's pipeline:
    :class:`DatasetRunOutput` and a :class:`ragpill.eval_types.Dataset` of
    evaluators and returns an :class:`ragpill.types.EvaluationOutput`.
 3. **Upload** — in :mod:`ragpill.upload` (Phase 3). Persists evaluation
-   results to an MLflow server.
+   results to the configured tracking backend.
 
-This module is intentionally dependency-light on MLflow: it sets the tracking
-URI it is told to use and restores the previous URI when finished. It supports
-two tracing backends:
+This module is backend-agnostic: it drives whichever backend is registered via
+:func:`ragpill.backends.get_backend` (MLflow by default). Two capture modes:
 
-- **Local temp SQLite** (default) when ``mlflow_tracking_uri`` is ``None``. The
-  temp database is deleted when execution completes.
-- **Direct server tracing** when an explicit URI is provided — traces are
-  written directly to that server and can later be uploaded by layer 3.
+- **Local temp store** (default) when ``tracking_uri`` is ``None``. For a
+  file-store backend (MLflow) a private temp SQLite database is used and
+  deleted when execution completes — a zero-server capture path.
+- **Direct server tracing** when an explicit ``tracking_uri`` is provided —
+  traces go straight to that destination and can later be uploaded by layer 3.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ragpill.backends import SpanKind, get_backend
+from ragpill.backends import CaptureSpanKind, get_backend
 from ragpill.base import (
     CaseMetadataT,
     TestCaseMetadata,
@@ -42,7 +42,7 @@ from ragpill.base import (
     resolve_repeat,
 )
 from ragpill.eval_types import Case, Dataset
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.trace import filter_to_subtree, trace_from_dict, trace_to_dict
 from ragpill.utils import _fix_evaluator_global_flag  # pyright: ignore[reportPrivateUsage]
 
@@ -328,7 +328,7 @@ class _TracingContext:
     trace_fetch_poll_interval_s: float  # interval between readiness polls
 
 
-def _setup_tracing(uri: str | None, settings: MLFlowSettings) -> _TracingContext:
+def _setup_tracing(uri: str | None, settings: TrackingSettings) -> _TracingContext:
     """Configure the tracing destination and open a run.
 
     With an explicit ``uri``, traces go straight to that server. Without one,
@@ -348,17 +348,17 @@ def _setup_tracing(uri: str | None, settings: MLFlowSettings) -> _TracingContext
         artifacts_path = os.path.join(temp_dir, "mlartifacts")
         os.makedirs(artifacts_path, exist_ok=True)
         uri = f"sqlite:///{db_path}"
-    backend.set_destination(uri, settings.ragpill_experiment_name)
+    backend.set_destination(uri, settings.experiment_name)
     backend.autolog_pydantic_ai()
-    handle = backend.start_run(description=settings.ragpill_run_description)
+    handle = backend.start_run(description=settings.run_description)
     return _TracingContext(
         tracking_uri=uri or "",
         experiment_id=handle.experiment_id,
         run_id=handle.run_id,
         previous_uri=previous_uri,
         temp_dir=temp_dir,
-        trace_fetch_timeout_s=settings.ragpill_trace_fetch_timeout_s,
-        trace_fetch_poll_interval_s=settings.ragpill_trace_fetch_poll_interval_s,
+        trace_fetch_timeout_s=settings.trace_fetch_timeout_s,
+        trace_fetch_poll_interval_s=settings.trace_fetch_poll_interval_s,
     )
 
 
@@ -541,7 +541,7 @@ async def _execute_single_run(
 
     if capture_traces:
         try:
-            with get_backend().start_span(name=f"run-{run_index}", span_type=SpanKind.TASK) as run_span:
+            with get_backend().start_span(name=f"run-{run_index}", span_type=CaptureSpanKind.TASK) as run_span:
                 run_span_id = run_span.span_id
                 trace_id = run_span.trace_id
                 run_span.set_attribute("run_index", run_index)
@@ -588,8 +588,9 @@ async def execute_dataset(
     testset: Dataset[Any, Any, CaseMetadataT],
     task: TaskType | None = None,
     task_factory: Callable[[], TaskType] | None = None,
-    settings: MLFlowSettings | None = None,
-    mlflow_tracking_uri: str | None = None,
+    *,
+    settings: TrackingSettings | None = None,
+    tracking_uri: str | None = None,
     capture_traces: bool = True,
 ) -> DatasetRunOutput:
     """Run every case in a dataset and return the captured outputs + traces.
@@ -598,7 +599,7 @@ async def execute_dataset(
     cases are not invoked. That is the Phase 2 evaluator's job. What happens
     here is task execution and trace capture.
 
-    Tracing backends (selected by ``mlflow_tracking_uri``):
+    Tracing backends (selected by ``tracking_uri``):
 
     - ``None`` — use a private temp SQLite database. The database is removed
       after the call, but captured ``Trace`` objects are copied into the
@@ -611,9 +612,9 @@ async def execute_dataset(
         task_factory: A zero-arg callable that returns a fresh task instance
             per run (use for stateful tasks). Mutually exclusive with ``task``.
         settings: MLflow settings; falls back to environment variables.
-        mlflow_tracking_uri: Override the tracking URI. When ``None``, a
+        tracking_uri: Override the tracking URI. When ``None``, a
             temp SQLite backend is spun up and torn down.
-        capture_traces: When ``False``, tasks are run without MLflow spans;
+        capture_traces: When ``False``, tasks are run without capturing spans;
             all ``Trace`` fields in the result will be ``None`` and
             ``run_span_id`` will be empty. Use for fast non-traced runs.
 
@@ -657,13 +658,13 @@ async def execute_dataset(
         assert task_factory is not None
         _factory = task_factory
 
-    _settings = settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
+    _settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
     _fix_evaluator_global_flag(testset)
 
     tracing: _TracingContext | None = None
     try:
         if capture_traces:
-            tracing = _setup_tracing(mlflow_tracking_uri or None, _settings)
+            tracing = _setup_tracing(tracking_uri or None, _settings)
 
         case_outputs: list[CaseRunOutput] = []
         for case in testset.cases:

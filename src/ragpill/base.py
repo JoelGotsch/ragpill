@@ -15,7 +15,7 @@ from ragpill.eval_types import (
 )
 
 if TYPE_CHECKING:
-    from ragpill.settings import MLFlowSettings
+    from ragpill.settings import TrackingSettings
 
 
 def default_input_to_key(input: Any) -> str:
@@ -52,13 +52,13 @@ class TestCaseMetadata(BaseModel):
     repeat: int | None = Field(
         default=None,
         ge=1,
-        description="Per-case override: number of times to run this test case. None defers to MLFlowSettings.ragpill_repeat.",
+        description="Per-case override: number of times to run this test case. None defers to TrackingSettings.repeat.",
     )
     threshold: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Per-case override: minimum fraction of runs that must pass. None defers to MLFlowSettings.ragpill_threshold.",
+        description="Per-case override: minimum fraction of runs that must pass. None defers to TrackingSettings.threshold.",
     )
 
 
@@ -352,20 +352,18 @@ class BaseEvaluator:
         return eval_result
 
 
-def resolve_repeat(case_metadata: TestCaseMetadata | None, settings: MLFlowSettings) -> tuple[int, float]:
+def resolve_repeat(case_metadata: TestCaseMetadata | None, settings: TrackingSettings) -> tuple[int, float]:
     """Resolve effective repeat count and pass threshold from per-case override or global default.
 
     Args:
         case_metadata: Per-case metadata (may be None or have None fields).
-        settings: Global MLFlowSettings providing default repeat/threshold.
+        settings: Global TrackingSettings providing default repeat/threshold.
 
     Returns:
         Tuple of (repeat, threshold) with per-case values taking precedence over globals.
     """
-    repeat = case_metadata.repeat if (case_metadata and case_metadata.repeat is not None) else settings.ragpill_repeat
+    repeat = case_metadata.repeat if (case_metadata and case_metadata.repeat is not None) else settings.repeat
     threshold = (
-        case_metadata.threshold
-        if (case_metadata and case_metadata.threshold is not None)
-        else settings.ragpill_threshold
+        case_metadata.threshold if (case_metadata and case_metadata.threshold is not None) else settings.threshold
     )
     return repeat, threshold

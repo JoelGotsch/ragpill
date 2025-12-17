@@ -36,9 +36,9 @@ from ragpill.evaluators import (
     RegexInSourcesEvaluator,
 )
 from ragpill.execution import DatasetRunOutput, execute_dataset
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.types import EvaluationOutput
-from ragpill.upload import upload_to_mlflow
+from ragpill.upload import upload_results
 
 pytestmark = [
     pytest.mark.anyio(backends=["asyncio"]),
@@ -233,12 +233,12 @@ async def test_pipeline_all_bells_end_to_end():
         )
         testset = Dataset[str, str, TestCaseMetadata](cases=[geo_case, culture_case], evaluators=[judge])
 
-        settings = MLFlowSettings(
-            ragpill_tracking_uri=server_uri,
-            ragpill_experiment_name=experiment,
+        settings = TrackingSettings(
+            tracking_uri=server_uri,
+            experiment_name=experiment,
         )
         run_output = await execute_dataset(
-            testset, task=rag_task, capture_traces=True, mlflow_tracking_uri=server_uri, settings=settings
+            testset, task=rag_task, capture_traces=True, tracking_uri=server_uri, settings=settings
         )
 
         # Execution captured a run + per-repeat traces with the retriever span inside.
@@ -265,7 +265,7 @@ async def test_pipeline_all_bells_end_to_end():
         # Per-attribute accuracy discovered the difficulty attribute.
         assert set(evaluation.per_attribute_accuracy("difficulty")) == {"easy", "hard"}
 
-        upload_to_mlflow(evaluation, mlflow_settings=settings, model_params={"model": "test"}, upload_traces=True)
+        upload_results(evaluation, settings=settings, model_params={"model": "test"}, upload_traces=True)
 
         # --- server-side assertions -----------------------------------------
         from mlflow import MlflowClient

@@ -27,7 +27,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
 from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
-from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
+from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -40,16 +40,16 @@ _INSTALL_HINT = (
     "in the same environment — see plans/phoenix-backend-findings.md)."
 )
 
-# ragpill write-side SpanKind -> OpenInference span.kind string.
-_SPAN_KIND_TO_OI: dict[SpanKind, str] = {
-    SpanKind.AGENT: "AGENT",
-    SpanKind.CHAT_MODEL: "LLM",
-    SpanKind.LLM: "LLM",
-    SpanKind.RERANKER: "RERANKER",
-    SpanKind.RETRIEVER: "RETRIEVER",
-    SpanKind.TASK: "CHAIN",
-    SpanKind.TOOL: "TOOL",
-    SpanKind.UNKNOWN: "UNKNOWN",
+# ragpill write-side CaptureSpanKind -> OpenInference span.kind string.
+_SPAN_KIND_TO_OI: dict[CaptureSpanKind, str] = {
+    CaptureSpanKind.AGENT: "AGENT",
+    CaptureSpanKind.CHAT_MODEL: "LLM",
+    CaptureSpanKind.LLM: "LLM",
+    CaptureSpanKind.RERANKER: "RERANKER",
+    CaptureSpanKind.RETRIEVER: "RETRIEVER",
+    CaptureSpanKind.TASK: "CHAIN",
+    CaptureSpanKind.TOOL: "TOOL",
+    CaptureSpanKind.UNKNOWN: "UNKNOWN",
 }
 
 
@@ -150,7 +150,7 @@ class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
     def start_span(
         self,
         name: str,
-        span_type: SpanKind,
+        span_type: CaptureSpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         _require_phoenix()

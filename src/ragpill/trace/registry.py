@@ -14,6 +14,7 @@ Phase 4 and simply insert into this list.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
 from ragpill.trace.adapters._base import SpanAdapter
@@ -54,9 +55,23 @@ def _discover_entry_point_adapters() -> list[type[SpanAdapter]]:
     return found
 
 
+@cache
+def _entry_point_adapters_cached() -> tuple[type[SpanAdapter], ...]:
+    # Entry-point discovery scans installed distributions — expensive to repeat.
+    # parse_otel calls select_adapter once per span, so without caching a
+    # 500-span trace triggers 500 importlib scans. The plugin set is fixed for
+    # the process; clear_adapter_cache() resets it for tests.
+    return tuple(_discover_entry_point_adapters())
+
+
+def clear_adapter_cache() -> None:
+    """Drop the cached entry-point adapter discovery (tests register plugins)."""
+    _entry_point_adapters_cached.cache_clear()
+
+
 def adapters_in_priority_order() -> list[type[SpanAdapter]]:
     """Return built-in adapters (priority order) followed by any plugins."""
-    return [*_BUILTIN_PRIORITY, *_discover_entry_point_adapters()]
+    return [*_BUILTIN_PRIORITY, *_entry_point_adapters_cached()]
 
 
 def adapter_by_name(name: str) -> type[SpanAdapter] | None:

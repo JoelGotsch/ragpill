@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import pandas as pd
 
-from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
+from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 if TYPE_CHECKING:
     from ragpill.trace import Trace as NeutralTrace
@@ -92,7 +92,7 @@ class TraceCaptureBackend(Protocol):
     def start_span(
         self,
         name: str,
-        span_type: SpanKind,
+        span_type: CaptureSpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[SpanHandle]:
         """Return a context manager yielding a :class:`SpanHandle`.

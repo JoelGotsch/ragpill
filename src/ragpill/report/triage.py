@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from ragpill.backends import SpanKind
+from ragpill.backends import CaptureSpanKind
 from ragpill.report._text import render_value, truncate
 from ragpill.report._trace import render_spans
 
@@ -23,12 +23,12 @@ if TYPE_CHECKING:
 
 # Span types we surface in the "Relevant spans" subsection of a failing run.
 DEFAULT_TRIAGE_SPAN_TYPES: tuple[str, ...] = (
-    str(SpanKind.RETRIEVER),
-    str(SpanKind.TOOL),
-    str(SpanKind.LLM),
-    str(SpanKind.RERANKER),
-    str(SpanKind.CHAT_MODEL),
-    str(SpanKind.AGENT),
+    str(CaptureSpanKind.RETRIEVER),
+    str(CaptureSpanKind.TOOL),
+    str(CaptureSpanKind.LLM),
+    str(CaptureSpanKind.RERANKER),
+    str(CaptureSpanKind.CHAT_MODEL),
+    str(CaptureSpanKind.AGENT),
 )
 
 _PER_RUN_SPAN_BUDGET = 1500

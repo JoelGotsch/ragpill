@@ -31,7 +31,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
-from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
+from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle
 from ragpill.trace.model import Span as RagpillSpan, SpanKind as IngestSpanKind, Trace as RagpillTrace
 
 _INSTALL_HINT = (
@@ -40,16 +40,16 @@ _INSTALL_HINT = (
     "LANGFUSE_SECRET_KEY (and LANGFUSE_HOST for self-hosted)."
 )
 
-# ragpill write-side SpanKind -> Langfuse observation as_type.
-_AS_TYPE: dict[SpanKind, str] = {
-    SpanKind.AGENT: "agent",
-    SpanKind.CHAT_MODEL: "generation",
-    SpanKind.LLM: "generation",
-    SpanKind.RERANKER: "span",
-    SpanKind.RETRIEVER: "retriever",
-    SpanKind.TASK: "chain",
-    SpanKind.TOOL: "tool",
-    SpanKind.UNKNOWN: "span",
+# ragpill write-side CaptureSpanKind -> Langfuse observation as_type.
+_AS_TYPE: dict[CaptureSpanKind, str] = {
+    CaptureSpanKind.AGENT: "agent",
+    CaptureSpanKind.CHAT_MODEL: "generation",
+    CaptureSpanKind.LLM: "generation",
+    CaptureSpanKind.RERANKER: "span",
+    CaptureSpanKind.RETRIEVER: "retriever",
+    CaptureSpanKind.TASK: "chain",
+    CaptureSpanKind.TOOL: "tool",
+    CaptureSpanKind.UNKNOWN: "span",
 }
 
 # Langfuse observation type -> neutral ingest-side SpanKind.
@@ -134,7 +134,7 @@ class LangfuseBackend(SyntheticRunMixin, NoopResultsMixin):
     def start_span(
         self,
         name: str,
-        span_type: SpanKind,
+        span_type: CaptureSpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         client = self._get_client()

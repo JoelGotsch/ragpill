@@ -84,7 +84,7 @@ def test_set_destination_registers(fake_phoenix):
 
 
 def test_start_span_handle_exposes_ids_and_io(fake_phoenix):
-    from ragpill.backends import SpanKind as WriteSpanKind
+    from ragpill.backends import CaptureSpanKind as WriteSpanKind
 
     backend = PhoenixBackend()
     backend.set_destination("http://localhost:6006", "proj")
@@ -220,7 +220,7 @@ async def test_phoenix_end_to_end_capture_and_fetch():
             ds,
             task=echo,
             capture_traces=True,
-            mlflow_tracking_uri=os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006"),
+            tracking_uri=os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006"),
         )
         tr = out.cases[0].task_runs[0]
         assert tr.output == "echo:hello"

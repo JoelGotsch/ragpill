@@ -11,7 +11,7 @@ from pydantic_ai import models
 if TYPE_CHECKING:
     from ragpill.trace import Trace
 
-from ragpill.backends import SpanKind, get_backend
+from ragpill.backends import CaptureSpanKind, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
@@ -24,8 +24,8 @@ from ragpill.utils import (
 )
 
 # Source spans whose outputs count as retrieved documents. Compared against the
-# string value of the neutral ``ragpill.trace.SpanKind`` (a StrEnum) so we don't
-# import a second SpanKind into this module — ``SpanKind`` above is the
+# string value of the neutral ``ragpill.trace.CaptureSpanKind`` (a StrEnum) so we don't
+# import a second CaptureSpanKind into this module — ``CaptureSpanKind`` above is the
 # write-side enum used by ``LLMJudge.start_span``.
 _SOURCE_SPAN_KINDS: frozenset[str] = frozenset({"RETRIEVER", "TOOL", "RERANKER"})
 
@@ -136,7 +136,7 @@ class LLMJudge(BaseEvaluator):
         # causes a UNIQUE constraint violation in MLflow's SQLite backend.
         # The "ragpill_is_judge_trace" attribute lets _delete_llm_judge_traces identify
         # and remove these traces after evaluation.
-        with get_backend().start_span(name="llm-judge-evaluation", span_type=SpanKind.LLM) as span:
+        with get_backend().start_span(name="llm-judge-evaluation", span_type=CaptureSpanKind.LLM) as span:
             span.set_attribute("ragpill_is_judge_trace", True)
             if self.include_input:
                 grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)

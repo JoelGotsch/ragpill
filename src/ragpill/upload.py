@@ -25,7 +25,7 @@ import pandas as pd
 
 from ragpill.backends import Assessment, get_backend
 from ragpill.llm_judge import JUDGE_PROMPT_VERSION, judge_prompt_hash
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.types import CaseResult, EvaluationOutput
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ from ragpill.types import CaseResult, EvaluationOutput
 # ---------------------------------------------------------------------------
 
 
-def _reattach_run(settings: MLFlowSettings, run_id: str | None) -> tuple[str | None, str]:
+def _reattach_run(settings: TrackingSettings, run_id: str | None) -> tuple[str | None, str]:
     """Reattach to an existing run (from execute_dataset) or start a new one.
 
     Args:
@@ -48,11 +48,11 @@ def _reattach_run(settings: MLFlowSettings, run_id: str | None) -> tuple[str | N
     """
     backend = get_backend()
     previous_uri = backend.get_tracking_uri()
-    backend.set_destination(settings.ragpill_tracking_uri, settings.ragpill_experiment_name)
+    backend.set_destination(settings.tracking_uri, settings.experiment_name)
     if run_id:
         handle = backend.start_run(run_id=run_id)
     else:
-        handle = backend.start_run(description=settings.ragpill_run_description)
+        handle = backend.start_run(description=settings.run_description)
     return previous_uri, handle.run_id
 
 
@@ -171,9 +171,9 @@ def _log_traces_as_artifact(evaluation: EvaluationOutput) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _resolve_experiment_id(settings: MLFlowSettings) -> str:
+def _resolve_experiment_id(settings: TrackingSettings) -> str:
     """Return the experiment id for the configured experiment name."""
-    return get_backend().resolve_experiment_id(settings.ragpill_experiment_name)
+    return get_backend().resolve_experiment_id(settings.experiment_name)
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +181,10 @@ def _resolve_experiment_id(settings: MLFlowSettings) -> str:
 # ---------------------------------------------------------------------------
 
 
-def upload_to_mlflow(
+def upload_results(
     evaluation: EvaluationOutput,
-    mlflow_settings: MLFlowSettings | None = None,
+    settings: TrackingSettings | None = None,
+    *,
     model_params: dict[str, str] | None = None,
     upload_traces: bool = False,
 ) -> None:
@@ -195,8 +196,8 @@ def upload_to_mlflow(
 
     Args:
         evaluation: Output of :func:`ragpill.evaluation.evaluate_results`.
-        mlflow_settings: Backend connection + experiment info. When omitted, a
-            default :class:`MLFlowSettings` is loaded from environment vars.
+        settings: Backend connection + experiment info. When omitted, a
+            default :class:`TrackingSettings` is loaded from environment vars.
         model_params: Optional model parameters to log for reproducibility.
         upload_traces: When ``True``, serialize
             ``evaluation.dataset_run.to_json()`` and upload it as a run
@@ -208,14 +209,14 @@ def upload_to_mlflow(
         ```python
         run_output = await execute_dataset(testset, task=my_task)
         eval_output = await evaluate_results(run_output, testset)
-        upload_to_mlflow(eval_output, settings, upload_traces=False)
+        upload_results(eval_output, settings, upload_traces=False)
         ```
 
     See Also:
         [`execute_dataset`][ragpill.execution.execute_dataset]: Phase 1.
         [`evaluate_results`][ragpill.evaluation.evaluate_results]: Phase 2.
     """
-    settings = mlflow_settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
+    settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
     backend = get_backend()
     dataset_run = evaluation.dataset_run
     run_id: str | None = dataset_run.run_id if (dataset_run and dataset_run.run_id) else None
@@ -251,7 +252,7 @@ def upload_dataset_run_json(path: str) -> EvaluationOutput:
     """Load a ``DatasetRunOutput`` JSON file and return it wrapped as an empty EvaluationOutput.
 
     Helper for scripts that serialize a run offline and want to load it back
-    before calling :func:`evaluate_results` + :func:`upload_to_mlflow`.
+    before calling :func:`evaluate_results` + :func:`upload_results`.
 
     Args:
         path: Filesystem path to a JSON file produced by

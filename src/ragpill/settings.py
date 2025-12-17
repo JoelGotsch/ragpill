@@ -22,7 +22,7 @@ class RagpillTraceSettings(BaseSettings):
         ```
     """
 
-    model_config = SettingsConfigDict(env_prefix="RAGPILL_TRACE_")
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_TRACE_", env_file=".env", extra="ignore")
 
     dialect: str = Field(
         "auto",
@@ -36,57 +36,63 @@ class RagpillTraceSettings(BaseSettings):
     )
 
 
-class MLFlowSettings(BaseSettings):
-    """MLflow connection and evaluation settings.
+class TrackingSettings(BaseSettings):
+    """Backend-neutral tracking + evaluation settings.
 
     Controls where evaluation results are logged and the default repeat/threshold
-    behaviour for multi-run evaluations. All fields can be set via environment
-    variables with the ``MLFLOW_`` prefix (e.g. ``MLFLOW_RAGPILL_TRACKING_URI``).
+    behaviour for multi-run evaluations. Consumed by whichever tracking backend
+    is configured (MLflow by default; Langfuse / Phoenix when registered). All
+    fields can be set via environment variables with the ``RAGPILL_`` prefix
+    (e.g. ``RAGPILL_TRACKING_URI``, ``RAGPILL_REPEAT``).
+
+    For MLflow auth, set ``MLFLOW_TRACKING_USERNAME`` / ``MLFLOW_TRACKING_PASSWORD``
+    in the environment — mlflow reads those directly.
 
     Example:
         ```python
-        from ragpill.settings import MLFlowSettings
+        from ragpill.settings import TrackingSettings
 
-        settings = MLFlowSettings(
-            ragpill_tracking_uri="http://mlflow.internal:5000",
-            ragpill_experiment_name="my_evaluation",
+        settings = TrackingSettings(
+            tracking_uri="http://mlflow.internal:5000",
+            experiment_name="my_evaluation",
         )
         ```
     """
 
-    model_config = SettingsConfigDict(env_prefix="MLFLOW_")
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_", env_file=".env", extra="ignore")
 
-    ragpill_tracking_uri: str = Field("http://localhost:5000", description="MLFlow tracking server URI.")
-    ragpill_experiment_name: str = Field("ragpill_experiment", description="MLFlow experiment name.")
-    tracking_username: str | None = Field(
+    tracking_uri: str | None = Field(
         None,
-        description="Optional for dev, but should be used in prod. Username for MLFlow authentication, the env variable needs to be MLFLOW_TRACKING_USERNAME because mlflow expects this env variable directly.",
+        description="Tracking server URI. None (default) uses a private temp SQLite store "
+        "for MLflow (zero-server) or the backend's own env-derived destination for remote "
+        "backends. Env: RAGPILL_TRACKING_URI.",
     )
-    tracking_password: SecretStr | None = Field(
-        None,
-        description="Optional for dev, but should be used in prod. Password for MLFlow authentication, the env variable needs to be MLFLOW_TRACKING_PASSWORD because mlflow expects this env variable directly.",
+    experiment_name: str = Field(
+        "ragpill_experiment", description="Experiment / project name. Env: RAGPILL_EXPERIMENT_NAME."
     )
-    ragpill_run_description: str = Field("RAGPill Evaluation Run", description="Description for the MLFlow run.")
-    ragpill_repeat: int = Field(
+    run_description: str = Field(
+        "RAGPill Evaluation Run", description="Description for the run. Env: RAGPILL_RUN_DESCRIPTION."
+    )
+    repeat: int = Field(
         default=1,
         ge=1,
-        description="Default number of times to run each test case. Per-case overrides via TestCaseMetadata.repeat take precedence. Env: MLFLOW_RAGPILL_REPEAT.",
+        description="Default number of times to run each test case. Per-case overrides via TestCaseMetadata.repeat take precedence. Env: RAGPILL_REPEAT.",
     )
-    ragpill_threshold: float = Field(
+    threshold: float = Field(
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="Default minimum fraction of runs that must pass for a case to be considered passing. Per-case overrides via TestCaseMetadata.threshold take precedence. Env: MLFLOW_RAGPILL_THRESHOLD.",
+        description="Default minimum fraction of runs that must pass for a case to be considered passing. Per-case overrides via TestCaseMetadata.threshold take precedence. Env: RAGPILL_THRESHOLD.",
     )
-    ragpill_trace_fetch_timeout_s: float = Field(
+    trace_fetch_timeout_s: float = Field(
         default=10.0,
         ge=0.0,
-        description="Max seconds to poll for a trace to be exported before giving up when attaching traces to evaluator context. Backends flush spans asynchronously, so a too-short budget leaves SpanBaseEvaluators without a trace. Env: MLFLOW_RAGPILL_TRACE_FETCH_TIMEOUT_S.",
+        description="Max seconds to poll for a trace to be exported before giving up when attaching traces to evaluator context. Backends flush spans asynchronously, so a too-short budget leaves SpanBaseEvaluators without a trace. Env: RAGPILL_TRACE_FETCH_TIMEOUT_S.",
     )
-    ragpill_trace_fetch_poll_interval_s: float = Field(
+    trace_fetch_poll_interval_s: float = Field(
         default=0.5,
         gt=0.0,
-        description="Interval in seconds between trace-readiness polls within the trace-fetch timeout. Env: MLFLOW_RAGPILL_TRACE_FETCH_POLL_INTERVAL_S.",
+        description="Interval in seconds between trace-readiness polls within the trace-fetch timeout. Env: RAGPILL_TRACE_FETCH_POLL_INTERVAL_S.",
     )
 
 
@@ -123,7 +129,7 @@ class LLMJudgeSettings(BaseSettings):
         ```
     """
 
-    model_config = SettingsConfigDict(env_prefix="RAGPILL_LLMJUDGE_")
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_LLMJUDGE_", env_file=".env", extra="ignore")
 
     model_name: str = Field("gpt-4o", description="Model name for LLMJudge evaluator.")
     temperature: float = Field(0.0, description="Temperature setting for LLMJudge model.")
@@ -156,15 +162,13 @@ class LLMJudgeSettings(BaseSettings):
         if self._cached_model is None:
             from ragpill.utils import _get_pydantic_ai_llm_model  # pyright: ignore[reportPrivateUsage]
 
-            if not self.api_key or not self.base_url or not self.model_name:
-                raise ValueError(
-                    "LLMJudgeSettings must have api_key, base_url, and model_name set to get default LLM model. "
-                    "Set them via environment variables RAGPILL_LLMJUDGE_API_KEY, RAGPILL_LLMJUDGE_BASE_URL, "
-                    "and RAGPILL_LLMJUDGE_MODEL_NAME respectively."
-                )
+            # base_url / api_key are optional: when unset, the OpenAI client
+            # resolves them from OPENAI_BASE_URL / OPENAI_API_KEY (the documented
+            # default path). Only a fully-missing API key fails — and that error
+            # is raised by the OpenAI client at construction, not pre-empted here.
             self._cached_model = _get_pydantic_ai_llm_model(
                 base_url=self.base_url,
-                api_key=self.api_key.get_secret_value(),
+                api_key=self.api_key.get_secret_value() if self.api_key else None,
                 model_name=self.model_name,
                 temperature=self.temperature,
                 ssl_ca_cert=self.ssl_ca_cert,

@@ -1,25 +1,25 @@
-"""Tests for MLFlowSettings env-var loading and resolve_repeat()."""
+"""Tests for TrackingSettings env-var loading and resolve_repeat()."""
 
 import pytest
 
 from ragpill.base import TestCaseMetadata, resolve_repeat
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 
 # ---------------------------------------------------------------------------
-# MLFlowSettings from environment
+# TrackingSettings from environment
 # ---------------------------------------------------------------------------
 
 
 def test_repeat_from_env(monkeypatch):
-    monkeypatch.setenv("MLFLOW_RAGPILL_REPEAT", "5")
-    settings = MLFlowSettings()  # type: ignore[call-arg]
-    assert settings.ragpill_repeat == 5
+    monkeypatch.setenv("RAGPILL_REPEAT", "5")
+    settings = TrackingSettings()  # type: ignore[call-arg]
+    assert settings.repeat == 5
 
 
 def test_threshold_from_env(monkeypatch):
-    monkeypatch.setenv("MLFLOW_RAGPILL_THRESHOLD", "0.7")
-    settings = MLFlowSettings()  # type: ignore[call-arg]
-    assert settings.ragpill_threshold == 0.7
+    monkeypatch.setenv("RAGPILL_THRESHOLD", "0.7")
+    settings = TrackingSettings()  # type: ignore[call-arg]
+    assert settings.threshold == 0.7
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +27,8 @@ def test_threshold_from_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _settings(repeat: int = 1, threshold: float = 1.0) -> MLFlowSettings:
-    return MLFlowSettings(ragpill_repeat=repeat, ragpill_threshold=threshold)  # type: ignore[call-arg]
+def _settings(repeat: int = 1, threshold: float = 1.0) -> TrackingSettings:
+    return TrackingSettings(repeat=repeat, threshold=threshold)  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize(

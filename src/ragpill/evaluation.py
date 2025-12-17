@@ -38,7 +38,7 @@ from ragpill.eval_types import (
     EvaluatorSource,
 )
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.types import (
     AggregatedResult,
     CaseResult,
@@ -357,7 +357,7 @@ def _create_cases_dataframe(case_results: list[CaseResult]) -> pd.DataFrame:
 async def evaluate_results(
     dataset_run: DatasetRunOutput,
     testset: Dataset[Any, Any, CaseMetadataT],
-    settings: MLFlowSettings | None = None,
+    settings: TrackingSettings | None = None,
 ) -> EvaluationOutput:
     """Run evaluators against a captured :class:`DatasetRunOutput`.
 
@@ -371,8 +371,8 @@ async def evaluate_results(
         testset: The dataset whose cases align one-for-one with
             ``dataset_run.cases``. Evaluators come from ``case.evaluators`` and
             ``testset.evaluators``.
-        settings: Global :class:`MLFlowSettings`. Only ``ragpill_repeat`` and
-            ``ragpill_threshold`` are consulted — no MLflow connection is made.
+        settings: Global :class:`TrackingSettings`. Only ``repeat`` and
+            ``threshold`` are consulted — no MLflow connection is made.
 
     Returns:
         :class:`EvaluationOutput` with ``.runs``, ``.cases``, and
@@ -387,9 +387,9 @@ async def evaluate_results(
 
     See Also:
         [`execute_dataset`][ragpill.execution.execute_dataset]: Phase 1.
-        [`upload_to_mlflow`][ragpill.upload.upload_to_mlflow]: Phase 3.
+        [`upload_results`][ragpill.upload.upload_results]: Phase 3.
     """
-    _settings = settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
+    _settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
 
     if len(dataset_run.cases) != len(testset.cases):
         raise ValueError(f"dataset_run has {len(dataset_run.cases)} cases but testset has {len(testset.cases)}")

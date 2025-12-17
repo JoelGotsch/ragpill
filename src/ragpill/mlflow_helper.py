@@ -5,7 +5,7 @@ refactor, it delegates to:
 
 - :func:`ragpill.execution.execute_dataset` — task execution + trace capture.
 - :func:`ragpill.evaluation.evaluate_results` — evaluator application.
-- :func:`ragpill.upload.upload_to_mlflow` — MLflow persistence (runs table,
+- :func:`ragpill.upload.upload_results` — backend persistence (runs table,
   metrics, assessments).
 """
 
@@ -18,37 +18,43 @@ from ragpill.base import CaseMetadataT
 from ragpill.eval_types import Dataset
 from ragpill.evaluation import evaluate_results
 from ragpill.execution import TaskType, execute_dataset
-from ragpill.settings import MLFlowSettings
+from ragpill.settings import TrackingSettings
 from ragpill.types import EvaluationOutput
-from ragpill.upload import upload_to_mlflow
+from ragpill.upload import upload_results
 
-__all__ = ["evaluate_testset_with_mlflow"]
+__all__ = ["evaluate_testset"]
 
 
-async def evaluate_testset_with_mlflow(
+async def evaluate_testset(
     testset: Dataset[Any, Any, CaseMetadataT],
     task: TaskType | None = None,
     task_factory: Callable[[], TaskType] | None = None,
-    mlflow_settings: MLFlowSettings | None = None,
+    settings: TrackingSettings | None = None,
     model_params: dict[str, str] | None = None,
 ) -> EvaluationOutput:
-    """Run the full evaluation pipeline against an MLflow server.
+    """Run the full evaluation pipeline against the configured tracking backend.
 
     Chains the three layers of the refactored architecture:
 
     1. :func:`~ragpill.execution.execute_dataset` runs the task against every
-       case and captures traces directly to the configured MLflow server.
+       case and captures traces directly to the configured tracking backend.
     2. :func:`~ragpill.evaluation.evaluate_results` runs every evaluator
        against the captured outputs.
-    3. :func:`~ragpill.upload.upload_to_mlflow` persists aggregated results
-       (tables, metrics, assessments) to the MLflow run created by step 1.
+    3. :func:`~ragpill.upload.upload_results` persists aggregated results
+       (tables, metrics, assessments) to the run created by step 1.
+
+    Because it uploads to a server, this function requires an explicit
+    ``tracking_uri`` (set ``RAGPILL_TRACKING_URI`` or pass ``settings``). For a
+    zero-server run, use :func:`~ragpill.execution.execute_dataset` +
+    :func:`~ragpill.evaluation.evaluate_results` directly — those default to a
+    private temp store and skip upload.
 
     Args:
         testset: The dataset to evaluate.
         task: The task callable. Mutually exclusive with ``task_factory``.
         task_factory: A zero-arg callable returning a fresh task instance per
             run. Mutually exclusive with ``task``.
-        mlflow_settings: MLflow configuration. Falls back to environment vars.
+        settings: Tracking configuration. Falls back to environment vars.
         model_params: Optional model parameters to log for reproducibility.
 
     Returns:
@@ -57,30 +63,43 @@ async def evaluate_testset_with_mlflow(
 
     Raises:
         ValueError: If both or neither of ``task`` and ``task_factory`` are
-            provided.
+            provided, or if no ``tracking_uri`` is configured.
 
     Example:
         ```python
-        from ragpill import evaluate_testset_with_mlflow
+        from ragpill import evaluate_testset
 
-        result = await evaluate_testset_with_mlflow(
+        result = await evaluate_testset(
             testset=my_dataset,
             task=my_task,
-            mlflow_settings=my_settings,
+            settings=my_settings,
         )
         print(result.summary)
         ```
     """
-    settings = mlflow_settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
+    # Validate task/factory first (mirrors execute_dataset) so those errors take
+    # precedence, then require a destination — upload has nowhere to go without one.
+    if task is not None and task_factory is not None:
+        raise ValueError("Provide either 'task' or 'task_factory', not both.")
+    if task is None and task_factory is None:
+        raise ValueError("Provide either 'task' or 'task_factory'.")
+
+    settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
+    if settings.tracking_uri is None:
+        raise ValueError(
+            "evaluate_testset uploads results to a tracking server, so a tracking URI is "
+            "required. Set RAGPILL_TRACKING_URI (or pass settings=TrackingSettings(tracking_uri=...)). "
+            "For a zero-server run, use execute_dataset() + evaluate_results() directly."
+        )
 
     run_output = await execute_dataset(
         testset,
         task=task,
         task_factory=task_factory,
         settings=settings,
-        mlflow_tracking_uri=settings.ragpill_tracking_uri,
+        tracking_uri=settings.tracking_uri,
         capture_traces=True,
     )
     eval_output = await evaluate_results(run_output, testset, settings=settings)
-    upload_to_mlflow(eval_output, settings, model_params=model_params, upload_traces=False)
+    upload_results(eval_output, settings, model_params=model_params, upload_traces=False)
     return eval_output
