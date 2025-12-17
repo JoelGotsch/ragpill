@@ -1,0 +1,227 @@
+{
+  "case_results": [
+    {
+      "aggregated": {
+        "error_counts": {
+          "ContainsCapital": 1,
+          "FaithfulnessJudge": 1
+        },
+        "pass_rate": 0.5,
+        "pass_rate_evaluated": 1.0,
+        "passed": false,
+        "per_evaluator_pass_rates": {
+          "ContainsCapital": 1.0,
+          "FaithfulnessJudge": 1.0
+        },
+        "runs_evaluated": 1,
+        "runs_infra_error": 1,
+        "summary": "1/2 runs passed (1 run could not be evaluated)",
+        "threshold": 1.0
+      },
+      "base_input_key": "case-1",
+      "case_name": "capital-of-france",
+      "inputs": {
+        "question": "What is the capital of France?"
+      },
+      "metadata": {
+        "attributes": {
+          "team": "geo"
+        },
+        "expected": null,
+        "repeat": 2,
+        "tags": [
+          "smoke"
+        ],
+        "threshold": 1.0
+      },
+      "run_results": [
+        {
+          "assertions": {
+            "ContainsCapital": {
+              "name": "ContainsCapital",
+              "reason": "found 'Paris' in the answer",
+              "source": {
+                "arguments": {
+                  "check": "Paris"
+                },
+                "name": "ContainsCapital",
+                "source_type": "CODE"
+              },
+              "value": true
+            },
+            "FaithfulnessJudge": {
+              "name": "FaithfulnessJudge",
+              "reason": "answer is grounded in the retrieved context",
+              "source": {
+                "arguments": {},
+                "name": "FaithfulnessJudge",
+                "source_type": "LLM_JUDGE"
+              },
+              "value": true
+            }
+          },
+          "duration": 1.25,
+          "error": null,
+          "evaluator_failures": [],
+          "input_key": "case-1_0",
+          "output": "Paris is the capital of France.",
+          "run_index": 0,
+          "run_span_id": "span-run-0",
+          "trace_id": "trace-run-0"
+        },
+        {
+          "assertions": {},
+          "duration": 0.98,
+          "error": null,
+          "evaluator_failures": [
+            {
+              "error_message": "TraceUnavailableError: trace was not exported before the deadline",
+              "error_stacktrace": "Traceback (most recent call last):\n  ...\nTraceUnavailableError",
+              "name": "ContainsCapital"
+            },
+            {
+              "error_message": "TraceUnavailableError: trace was not exported before the deadline",
+              "error_stacktrace": "Traceback (most recent call last):\n  ...\nTraceUnavailableError",
+              "name": "FaithfulnessJudge"
+            }
+          ],
+          "input_key": "case-1_1",
+          "output": "Paris is the capital of France.",
+          "run_index": 1,
+          "run_span_id": "span-run-1",
+          "trace_id": "trace-run-1"
+        }
+      ],
+      "trace_id": ""
+    }
+  ],
+  "cases": "{\"schema\":{\"fields\":[{\"name\":\"index\",\"type\":\"integer\"},{\"name\":\"case_id\",\"type\":\"string\"},{\"name\":\"evaluator_name\",\"type\":\"string\"},{\"name\":\"pass_rate\",\"type\":\"number\"},{\"name\":\"passed\",\"type\":\"boolean\"}],\"primaryKey\":[\"index\"],\"pandas_version\":\"1.4.0\"},\"data\":[{\"index\":0,\"case_id\":\"case-1\",\"evaluator_name\":\"ContainsCapital\",\"pass_rate\":1.0,\"passed\":true},{\"index\":1,\"case_id\":\"case-1\",\"evaluator_name\":\"FaithfulnessJudge\",\"pass_rate\":1.0,\"passed\":true}]}",
+  "dataset_run": {
+    "cases": [
+      {
+        "base_input_key": "case-1",
+        "case_name": "capital-of-france",
+        "expected_output": "Paris",
+        "inputs": {
+          "question": "What is the capital of France?"
+        },
+        "metadata": {
+          "attributes": {
+            "team": "geo"
+          },
+          "expected": null,
+          "repeat": 2,
+          "tags": [
+            "smoke"
+          ],
+          "threshold": 1.0
+        },
+        "task_runs": [
+          {
+            "duration": 1.25,
+            "error": null,
+            "input_key": "case-1_0",
+            "output": "Paris is the capital of France.",
+            "run_index": 0,
+            "run_span_id": "span-run-0",
+            "trace": {
+              "dialect": "mlflow",
+              "metadata": {},
+              "session_id": "case-1",
+              "spans": [
+                {
+                  "attributes": {},
+                  "dialect": "mlflow",
+                  "documents": [],
+                  "end_time_ns": 1700000001250000000,
+                  "events": [],
+                  "inputs": {
+                    "question": "What is the capital of France?"
+                  },
+                  "kind": "AGENT",
+                  "messages_in": [],
+                  "messages_out": [],
+                  "model": null,
+                  "model_parameters": {},
+                  "name": "agent",
+                  "outputs": "Paris is the capital of France.",
+                  "parent_id": null,
+                  "span_id": "span-run-0",
+                  "start_time_ns": 1700000000000000000,
+                  "status": "OK",
+                  "status_message": null,
+                  "trace_id": "trace-run-0",
+                  "usage": {
+                    "cost_usd": null,
+                    "input_tokens": null,
+                    "output_tokens": null,
+                    "total_tokens": null
+                  }
+                },
+                {
+                  "attributes": {},
+                  "dialect": "mlflow",
+                  "documents": [
+                    {
+                      "content": "Paris is the capital and most populous city of France.",
+                      "id": "doc-1",
+                      "metadata": {
+                        "source": "wiki"
+                      },
+                      "score": 0.93
+                    }
+                  ],
+                  "end_time_ns": 1700000000400000000,
+                  "events": [],
+                  "inputs": "capital of France",
+                  "kind": "RETRIEVER",
+                  "messages_in": [],
+                  "messages_out": [],
+                  "model": null,
+                  "model_parameters": {},
+                  "name": "retrieve",
+                  "outputs": null,
+                  "parent_id": "span-run-0",
+                  "span_id": "span-retrieve",
+                  "start_time_ns": 1700000000100000000,
+                  "status": "OK",
+                  "status_message": null,
+                  "trace_id": "trace-run-0",
+                  "usage": {
+                    "cost_usd": null,
+                    "input_tokens": null,
+                    "output_tokens": null,
+                    "total_tokens": null
+                  }
+                }
+              ],
+              "tags": [],
+              "trace_id": "trace-run-0",
+              "user_id": null
+            },
+            "trace_id": "trace-run-0",
+            "trace_status": "ok"
+          },
+          {
+            "duration": 0.98,
+            "error": null,
+            "input_key": "case-1_1",
+            "output": "Paris is the capital of France.",
+            "run_index": 1,
+            "run_span_id": "span-run-1",
+            "trace": null,
+            "trace_id": "trace-run-1",
+            "trace_status": "unavailable"
+          }
+        ],
+        "trace": null,
+        "trace_id": ""
+      }
+    ],
+    "experiment_id": "7",
+    "run_id": "run-42",
+    "schema_version": 3,
+    "tracking_uri": "http://tracking.example:5000"
+  },
+  "runs": "{\"schema\":{\"fields\":[{\"name\":\"index\",\"type\":\"integer\"},{\"name\":\"case_id\",\"type\":\"string\"},{\"name\":\"case_name\",\"type\":\"string\"},{\"name\":\"run_index\",\"type\":\"integer\"},{\"name\":\"evaluator_name\",\"type\":\"string\"},{\"name\":\"evaluator_result\",\"type\":\"boolean\"},{\"name\":\"source_type\",\"type\":\"string\"}],\"primaryKey\":[\"index\"],\"pandas_version\":\"1.4.0\"},\"data\":[{\"index\":0,\"case_id\":\"case-1\",\"case_name\":\"capital-of-france\",\"run_index\":0,\"evaluator_name\":\"ContainsCapital\",\"evaluator_result\":true,\"source_type\":\"CODE\"},{\"index\":1,\"case_id\":\"case-1\",\"case_name\":\"capital-of-france\",\"run_index\":0,\"evaluator_name\":\"FaithfulnessJudge\",\"evaluator_result\":true,\"source_type\":\"LLM_JUDGE\"}]}"
+}

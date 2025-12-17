@@ -9,24 +9,16 @@ from other repeats of the same case.
 
 from __future__ import annotations
 
+from functools import partial
+
+from conftest import make_span
+
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import RegexInSourcesEvaluator
-from ragpill.trace import Document, Span, SpanKind, Trace
+from ragpill.trace import Document, SpanKind, Trace
 
-
-def _span(span_id: str, parent_id: str | None, kind: SpanKind = SpanKind.CHAIN, **overrides) -> Span:
-    base: dict = {
-        "span_id": span_id,
-        "parent_id": parent_id,
-        "trace_id": "tr-1",
-        "name": span_id,
-        "kind": kind,
-        "start_time_ns": 0,
-        "end_time_ns": 0,
-    }
-    base.update(overrides)
-    return Span(**base)
+_span = partial(make_span, trace_id="tr-1")
 
 
 def _ctx(trace: Trace, run_span_id: str) -> EvaluatorContext:

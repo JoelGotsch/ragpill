@@ -293,10 +293,11 @@ class EvaluationOutput:
         ``TypeAdapter`` so the encoding can't drift from the dataclass fields.
         ``from_json`` is the inverse.
         """
-        # ``mode="json"`` so nested pydantic ``TestCaseMetadata`` (which carries a
-        # ``set`` of tags) canonicalizes to JSON-native types — matching the prior
-        # ``model_dump(mode="json")`` behavior.
-        return json.dumps(_EVALUATION_OUTPUT_ADAPTER.dump_python(self, mode="json"))
+        # One pass: ``dump_json`` serializes straight to JSON bytes (nested
+        # pydantic ``TestCaseMetadata``'s ``set`` of tags canonicalizes to
+        # JSON-native types exactly as ``dump_python(mode="json")`` did),
+        # without materializing an intermediate Python tree for ``json.dumps``.
+        return _EVALUATION_OUTPUT_ADAPTER.dump_json(self).decode()
 
     @classmethod
     def from_json(cls, s: str) -> EvaluationOutput:

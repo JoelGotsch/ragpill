@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 
-from ragpill.backends import RunHandle, configure_backend, reset_backend
 from ragpill.base import TestCaseMetadata
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.execution import DatasetRunOutput
@@ -43,69 +43,75 @@ def _evaluation(recorded_uri: str = "http://recorded", run_id: str = "run-1") ->
     )
 
 
-@pytest.fixture
-def fake_backend():
-    """A MagicMock backend with a stateful run-tag store and run-active tracking."""
-    backend = MagicMock()
-    backend.get_tracking_uri.return_value = "previous"
-    backend.resolve_experiment_id.return_value = "1"
-    backend.start_run.return_value = RunHandle(run_id="run-1", experiment_id="1")
-
-    tags: dict[str, str] = {}
-    state = {"active": False}
-    backend.set_run_tag.side_effect = lambda _rid, k, v: tags.__setitem__(k, v)
-    backend.get_run_tag.side_effect = lambda _rid, k: tags.get(k)
-
-    def _start(*_a, **_kw):
-        state["active"] = True
-        return backend.start_run.return_value
-
-    backend.start_run.side_effect = _start
-    backend.end_run.side_effect = lambda *_a, **_kw: state.__setitem__("active", False)
-    backend.is_run_active.side_effect = lambda: state["active"]
-
-    configure_backend(lambda: backend)
-    try:
-        yield backend
-    finally:
-        reset_backend()
-
-
 def _settings() -> TrackingSettings:
     return TrackingSettings(tracking_uri="http://settings", experiment_name="exp")
 
 
-def test_upload_marks_complete_and_logs_once(fake_backend):
+def test_upload_marks_complete_and_logs_once(fake_tracking_backend):
     upload_results(_evaluation(), settings=_settings())
-    assert fake_backend.get_run_tag("run-1", "ragpill_upload_state") == "complete"
-    assert fake_backend.log_table.call_count == 1
+    assert fake_tracking_backend.get_run_tag("run-1", "ragpill_upload_state") == "complete"
+    assert fake_tracking_backend.log_table.call_count == 1
 
 
-def test_reupload_completed_run_raises(fake_backend):
+def test_reupload_completed_run_raises(fake_tracking_backend):
     upload_results(_evaluation(), settings=_settings())
     with pytest.raises(RuntimeError, match="already uploaded"):
         upload_results(_evaluation(), settings=_settings())
     # The results table was not written a second time.
-    assert fake_backend.log_table.call_count == 1
+    assert fake_tracking_backend.log_table.call_count == 1
 
 
-def test_overwrite_replaces_table_artifact(fake_backend):
+def test_overwrite_replaces_table_artifact(fake_tracking_backend):
     upload_results(_evaluation(), settings=_settings())
     upload_results(_evaluation(), settings=_settings(), overwrite=True)
     # The append-only table artifact is deleted before the second write.
-    fake_backend.delete_run_artifact.assert_any_call("run-1", "evaluation_results.json")
-    assert fake_backend.log_table.call_count == 2
+    fake_tracking_backend.delete_run_artifact.assert_any_call("run-1", "evaluation_results.json")
+    assert fake_tracking_backend.log_table.call_count == 2
 
 
-def test_destination_precedence_prefers_recorded_uri(fake_backend):
+def test_destination_precedence_prefers_recorded_uri(fake_tracking_backend):
     # No explicit tracking_uri -> the run's recorded URI wins over settings.
     upload_results(_evaluation(recorded_uri="http://recorded"), settings=_settings())
-    fake_backend.set_destination.assert_called_once_with("http://recorded", "exp")
+    fake_tracking_backend.set_destination.assert_called_once_with("http://recorded", "exp")
 
 
-def test_explicit_tracking_uri_overrides_recorded(fake_backend):
+def test_explicit_tracking_uri_overrides_recorded(fake_tracking_backend):
     upload_results(_evaluation(recorded_uri="http://recorded"), settings=_settings(), tracking_uri="http://explicit")
-    fake_backend.set_destination.assert_called_once_with("http://explicit", "exp")
+    fake_tracking_backend.set_destination.assert_called_once_with("http://explicit", "exp")
+
+
+# ---------------------------------------------------------------------------
+# F6 — an unresolvable destination fails loudly (never silently ./mlruns)
+# ---------------------------------------------------------------------------
+
+
+def test_upload_without_any_tracking_uri_raises(fake_tracking_backend):
+    # No explicit arg, run recorded without a URI, settings carry none: upload
+    # has nowhere to write and must raise instead of landing in ./mlruns.
+    evaluation = _evaluation(recorded_uri="")
+    settings = TrackingSettings(tracking_uri=None, experiment_name="exp")
+    with pytest.raises(ValueError, match="needs a tracking URI"):
+        upload_results(evaluation, settings=settings)
+    # Nothing was written before the failure.
+    assert not fake_tracking_backend.set_destination.called
+
+
+def test_explicit_tracking_uri_proceeds_and_logs_winning_source(fake_tracking_backend, caplog):
+    # Explicit tracking_uri= beats the (absent) recorded/settings URIs; the log
+    # names which source won the precedence race.
+    evaluation = _evaluation(recorded_uri="")
+    settings = TrackingSettings(tracking_uri=None, experiment_name="exp")
+    with caplog.at_level(logging.INFO, logger="ragpill.upload"):
+        upload_results(evaluation, settings=settings, tracking_uri="http://explicit")
+
+    fake_tracking_backend.set_destination.assert_called_once_with("http://explicit", "exp")
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("http://explicit" in m and "tracking_uri arg" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# MLflow adapter specifics (mocked client)
+# ---------------------------------------------------------------------------
 
 
 def test_judge_trace_search_is_not_capped_at_1000():

@@ -9,6 +9,7 @@ import time
 
 import pandas as pd
 import pytest
+from conftest import make_span as _span
 
 from ragpill.backends import RunHandle, configure_backend, reset_backend
 from ragpill.backends._common import to_unix_nano  # pyright: ignore[reportPrivateUsage]
@@ -17,54 +18,11 @@ from ragpill.eval_types import Case, Dataset, EvaluatorContext
 from ragpill.evaluation import evaluate_results
 from ragpill.evaluators import RegexInSourcesEvaluator, TraceUnavailableError
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput, execute_dataset
-from ragpill.trace import Span, SpanKind, Trace
+from ragpill.trace import SpanKind, Trace
 
 # ---------------------------------------------------------------------------
 # F1 — a transient trace-fetch error must not destroy the whole run
 # ---------------------------------------------------------------------------
-
-
-class _RaisingTraceBackend:
-    """Minimal backend whose get_trace raises (a transient 5xx), used to prove
-    execute_dataset survives and records the run as trace-unavailable."""
-
-    supports_local_file_store = True
-
-    def get_tracking_uri(self):
-        return None
-
-    def set_tracking_uri(self, uri):
-        pass
-
-    def set_destination(self, uri, experiment_name):
-        pass
-
-    def autolog_pydantic_ai(self):
-        pass
-
-    def start_run(self, run_id=None, description=None):
-        return RunHandle(run_id="r", experiment_id="e")
-
-    def end_run(self):
-        pass
-
-    def is_run_active(self):
-        return True
-
-    from contextlib import contextmanager
-
-    @contextmanager
-    def start_span(self, name, span_type, attributes=None):
-        yield _FakeSpan()
-
-    @contextmanager
-    def start_case_grouping(self, case_id, name, inputs=None, attributes=None):
-        from ragpill.backends._types import CaseGroupingHandle
-
-        yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
-
-    def await_trace(self, trace_id, *, run_id=None, experiment_id=None, timeout_s=10.0, poll_interval_s=0.5):
-        raise RuntimeError("503 Service Unavailable")
 
 
 class _FakeSpan:
@@ -82,12 +40,13 @@ class _FakeSpan:
 
 
 @pytest.fixture
-def _use_raising_backend():
-    configure_backend(_RaisingTraceBackend)
-    try:
-        yield
-    finally:
-        reset_backend()
+def _use_raising_backend(make_fake_backend):
+    # The shared fake with an await_trace that raises (a transient 5xx), used
+    # to prove execute_dataset survives and records the run as trace-unavailable.
+    def _raise_503(*_a, **_kw):
+        raise RuntimeError("503 Service Unavailable")
+
+    make_fake_backend(await_trace=_raise_503)
 
 
 @pytest.mark.anyio
@@ -188,12 +147,6 @@ def test_to_unix_nano_handles_nat():
 # ---------------------------------------------------------------------------
 # F7/F8 — partial outage: the case and per-evaluator surfaces agree
 # ---------------------------------------------------------------------------
-
-
-def _span(span_id, parent_id, kind=SpanKind.CHAIN):
-    return Span(
-        span_id=span_id, parent_id=parent_id, trace_id="t", name=span_id, kind=kind, start_time_ns=0, end_time_ns=0
-    )
 
 
 @pytest.mark.anyio
