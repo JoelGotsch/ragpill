@@ -73,8 +73,8 @@ def test_header_lists_run_metadata():
     assert "# Dataset run" in out
     assert "Cases: 1" in out
     assert "Tracking URI: sqlite:///x.db" in out
-    assert "MLflow run: r1" in out
-    assert "MLflow experiment: e1" in out
+    assert "Run: r1" in out
+    assert "Experiment: e1" in out
 
 
 def test_per_case_section_includes_inputs_and_expected():
