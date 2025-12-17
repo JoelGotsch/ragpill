@@ -6,12 +6,12 @@
 
 ## Context
 
-In the 2026-05-13 `IRAN_REPORTS_7000` evaluation run,
-`LiteralQuoteEvaluator` failed 14 of 15 cases. Triage showed the majority
-were **false positives** caused by normalization gaps, not by the agent
-fabricating quotes. Because the evaluator is the citation-hallucination
-guardrail, false positives erode its signal — developers stop trusting it
-and route around it.
+In a recent end-to-end evaluation run, `LiteralQuoteEvaluator` failed
+14 of 15 cases. Triage showed the majority were **false positives**
+caused by normalization gaps, not by the agent fabricating quotes.
+Because the evaluator is the citation-hallucination guardrail, false
+positives erode its signal — developers stop trusting it and route
+around it.
 
 This change strengthens the three pieces involved in the comparison
 (`_normalize_text`, `_extract_markdown_quotes`,

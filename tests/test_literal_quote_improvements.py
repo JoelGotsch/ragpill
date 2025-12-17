@@ -1,9 +1,9 @@
 # ruff: noqa: RUF001
 """Regression tests for LiteralQuoteEvaluator improvements (issue #8).
 
-Each test reproduces a real false positive from the 2026-05-13
-IRAN_REPORTS_7000 evaluation run and asserts the post-fix behaviour.
-Categories A, B, C, D, G, I map to the failure inventory in
+Each test exercises one of the nine documented false-positive categories
+from issue #8 using neutral synthetic content. Categories A, B, C, D, G, I
+map to the failure inventory in
 ``plans/literal-quote-evaluator-improvements.md``.
 
 The Category I parametrize block intentionally uses visually-ambiguous
@@ -47,24 +47,24 @@ def _ctx(output: str) -> EvaluatorContext[str, str, EvaluatorMetadata]:
     "source, agent_quote",
     [
         # markdown tilde subscript (already supported, regression guard)
-        ("Iran fed UF~6~ into the cascade.", "iran fed uf6 into the cascade"),
+        ("Acme delivered H~2~O to the lab.", "acme delivered h2o to the lab"),
         # LaTeX math subscript variants
-        ("feeding natural ${uf}_{6}$ into IR-1", "feeding natural uf6 into ir-1"),
-        ("feeding natural $uf_{6}$ into IR-1", "feeding natural uf6 into ir-1"),
-        ("feeding natural $uf6$ into IR-1", "feeding natural uf6 into ir-1"),
-        # pandoc-escaped brackets (Parchin Footnote case)
+        ("feeding distilled ${h}_{2}$o into module-1", "feeding distilled h2o into module-1"),
+        ("feeding distilled $h_{2}$o into module-1", "feeding distilled h2o into module-1"),
+        ("feeding distilled $h2o$ into module-1", "feeding distilled h2o into module-1"),
+        # pandoc-escaped brackets (Footnote case)
         (
-            "The Agency did not detect explosive compounds.\\[Footnote: two particles\\]",
-            "the agency did not detect explosive compounds. [footnote: two particles]",
+            "The lab did not detect contaminants.\\[Footnote: trace amounts present\\]",
+            "the lab did not detect contaminants. [footnote: trace amounts present]",
         ),
         # markdown bold in source
-        ("verified **3.6 g** of uranium metal", "verified 3.6 g of uranium metal"),
+        ("verified **3.6 g** of sample mass", "verified 3.6 g of sample mass"),
         # markdown italic in source
-        ("verified *3.6 g* of uranium metal", "verified 3.6 g of uranium metal"),
-        # pandoc table separator row (PFEP ANNEX 1 case)
+        ("verified *3.6 g* of sample mass", "verified 3.6 g of sample mass"),
+        # pandoc table separator row (annex case)
         (
-            "ANNEX 1\n\n----- -----\nlocation status\n----- -----\nNatanz fuel",
-            "annex 1 location status natanz fuel",
+            "ANNEX 1\n\n----- -----\nlocation status\n----- -----\nSite-A active",
+            "annex 1 location status site-a active",
         ),
     ],
 )
@@ -80,25 +80,25 @@ def test_category_a_normalization_strips_artifacts(source: str, agent_quote: str
 @pytest.mark.parametrize(
     "source, agent_blockquote",
     [
-        # [and] insertion (four-outstanding-locations case)
+        # [and] insertion
         (
-            "Lavisan-Shian, Varamin, and Turquzabad were undeclared",
-            "lavisan-shian, [and] varamin, and turquzabad were undeclared",
+            "Alpha, Bravo, and Charlie were unregistered",
+            "alpha, [and] bravo, and charlie were unregistered",
         ),
-        # [.*] elision marker (first-ir2m-uf6-feeding case)
+        # [.*] elision marker
         (
-            "intermittently feeding UF6 into IR-1, IR-2m, IR-4. On 15 February 2014, cascade 5",
-            "intermittently feeding uf6 into ir-1, ir-2m, ir-4 [.*] on 15 february 2014, cascade 5",
+            "intermittently feeding sample into module-1, module-2m, module-4. On 15 February 2024, batch 5",
+            "intermittently feeding sample into module-1, module-2m, module-4 [.*] on 15 february 2024, batch 5",
         ),
         # [...] three-dot bracketed elision
         (
-            "On 25 June 2003, Iran introduced UF6 into the first centrifuge and on 19 August 2003 began testing",
-            "on 25 june 2003, iran introduced uf6 [...] on 19 august 2003 began testing",
+            "On 25 June 2024, the lab introduced sample into the first module and on 19 August 2024 began testing",
+            "on 25 june 2024, the lab introduced sample [...] on 19 august 2024 began testing",
         ),
         # [note: ...] gloss
         (
-            "Iran agreed on 14 July 2015 with the P5+1",
-            "iran agreed on 14 july 2015 [note: with the e3/eu+3]",
+            "The supplier agreed on 14 July 2024 with consortium A",
+            "the supplier agreed on 14 july 2024 [note: with consortium B]",
         ),
     ],
 )
@@ -121,11 +121,13 @@ def test_category_b_bracketed_paraphrase_markers_become_wildcards(source: str, a
 
 
 def test_category_c_inline_referenced_file_marker_is_stripped() -> None:
-    output = "> the agency verified that iran was feeding (Referenced file: GOV/2025/24) up to 1044 IR-1 centrifuges"
+    output = (
+        "> the inspector verified that the lab was feeding (Referenced file: REPORT/2024/12) up to 1044 module-1 units"
+    )
     quotes = _extract_markdown_quotes(output)
     quote, _ = quotes[0]
     assert "referenced file" not in quote
-    assert "gov/2025/24" not in quote
+    assert "report/2024/12" not in quote
 
 
 def test_category_c_inline_file_marker_is_stripped() -> None:
@@ -145,7 +147,7 @@ def test_category_c_inline_file_marker_is_stripped() -> None:
 async def test_category_d_distinguishes_zero_sources_from_quote_mismatch() -> None:
     """When no documents at all were retrieved, the error must not blame the quote text."""
     evaluator = LiteralQuoteEvaluator()
-    output = "> The JCPOA was agreed upon on 14 July 2015\n(File: foo, Para: 1)"
+    output = "> Agreement-7 was finalized on 14 July 2024\n(File: foo, Para: 1)"
     with patch.object(evaluator, "get_documents", return_value=[]):
         result = await evaluator.run(_ctx(output))
     assert result.value is False
@@ -164,7 +166,7 @@ async def test_category_d_distinguishes_zero_sources_from_quote_mismatch() -> No
 
 
 def test_category_g_stray_leading_quote_is_trimmed() -> None:
-    output = ">'On 22 February 2025, the Agency verified at FFEP'\n(File: foo, Para: 1)"
+    output = ">'On 22 February 2025, the inspector verified at Site-A'\n(File: foo, Para: 1)"
     quotes = _extract_markdown_quotes(output)
     quote, _ = quotes[0]
     assert not quote.startswith("'")
@@ -173,17 +175,20 @@ def test_category_g_stray_leading_quote_is_trimmed() -> None:
 
 # ---------------------------------------------------------------------------
 # Category I — dash and space variants
+#
+# Intentionally uses visually-ambiguous Unicode (en/em/figure dashes, NBSP,
+# soft hyphen, zero-width space). RUF001 noqa applied at file scope above.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "source, agent_quote",
     [
-        ("2–3 October 2003", "2-3 october 2003"),  # en-dash U+2013
-        ("2—3 October 2003", "2-3 october 2003"),  # em-dash U+2014
-        ("2‐3 October 2003", "2-3 october 2003"),  # hyphen U+2010
-        ("2‒3 October 2003", "2-3 october 2003"),  # figure dash U+2012
-        ("Iran nuclear program", "iran nuclear program"),  # NBSP -> space
+        ("2–3 October 2024", "2-3 october 2024"),  # en-dash U+2013
+        ("2—3 October 2024", "2-3 october 2024"),  # em-dash U+2014
+        ("2‐3 October 2024", "2-3 october 2024"),  # hyphen U+2010
+        ("2‒3 October 2024", "2-3 october 2024"),  # figure dash U+2012
+        ("Acme research program", "acme research program"),  # NBSP -> space
         ("inter­national", "international"),  # soft hyphen dropped
         ("zero​width", "zerowidth"),  # zero-width space dropped
     ],
@@ -232,28 +237,28 @@ async def test_duplicate_quotes_appear_once_in_failure_message() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Regression: existing IRAN_REPORTS_7000 inputs now pass
+# Regression: synthetic end-to-end inputs reproducing the documented cases now pass
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_real_failure_pandoc_footnote_now_passes() -> None:
-    """End-to-end: Parchin Footnote case with pandoc-escaped brackets in the source."""
+    """End-to-end: Footnote case with pandoc-escaped brackets in the source."""
     evaluator = LiteralQuoteEvaluator()
     docs = [
         Document(
             page_content=(
-                "The Agency did not detect explosive compounds.\\[Footnote: two particles consistent with "
-                "anthropogenic uranium were detected.\\] Further investigation is required."
+                "The lab did not detect contaminants.\\[Footnote: trace amounts of organics "
+                "were detected.\\] Further investigation is required."
             ),
-            metadata={"source": "parchin.txt"},
+            metadata={"source": "lab-report.txt"},
         )
     ]
     output = (
         "The report explains:\n"
-        "> The Agency did not detect explosive compounds. [Footnote: two particles consistent with "
-        "anthropogenic uranium were detected.]\n"
-        "(File: parchin.txt, Para: 4)"
+        "> The lab did not detect contaminants. [Footnote: trace amounts of organics "
+        "were detected.]\n"
+        "(File: lab-report.txt, Para: 4)"
     )
     with patch.object(evaluator, "get_documents", return_value=docs):
         result = await evaluator.run(_ctx(output))
@@ -266,15 +271,15 @@ async def test_real_failure_referenced_file_marker_now_passes() -> None:
     evaluator = LiteralQuoteEvaluator()
     docs = [
         Document(
-            page_content="the agency verified that iran was feeding up to 1044 IR-1 centrifuges at FFEP",
-            metadata={"source": "ffep.txt"},
+            page_content="the inspector verified that the lab was feeding up to 1044 module-1 units at Site-A",
+            metadata={"source": "site-a.txt"},
         )
     ]
     output = (
         "Per the report:\n"
-        "> the agency verified that iran was feeding (Referenced file: GOV/2025/24) "
-        "up to 1044 IR-1 centrifuges at FFEP\n"
-        "(File: ffep.txt, Para: 7)"
+        "> the inspector verified that the lab was feeding (Referenced file: REPORT/2024/12) "
+        "up to 1044 module-1 units at Site-A\n"
+        "(File: site-a.txt, Para: 7)"
     )
     with patch.object(evaluator, "get_documents", return_value=docs):
         result = await evaluator.run(_ctx(output))
@@ -288,16 +293,16 @@ async def test_real_failure_bracketed_elision_now_passes() -> None:
     docs = [
         Document(
             page_content=(
-                "intermittently feeding UF6 into IR-1, IR-2m, IR-4 and IR-6 centrifuges. "
-                "On 15 February 2014, cascade 5 was reconfigured."
+                "intermittently feeding sample into module-1, module-2m, module-4 and module-6 units. "
+                "On 15 February 2024, batch 5 was reconfigured."
             ),
-            metadata={"source": "ir2m.txt"},
+            metadata={"source": "module-2m.txt"},
         )
     ]
     output = (
-        "The agency reports:\n"
-        "> intermittently feeding uf6 into ir-1, ir-2m, ir-4 [.*] on 15 february 2014, cascade 5\n"
-        "(File: ir2m.txt, Para: 12)"
+        "The inspector reports:\n"
+        "> intermittently feeding sample into module-1, module-2m, module-4 [.*] on 15 february 2024, batch 5\n"
+        "(File: module-2m.txt, Para: 12)"
     )
     with patch.object(evaluator, "get_documents", return_value=docs):
         result = await evaluator.run(_ctx(output))

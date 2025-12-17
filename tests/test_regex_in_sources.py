@@ -411,14 +411,30 @@ async def test_case_normalization():
 async def test_realistic_case_normalization():
     docs = [
         Document(
-            page_content="7.  Following the change of Government in Syria towards the end of 2024,\n\n    the Director General contacted the new Syrian Minister of Foreign\n\n    Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter\n\n    dated 14 January 2025, to convey the importance of continuing and\n\n    reinforcing cooperation between Syria and the Agency to address\n\n    unresolved safeguards issues related to Syria's past nuclear\n\n    activities.\n8.  Syria, in its reply dated 30 April 2025, invited the Director\n\n    General to visit Syria in early June 2025 and indicated that it had\n\n    no objection to the Agency's request to conduct an \"exceptional\n\n    visit\" to one of the three locations, as specified by the Agency.",
-            metadata={"source": "syria-report.txt"},
+            page_content=(
+                "7.  Following the change of management at Beta Labs towards the end of 2024,\n\n"
+                "    the inspector contacted the new regional director, Mr Smith, in a letter\n\n"
+                "    dated 14 January 2025, to convey the importance of continuing and\n\n"
+                "    reinforcing cooperation between Beta Labs and the auditor to address\n\n"
+                "    unresolved safeguards issues related to Beta Labs\u2019 past sample\n\n"
+                "    handling.\n"
+                "8.  Beta Labs, in its reply dated 30 April 2025, invited the inspector\n\n"
+                "    to visit Beta Labs in early June 2025 and indicated that it had\n\n"
+                '    no objection to the auditor\u2019s request to conduct an "exceptional\n\n'
+                '    visit" to one of the three locations, as specified by the auditor.'
+            ),
+            metadata={"source": "beta-labs-report.txt"},
         )
     ]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
-        check="the director general contacted the new syrian minister of foreign affairs and expatriates, he mr asaad hassan al-shaybani, in a letter dated 14 january 2025, to convey the importance of continuing and reinforcing cooperation between syria and the agency to address unresolved safeguards issues related to syria\u2019s past nuclear activities.",
+        check=(
+            "the inspector contacted the new regional director, mr smith, in a letter "
+            "dated 14 january 2025, to convey the importance of continuing and reinforcing "
+            "cooperation between beta labs and the auditor to address unresolved safeguards "
+            "issues related to beta labs\u2019 past sample handling."
+        ),
     )
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("some input", "some output")

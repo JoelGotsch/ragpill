@@ -30,10 +30,10 @@ def sample_documents():
     return [
         Document(
             page_content="'no longer outstanding at this stage' does not mean 'resolved'.",
-            metadata={"source": "31-May-2025_GOV-2025-25.txt"},
+            metadata={"source": "report-1.txt"},
         ),
         Document(
-            page_content="Another document with different content about nuclear verification processes.",
+            page_content="Another document with different content about laboratory verification processes.",
             metadata={"source": "other-document.txt"},
         ),
         Document(
@@ -42,8 +42,19 @@ that spans multiple lines with Different CAPITALIZATION.""",
             metadata={"source": "test-doc.txt"},
         ),
         Document(
-            page_content="7.  Following the change of Government in Syria towards the end of 2024,\n\n    the Director General contacted the new Syrian Minister of Foreign\n\n    Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter\n\n    dated 14 January 2025, to convey the importance of continuing and\n\n    reinforcing cooperation between Syria and the Agency to address\n\n    unresolved safeguards issues related to Syria's past nuclear\n\n    activities.\n8.  Syria, in its reply dated 30 April 2025, invited the Director\n\n    General to visit Syria in early June 2025 and indicated that it had\n\n    no objection to the Agency's request to conduct an \"exceptional\n\n    visit\" to one of the three locations, as specified by the Agency.",
-            metadata={"source": "syria-report.txt"},
+            page_content=(
+                "7.  Following the change of management at Beta Labs towards the end of 2024,\n\n"
+                "    the inspector contacted the new regional director, Mr Smith, in a letter\n\n"
+                "    dated 14 January 2025, to convey the importance of continuing and\n\n"
+                "    reinforcing cooperation between Beta Labs and the auditor to address\n\n"
+                "    unresolved safeguards issues related to Beta Labs' past sample\n\n"
+                "    handling.\n"
+                "8.  Beta Labs, in its reply dated 30 April 2025, invited the inspector\n\n"
+                "    to visit Beta Labs in early June 2025 and indicated that it had\n\n"
+                "    no objection to the auditor's request to conduct an \"exceptional\n\n"
+                '    visit" to one of the three locations, as specified by the auditor.'
+            ),
+            metadata={"source": "beta-labs-report.txt"},
         ),
     ]
 
@@ -66,7 +77,7 @@ def evaluator():
 async def test_all_quotes_found(evaluator, sample_documents):
     output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
-(File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
+(File: [report-1.txt](link), Paragraph: 38)"""
 
     with patch.object(evaluator, "get_documents", return_value=sample_documents):
         ctx = create_test_context("some input", output)
@@ -78,7 +89,7 @@ async def test_all_quotes_found(evaluator, sample_documents):
 async def test_insensitive_quote_matching(evaluator, sample_documents):
     output = """The report states:
 > '"No longer outstanding at this stage" does not mean "Resolved".'
-(File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
+(File: [report-1.txt](link), Paragraph: 38)"""
     with patch.object(evaluator, "get_documents", return_value=sample_documents):
         ctx = create_test_context("some input", output)
         result = await evaluator.run(ctx)
@@ -89,7 +100,7 @@ async def test_insensitive_quote_matching(evaluator, sample_documents):
 async def test_case_insensitive_chat_output(evaluator, sample_documents):
     output = """The report states:
 > "'No longer outstanding at this stage' does not mean 'Resolved'."
-(File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
+(File: [report-1.txt](link), Paragraph: 38)"""
 
     with patch.object(evaluator, "get_documents", return_value=sample_documents):
         ctx = create_test_context("some input", output)
@@ -113,7 +124,10 @@ async def test_quote_from_wrong_source(evaluator, sample_documents):
     """Quote is from the wrong source but still evaluates to True."""
     output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
-(File: [fake.txt](link), Paragraph: 38)"""
+(File: [fake.txt](link), Paragraph: 38)
+
+This text is present in `report-1.txt`, not in `fake.txt`, but the evaluator
+checks document content, not the asserted filename."""
 
     with patch.object(evaluator, "get_documents", return_value=sample_documents):
         ctx = create_test_context("some input", output)
@@ -165,8 +179,18 @@ Second quote:
 
 
 @pytest.mark.anyio
-async def test_syria_quote(evaluator, sample_documents):
-    output = "The Director General highlighted in his letter to Syria's new Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, dated 14 January 2025, the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\n\n> \"The Director General contacted the new Syrian Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter dated 14 January 2025, to convey the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\"\n(File: 01-september-2025_gov-2025-52.txt, Para: 7)"
+async def test_beta_labs_quote(evaluator, sample_documents):
+    output = (
+        "The inspector highlighted in his letter to Beta Labs' new regional director, "
+        "Mr Smith, dated 14 January 2025, the importance of continuing and reinforcing "
+        "cooperation between Beta Labs and the auditor to address unresolved safeguards "
+        "issues related to Beta Labs' past sample handling.\n\n"
+        '> "the inspector contacted the new regional director, Mr Smith, in a letter '
+        "dated 14 January 2025, to convey the importance of continuing and reinforcing "
+        "cooperation between Beta Labs and the auditor to address unresolved safeguards "
+        "issues related to Beta Labs' past sample handling.\"\n"
+        "(File: beta-labs-report.txt, Para: 7)"
+    )
     with patch.object(evaluator, "get_documents", return_value=sample_documents):
         ctx = create_test_context("some input", output)
         result = await evaluator.run(ctx)
@@ -299,20 +323,31 @@ async def test_empty_output(evaluator, sample_documents):
 
 
 @pytest.mark.anyio
-async def test_real_iran_quote(evaluator):
+async def test_real_long_quote_with_unicode_subscripts(evaluator):
     docs = [
         Document(
-            page_content="51. No new information was provided by Iran with respect to the issue of\n\n    testing of centrifuges using nuclear material until October 2003. In\n\n    its letter of 21 October 2003, Iran acknowledged that, in order to\n\n    ensure the performance of centrifuge machines, a limited number of\n\n    tests using small amounts of UF~6~ imported in 1991 had been carried\n\n    out at the Kalaye Electric Company. According to Iran, the first\n\n    test of the centrifuges was conducted in 1998 using an inert gas\n\n    (xenon). Series of tests using UF~6~ were performed between 1999\n\n    and 2002. In the course of the last series of tests, an enrichment\n\n    level of 1.2% U-235 was achieved.",
+            page_content=(
+                "51. No new information was provided by Acme with respect to the issue of\n\n"
+                "    testing of modules using sample material until October 2023. In\n\n"
+                "    its letter of 21 October 2023, Acme acknowledged that, in order to\n\n"
+                "    ensure the performance of module units, a limited number of\n\n"
+                "    tests using small amounts of H~2~O imported in 1991 had been carried\n\n"
+                "    out at the Acme Industrial site. According to Acme, the first\n\n"
+                "    test of the modules was conducted in 1998 using an inert gas\n\n"
+                "    (xenon). Series of tests using H~2~O were performed between 1999\n\n"
+                "    and 2002. In the course of the last series of tests, a yield\n\n"
+                "    level of 1.2% was achieved."
+            ),
             metadata={"source": "science.txt"},
         )
     ]
 
-    output = """The first known use of uranium hexafluoride (UF₆) by Iran occurred between **1999 and 2002**, as confirmed by Iran itself in its letter to the IAEA on 21 October 2003. During this period, Iran conducted a series of tests using UF₆ at the Kalaye Electric Company in Tehran, following earlier tests with inert gases (xenon) in 1998. These tests achieved an enrichment level of 1.2% U-235.
+    output = """The first known use of distilled water (H₂O) by Acme occurred between **1999 and 2002**, as confirmed by Acme itself in its letter to the auditor on 21 October 2023. During this period, Acme conducted a series of tests using H₂O at the Acme Industrial site, following earlier tests with inert gases (xenon) in 1998. These tests achieved a yield level of 1.2%.
 
-> "According to Iran, the first test of the centrifuges was conducted in 1998 using an inert gas (xenon). Series of tests using UF~6~ were performed between 1999 and 2002. In the course of the last series of tests, an enrichment level of 1.2% U-235 was achieved."
-(source: [GOV/2003/75](https://portal.sg.iaea.org/sg/SGVI/OfficeLAN/Chat%20SG%20%20Iran%20reports/PROD/10-November-2003_GOV-2003-75.docx?web=1), paragraph 51)
+> "According to Acme, the first test of the modules was conducted in 1998 using an inert gas (xenon). Series of tests using H~2~O were performed between 1999 and 2002. In the course of the last series of tests, a yield level of 1.2% was achieved."
+(source: [REPORT/2023/75](https://example.test/reports/2023/75), paragraph 51)
 
-This marks the earliest documented use of UF₆ in Irans nuclear program. While Iran had imported UF₆ as early as 1991, the first actual testing of centrifuges with UF₆ began in 1999.
+This marks the earliest documented use of H₂O in Acme's research program. While Acme had imported H₂O as early as 1991, the first actual testing of modules with H₂O began in 1999.
 """
 
     with patch.object(evaluator, "get_documents", return_value=docs):
