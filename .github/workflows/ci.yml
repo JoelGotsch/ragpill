@@ -95,6 +95,58 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  no-extras-smoke:
+    name: No-extras smoke (mlflow optional)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+          python-version: "3.11"
+
+      - name: Install ragpill without any extras
+        run: |
+          uv venv .venv-noextras --python 3.11
+          uv pip install --python .venv-noextras . pytest pytest-pretty 'anyio[trio]'
+
+      - name: Confirm MLflow is not installed
+        run: |
+          .venv-noextras/bin/python -c "import importlib.util; assert importlib.util.find_spec('mlflow') is None, 'MLflow should NOT be installed in the no-extras job'"
+
+      - name: Importing ragpill must not touch mlflow
+        run: |
+          .venv-noextras/bin/python -c "import ragpill; from ragpill.backends import SpanKind, Assessment, configure_backend, get_backend, reset_backend; print('ok')"
+
+      - name: get_backend without configuration must raise a clear error
+        run: |
+          .venv-noextras/bin/python -c "
+          from ragpill.backends import get_backend, reset_backend
+          reset_backend()
+          try:
+              get_backend()
+          except RuntimeError as e:
+              assert 'ragpill[mlflow]' in str(e), f'unexpected: {e}'
+              print('ok:', e)
+          else:
+              raise SystemExit('expected RuntimeError when MLflow is not installed')
+          "
+
+      - name: Configuring a custom backend must work
+        run: |
+          .venv-noextras/bin/python -c "
+          from unittest.mock import MagicMock
+          from ragpill.backends import Backend, configure_backend, get_backend, reset_backend
+          reset_backend()
+          fake = MagicMock(spec=Backend)
+          configure_backend(lambda: fake)
+          assert get_backend() is fake
+          print('ok')
+          "
+
   mlflow-integration:
     name: MLflow Integration
     runs-on: ubuntu-latest
