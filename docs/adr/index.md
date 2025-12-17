@@ -40,4 +40,5 @@ start at ADR-0011.
 | [ADR-0012](./0012-small-surface-evaluator-failures-in-triage.md) | 2026-06-19 | Small | Surface evaluator failures in triage without changing `all_passed` | Accepted |
 | [ADR-0013](./0013-large-otel-adapter-option-c-from-otel.md) | 2026-06-19 | Large | OTel dialect-adapter interface — Option C (loader → normalised OTLP-JSON → `from_otel`) | Accepted |
 | [ADR-0014](./0014-large-clean-break-vendor-neutral-trace-model.md) | 2026-06-19 | Large | Clean break to the vendor-neutral trace model (no feature flag) | Accepted |
-| [ADR-0015](./0015-small-duck-typed-to-mlflow-trace-compat-shim.md) | 2026-06-19 | Small | Duck-typed `to_mlflow_trace` compat shim, convenience-only | Accepted |
+| [ADR-0015](./0015-small-duck-typed-to-mlflow-trace-compat-shim.md) | 2026-06-19 | Small | Duck-typed `to_mlflow_trace` compat shim, convenience-only | Superseded by ADR-0016 |
+| [ADR-0016](./0016-small-remove-to-mlflow-trace-compat-shim.md) | 2026-06-19 | Small | Remove the `to_mlflow_trace` compat shim | Accepted |

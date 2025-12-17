@@ -1,7 +1,7 @@
 """Tests for _aggregate_runs() aggregation logic."""
 
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
-from ragpill.mlflow_helper import _aggregate_runs
+from ragpill.evaluation import _aggregate_runs
 from ragpill.types import RunResult
 
 

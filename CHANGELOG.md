@@ -25,9 +25,7 @@ vendor-neutral model.
   Custom `SpanBaseEvaluator` subclasses that read the MLflow trace/span surface
   directly (e.g. `trace.data.spans`, `trace.search_spans(...)`,
   `span.span_type`) must migrate to `ragpill.trace.Span` (`trace.spans`,
-  `span.kind`, `span.inputs/outputs/attributes`). As a courtesy escape hatch,
-  `ragpill.trace.compat.to_mlflow_trace(trace)` returns a duck-typed object
-  exposing the old surface; prefer migrating. See ADR-0014, ADR-0015.
+  `span.kind`, `span.inputs/outputs/attributes`). See ADR-0014.
 - **Retrieved documents are `ragpill.trace.Document`.** `SourcesBaseEvaluator`
   (and `RegexInSourcesEvaluator`, `RegexInDocumentMetadataEvaluator`,
   `LiteralQuoteEvaluator`) now build `ragpill.trace.Document` with a `content`
@@ -46,7 +44,6 @@ vendor-neutral model.
   - `from_mlflow_trace()` — convert a captured `mlflow.entities.Trace`.
   - `trace_to_dict` / `trace_from_dict` — JSON-safe (de)serialisation.
   - `filter_to_subtree()` — subtree filter over the neutral model.
-  - `compat.to_mlflow_trace()` — duck-typed MLflow-shaped wrapper.
   - `adapters.SpanAdapter` (Option C interface: `signature_attributes` +
     `from_otel`) with `MLflowAdapter`. Further dialects (gen_ai, openinference,
     …) land in later phases. See ADR-0013.

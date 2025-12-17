@@ -1,9 +1,14 @@
 # ADR-0015: Duck-typed `to_mlflow_trace` compat shim, convenience-only
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0016
 **Date:** 2026-06-19
 **Impact:** Small
-**Related:** ADR-0014, designs/otel-trace-ingestion.md
+**Related:** ADR-0014, ADR-0016, designs/otel-trace-ingestion.md
+
+> **Superseded the same day by [ADR-0016](0016-small-remove-to-mlflow-trace-compat-shim.md):**
+> the shim was removed before release. Backward compatibility is not a project
+> target, so even a convenience-only compat shim is unwanted standing surface.
+> Recorded here for the decision trail.
 
 ## Context
 The clean break to the vendor-neutral trace model (ADR-0014) breaks external

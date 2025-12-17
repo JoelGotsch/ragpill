@@ -28,11 +28,12 @@ import pandas as pd
 
 from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
 
-# Phase 1 short-cut (see plans/multi-backend-tracking.md Step 1.2(a)):
-# The internal trace type is still mlflow's. Non-MLflow adapters convert
-# their native trace into this shape. Phase 2 swaps this for a normalised
-# dataclass produced by the OTel ingestion plan.
-Trace = Any  # alias for type-checker readability
+# The backend protocol deals in each backend's *native* trace type (e.g.
+# mlflow.entities.Trace) — intentionally vendor-specific. The execute layer
+# converts the native trace into the vendor-neutral ``ragpill.trace.Trace`` at
+# the capture boundary (see ragpill.trace.from_mlflow_trace), so this stays Any
+# rather than coupling the protocol to one backend's classes.
+Trace = Any  # backend-native trace; converted to ragpill.trace.Trace downstream
 
 
 @runtime_checkable

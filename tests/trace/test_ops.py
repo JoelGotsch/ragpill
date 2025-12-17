@@ -1,9 +1,8 @@
-"""Tests for ``ragpill.trace.ops.filter_to_subtree`` and the compat shim."""
+"""Tests for ``ragpill.trace.ops.filter_to_subtree``."""
 
 from __future__ import annotations
 
 from ragpill.trace import filter_to_subtree
-from ragpill.trace.compat import to_mlflow_trace
 from ragpill.trace.model import Span, SpanKind, Trace
 
 
@@ -53,25 +52,3 @@ def test_filter_to_subtree_does_not_mutate_original():
     original = _tree()
     filter_to_subtree(original, "a")
     assert len(original.spans) == 4
-
-
-def test_compat_exposes_mlflow_surface():
-    trace = Trace(
-        trace_id="tr",
-        spans=[
-            _span("r", None, kind=SpanKind.RETRIEVER, outputs=["doc1"]),
-            _span("t", None, kind=SpanKind.TOOL, inputs={"q": 1}),
-            _span("c", None, kind=SpanKind.CHAIN, attributes={"ragpill_x": 1}),
-        ],
-    )
-    compat = to_mlflow_trace(trace)
-    # .data.spans and per-span surface
-    assert len(compat.data.spans) == 3
-    retr = compat.search_spans(span_type="RETRIEVER")
-    assert len(retr) == 1 and retr[0].outputs == ["doc1"]
-    # internal mlflow keys re-materialised on the attribute bag
-    chain = compat.search_spans(name="c")[0]
-    assert chain.attributes["mlflow.spanType"] == "CHAIN"
-    assert chain.attributes["ragpill_x"] == 1
-    tool = compat.search_spans(span_type="TOOL")[0]
-    assert tool.attributes["mlflow.spanInputs"] == {"q": 1}

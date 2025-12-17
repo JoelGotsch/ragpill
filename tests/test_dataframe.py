@@ -2,7 +2,7 @@
 
 from ragpill.base import TestCaseMetadata
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
-from ragpill.mlflow_helper import _create_cases_dataframe, _create_runs_dataframe
+from ragpill.evaluation import _create_cases_dataframe, _create_runs_dataframe
 from ragpill.types import AggregatedResult, CaseResult, EvaluationOutput, RunResult
 
 

@@ -46,9 +46,9 @@ separately in ADR-0015.)
 - Existing on-disk run files written under the old schema will not load. This
   is acceptable and documented in the CHANGELOG.
 - External custom `SpanBaseEvaluator` subclasses break unless they adopt
-  `ragpill.trace.Span` (or the courtesy compat wrapper from ADR-0015). The
-  type changes to `EvaluatorContext.trace` and `get_trace` are the visible
-  break.
+  `ragpill.trace.Span`. The type changes to `EvaluatorContext.trace` and
+  `get_trace` are the visible break. (A convenience compat shim was briefly
+  added in ADR-0015 and then removed in ADR-0016 — no shim ships.)
 - The capture boundary is now the single conversion point from MLflow to the
   neutral model — the one place to look when reasoning about trace fidelity.
 

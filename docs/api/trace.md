@@ -87,14 +87,6 @@ OTLP-JSON span dicts into [`Span`][ragpill.trace.Span] objects.
       show_source: true
       heading_level: 3
 
-## compat.to_mlflow_trace
-
-::: ragpill.trace.compat.to_mlflow_trace
-    options:
-      show_root_heading: true
-      show_source: true
-      heading_level: 3
-
 ## adapters.SpanAdapter
 
 ::: ragpill.trace.adapters.SpanAdapter
