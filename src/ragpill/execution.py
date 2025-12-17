@@ -61,6 +61,12 @@ logger = logging.getLogger("ragpill.execution")
 # (fetch timed out empty, backend errored, or the run's subtree was absent).
 TraceStatus = Literal["ok", "incomplete", "unavailable"]
 
+# Serializes traced ``execute_dataset`` calls: capture mutates process-global
+# tracking state (the active tracking URI / MLflow session), so two concurrent
+# traced runs would cross-tag each other's traces or corrupt the destination.
+# anyio.Lock is portable across asyncio and trio. Non-traced runs skip it.
+_capture_lock = anyio.Lock()
+
 
 def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:
     """Mark every dataset-level (global) evaluator as global."""
@@ -767,36 +773,45 @@ async def execute_dataset(
     _settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
     _fix_evaluator_global_flag(testset)
 
-    tracing: _TracingContext | None = None
-    try:
-        if capture_traces:
-            tracing = _setup_tracing(tracking_uri or None, _settings)
+    async def _run() -> DatasetRunOutput:
+        tracing: _TracingContext | None = None
+        try:
+            if capture_traces:
+                tracing = _setup_tracing(tracking_uri or None, _settings)
 
-        case_outputs: list[CaseRunOutput] = []
-        for case in testset.cases:
-            case_metadata: TestCaseMetadata | None = (
-                case.metadata if isinstance(case.metadata, TestCaseMetadata) else None
-            )
-            repeat, _ = resolve_repeat(case_metadata, _settings)
-            case_output = await _execute_case_runs(
-                case,
-                _factory,
-                default_input_to_key,
-                repeat,
-                capture_traces=capture_traces,
-                tracing=tracing,
-                task_timeout_s=task_timeout_s,
-            )
-            case_outputs.append(case_output)
+            case_outputs: list[CaseRunOutput] = []
+            for case in testset.cases:
+                case_metadata: TestCaseMetadata | None = (
+                    case.metadata if isinstance(case.metadata, TestCaseMetadata) else None
+                )
+                repeat, _ = resolve_repeat(case_metadata, _settings)
+                case_output = await _execute_case_runs(
+                    case,
+                    _factory,
+                    default_input_to_key,
+                    repeat,
+                    capture_traces=capture_traces,
+                    tracing=tracing,
+                    task_timeout_s=task_timeout_s,
+                )
+                case_outputs.append(case_output)
 
-        return DatasetRunOutput(
-            cases=case_outputs,
-            tracking_uri=tracing.tracking_uri if (tracing and tracing.temp_dir is None) else "",
-            run_id=tracing.run_id if (tracing and tracing.temp_dir is None) else "",
-            experiment_id=tracing.experiment_id if (tracing and tracing.temp_dir is None) else "",
-        )
-    finally:
-        _teardown_tracing(tracing)
+            return DatasetRunOutput(
+                cases=case_outputs,
+                tracking_uri=tracing.tracking_uri if (tracing and tracing.temp_dir is None) else "",
+                run_id=tracing.run_id if (tracing and tracing.temp_dir is None) else "",
+                experiment_id=tracing.experiment_id if (tracing and tracing.temp_dir is None) else "",
+            )
+        finally:
+            _teardown_tracing(tracing)
+
+    if not capture_traces:
+        return await _run()
+    # Traced: serialize against other traced runs (shared global tracking state).
+    if _capture_lock.locked():
+        logger.info("execute_dataset: another traced run holds the tracking backend; waiting for it to finish.")
+    async with _capture_lock:
+        return await _run()
 
 
 __all__ = [

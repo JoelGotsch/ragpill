@@ -28,7 +28,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any
+from typing import Any, ClassVar
 
 from ragpill.backends._common import (
     NoopResultsMixin,
@@ -105,7 +105,7 @@ class LangfuseBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
 
     # Langfuse is a remote service; the execution layer must not hand it a
     # temp SQLite URI — ``uri=None`` lets the client fall back to LANGFUSE_HOST.
-    supports_local_file_store = False
+    supports_local_file_store: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self._host: str | None = None

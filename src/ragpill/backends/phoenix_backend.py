@@ -24,7 +24,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ragpill.backends._common import (
     NoopResultsMixin,
@@ -97,7 +97,7 @@ class PhoenixBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
     # Phoenix is a remote collector; the execution layer must not hand it a
     # temp SQLite URI — ``uri=None`` lets ``phoenix.otel.register`` fall back
     # to PHOENIX_COLLECTOR_ENDPOINT.
-    supports_local_file_store = False
+    supports_local_file_store: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self._project_name = "ragpill"

@@ -11,12 +11,16 @@ through :func:`get_backend`.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from ragpill.backends._base import Backend
 
 _factory: Callable[[], Backend] | None = None
 _instance: Backend | None = None
+# Guards the check-then-set of the singleton so concurrent first-use / configure
+# calls don't build two backends or race the factory swap.
+_lock = threading.Lock()
 
 
 def configure_backend(factory: Callable[[], Backend]) -> None:
@@ -27,8 +31,9 @@ def configure_backend(factory: Callable[[], Backend]) -> None:
     no constructor args (``configure_backend(MLflowBackend)``).
     """
     global _factory, _instance
-    _factory = factory
-    _instance = None
+    with _lock:
+        _factory = factory
+        _instance = None
 
 
 def reset_backend() -> None:
@@ -38,8 +43,9 @@ def reset_backend() -> None:
     :func:`configure_backend` and never again.
     """
     global _factory, _instance
-    _factory = None
-    _instance = None
+    with _lock:
+        _factory = None
+        _instance = None
 
 
 def get_backend() -> Backend:
@@ -52,9 +58,11 @@ def get_backend() -> Backend:
     global _instance
     if _instance is not None:
         return _instance
-    factory = _factory or _default_factory
-    _instance = factory()
-    return _instance
+    with _lock:
+        if _instance is None:  # double-checked: another caller may have built it
+            factory = _factory or _default_factory
+            _instance = factory()
+        return _instance
 
 
 def _default_factory() -> Backend:

@@ -13,7 +13,7 @@ import re
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import mlflow
 import pandas as pd
@@ -91,7 +91,7 @@ class MLflowBackend(RemoteQueryMixin):
 
     # MLflow can track to a local SQLite store, so the execution layer may
     # synthesize a temp-directory URI when no destination is given.
-    supports_local_file_store = True
+    supports_local_file_store: ClassVar[bool] = True
 
     def _client(self) -> MlflowClient:
         """Fresh MlflowClient bound to the current tracking URI. Not cached:

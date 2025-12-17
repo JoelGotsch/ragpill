@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 import pandas as pd
 
@@ -59,14 +59,15 @@ class SpanHandle(Protocol):
 class TraceCaptureBackend(Protocol):
     """Configuration + write side of trace capture during ``execute_dataset``.
 
-    Adapters additionally expose a ``supports_local_file_store`` class
-    attribute (default ``False`` when absent). ``True`` means the backend can
-    write to a local file/SQLite store, so the execution layer may synthesize
-    a temp-directory URI for it when no destination is given. Backends that
-    talk to a remote service must leave it ``False`` — they receive
-    ``uri=None`` instead and fall back to their own environment-derived
-    destination (e.g. ``LANGFUSE_HOST`` / ``PHOENIX_COLLECTOR_ENDPOINT``).
+    ``supports_local_file_store`` (declared below) means the backend can write
+    to a local file/SQLite store, so the execution layer may synthesize a
+    temp-directory URI for it when no destination is given. Backends that talk
+    to a remote service must leave it ``False`` — they receive ``uri=None``
+    instead and fall back to their own environment-derived destination (e.g.
+    ``LANGFUSE_HOST`` / ``PHOENIX_COLLECTOR_ENDPOINT``).
     """
+
+    supports_local_file_store: ClassVar[bool]
 
     def set_destination(self, uri: str | None, experiment_name: str) -> None:
         """Point future writes at this destination.
