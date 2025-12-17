@@ -8,8 +8,6 @@ from typing import Any
 import mlflow
 from mlflow.entities import Document, SpanType, Trace
 from pydantic_ai import models
-from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output, judge_output
 
 from ragpill.base import (
     BaseEvaluator,
@@ -17,6 +15,8 @@ from ragpill.base import (
     _current_run_span_id,  # pyright: ignore[reportPrivateUsage]
     default_input_to_key,
 )
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
+from ragpill.llm_judge import judge_input_output, judge_output
 from ragpill.settings import MLFlowSettings, get_llm_judge_settings
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
@@ -129,7 +129,7 @@ class LLMJudge(BaseEvaluator):
         )
 
     def build_serialization_arguments(self) -> dict[str, Any]:
-        result = super(BaseEvaluator, self).build_serialization_arguments()
+        result = super().build_serialization_arguments()
         # always serialize the model as a string when present; use its name if it's a KnownModelName
         if (model := result.get("model")) and isinstance(model, models.Model):  # pragma: no branch
             result["model"] = f"{model.system}:{model.model_name}"
@@ -148,53 +148,6 @@ class LLMJudge(BaseEvaluator):
             is_global_evaluator=self.is_global,
             other_evaluator_data=self.rubric,
         )
-
-
-@dataclass(kw_only=True, repr=False)
-class WrappedPydanticEvaluator(BaseEvaluator):
-    """Wrapper to use any pydantic-evals Evaluator as a ragpill BaseEvaluator.
-    See https://ai.pydantic.dev/evals/evaluators/overview/ for a list.
-    Limitation: Span-Based evaluators are not supported as logfire is not supported in ragpill yet.
-
-    **Note**:
-    If you want to use pydantic-evals evaluators in your csv-defined testsets,
-    you need to define a subclass of this class that implements from_csv_line to
-    create the specific pydantic evaluator.
-
-    Attributes:
-        pydantic_evaluator: The pydantic-evals Evaluator instance to wrap.
-
-    Example:
-        ```python
-        from pydantic_evals.evaluators import SomePydanticEvaluator
-        from ragpill.base import WrappedPydanticEvaluator
-        ragpill_evaluator = WrappedPydanticEvaluator(
-            pydantic_evaluator=SomePydanticEvaluator(...),
-            expected=True,
-            tags={"tag1", "tag2"},
-            attributes={"attr1": "value1"},
-        )
-    """
-
-    pydantic_evaluator: Evaluator = field(repr=False)
-
-    async def run(
-        self,
-        ctx: EvaluatorContext[object, object, EvaluatorMetadata],
-    ) -> EvaluationReason:
-        """Delegate evaluation to the wrapped pydantic-evals evaluator.
-
-        Args:
-            ctx: The evaluator context containing inputs, output, and metadata.
-
-        Returns:
-            The evaluation result from the wrapped evaluator.
-        """
-        eval_output: Any = await self.pydantic_evaluator.evaluate(ctx)  # pyright: ignore[reportGeneralTypeIssues,reportUnknownVariableType]
-        assert isinstance(eval_output, EvaluationReason), (
-            "Wrapped pydantic evaluator did not return an EvaluationReason."
-        )
-        return eval_output
 
 
 def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:

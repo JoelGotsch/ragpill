@@ -5,9 +5,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from pydantic_evals import Case, Dataset
-
 from ragpill.base import BaseEvaluator, TestCaseMetadata
+from ragpill.eval_types import Case, Dataset
 from ragpill.evaluators import (
     HasQuotesEvaluator,
     LiteralQuoteEvaluator,
@@ -15,7 +14,6 @@ from ragpill.evaluators import (
     RegexInDocumentMetadataEvaluator,
     RegexInOutputEvaluator,
     RegexInSourcesEvaluator,
-    WrappedPydanticEvaluator,
 )
 
 
@@ -262,7 +260,7 @@ def _create_case_from_rows(
     # Create Case with metadata
     return Case(
         inputs=question,
-        evaluators=evaluators,  # pyright: ignore[reportArgumentType]
+        evaluators=evaluators,
         metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags, repeat=repeat, threshold=threshold),
     )
 
@@ -270,7 +268,6 @@ def _create_case_from_rows(
 # Default evaluator classes can be extended as more evaluators are implemented
 default_evaluator_classes: dict[str, type[BaseEvaluator]] = {
     "LLMJudge": LLMJudge,
-    "WrappedPydanticEvaluator": WrappedPydanticEvaluator,
     "RegexInSourcesEvaluator": RegexInSourcesEvaluator,
     "RegexInDocumentMetadata": RegexInDocumentMetadataEvaluator,
     "LiteralQuoteEvaluator": LiteralQuoteEvaluator,

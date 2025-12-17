@@ -1,5 +1,3 @@
-import asyncio
-import concurrent.futures
 import inspect
 import time
 import traceback
@@ -10,8 +8,6 @@ import mlflow
 import pandas as pd
 from mlflow.entities import AssessmentSource, Experiment, Feedback, SpanType, Trace
 from pydantic import TypeAdapter
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec
 
 from ragpill.base import (
     BaseEvaluator,
@@ -23,6 +19,7 @@ from ragpill.base import (
     merge_metadata,
     resolve_repeat,
 )
+from ragpill.eval_types import Case, Dataset, EvaluationResult, EvaluatorContext, EvaluatorSource
 from ragpill.settings import MLFlowSettings
 from ragpill.types import (
     AggregatedResult,
@@ -163,10 +160,6 @@ async def _evaluate_run(
     Returns:
         RunResult with assertions and any evaluator failures.
     """
-    from pydantic_evals.evaluators.context import EvaluatorContext
-
-    # Build an EvaluatorContext similar to what pydantic-ai creates internally.
-    # We pass a sentinel for _span_tree since we use MLflow tracing, not OpenTelemetry SpanTree.
     ctx = EvaluatorContext(
         name=case.name,
         inputs=case.inputs,
@@ -174,7 +167,6 @@ async def _evaluate_run(
         expected_output=case.expected_output,
         output=output,
         duration=duration,
-        _span_tree=None,  # pyright: ignore[reportArgumentType]
         attributes={},
         metrics={},
     )
@@ -194,7 +186,7 @@ async def _evaluate_run(
                 name=eval_name,
                 value=result.value,
                 reason=result.reason,
-                source=EvaluatorSpec(
+                source=EvaluatorSource(
                     name=evaluator.get_serialization_name(),
                     arguments={"evaluation_name": str(evaluator.evaluation_name)},
                 ),
@@ -304,7 +296,7 @@ async def _execute_case(
                     name=ev_name,
                     value=False,
                     reason=f"Task execution failed: {exc}",
-                    source=EvaluatorSpec(
+                    source=EvaluatorSource(
                         name="CODE",
                         arguments={"evaluation_name": str(ev.evaluation_name)},
                     ),
@@ -464,7 +456,7 @@ def _get_eval_metadata_for_case(
     """
     eval_uuid: str = ""
     if eval_result.source:
-        eval_uuid = str(eval_result.source.arguments.get("evaluation_name", ""))  # pyright: ignore[reportOptionalMemberAccess,reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownArgumentType]
+        eval_uuid = str(eval_result.source.arguments.get("evaluation_name", ""))
     return EvaluatorMetadata(
         expected=True,
         attributes=cr.metadata.attributes,
@@ -643,35 +635,3 @@ async def evaluate_testset_with_mlflow(
         cases=cases_df,
         case_results=case_results,
     )
-
-
-def evaluate_testset_with_mlflow_sync(
-    testset: Dataset[Any, Any, CaseMetadataT],
-    task: TaskType | None = None,
-    task_factory: Callable[[], TaskType] | None = None,
-    mlflow_settings: MLFlowSettings | None = None,
-    model_params: dict[str, str] | None = None,
-) -> EvaluationOutput:
-    """Synchronous wrapper around ``evaluate_testset_with_mlflow``.
-
-    Prefer the async version when possible. Use this wrapper when you cannot use ``await``.
-
-    Internally runs the async function via ``asyncio.run()`` inside a fresh thread
-    so it always succeeds — even when the caller is already inside a running event loop.
-
-    Args:
-        testset: The dataset to evaluate.
-        task: The task callable (mutually exclusive with task_factory).
-        task_factory: Callable returning a fresh task per run (mutually exclusive with task).
-        mlflow_settings: MLflow configuration. If None, loaded from environment variables.
-        model_params: Optional model parameters to log for reproducibility.
-
-    Returns:
-        EvaluationOutput with ``.runs``, ``.cases``, ``.summary`` DataFrames.
-    """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            asyncio.run,
-            evaluate_testset_with_mlflow(testset, task, task_factory, mlflow_settings, model_params),
-        )
-        return future.result()

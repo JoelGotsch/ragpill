@@ -1,7 +1,6 @@
 """Tests for _aggregate_runs() aggregation logic."""
 
-from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec
-
+from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.mlflow_helper import _aggregate_runs
 from ragpill.types import RunResult
 
@@ -11,7 +10,7 @@ def _make_assertion(name: str, value: bool, reason: str = "") -> EvaluationResul
         name=name,
         value=value,
         reason=reason,
-        source=EvaluatorSpec(name="CODE", arguments={"evaluation_name": "test"}),
+        source=EvaluatorSource(name="CODE", arguments={"evaluation_name": "test"}),
     )
 
 

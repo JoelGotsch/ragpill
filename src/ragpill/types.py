@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from pydantic_evals.evaluators.evaluator import EvaluationResult
 
 from ragpill.base import TestCaseMetadata
+from ragpill.eval_types import EvaluationResult
 
 
 @dataclass

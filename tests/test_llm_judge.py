@@ -1,12 +1,14 @@
-"""Test LLMJudge initialization via environment variables."""
+"""Test LLMJudge initialization via environment variables and judge helpers."""
 
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.test import TestModel
 
 from ragpill.evaluators import LLMJudge
+from ragpill.llm_judge import GradingOutput, judge_input_output, judge_output
 from ragpill.settings import (
     LLMJudgeSettings,
     configure_llm_judge,
@@ -84,6 +86,58 @@ def test_set_model_overrides_cached():
         settings.set_model(fake)
         assert settings.llm_model is fake
         assert settings.llm_model is not original_model
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_judge_output_returns_grading_output():
+    """judge_output returns a GradingOutput with reason/pass_/score using TestModel."""
+    model = TestModel()
+    result = await judge_output("some output", "the output should be non-empty", model)
+    assert isinstance(result, GradingOutput)
+    assert isinstance(result.reason, str)
+    assert isinstance(result.pass_, bool)
+    assert isinstance(result.score, float)
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_judge_input_output_returns_grading_output():
+    """judge_input_output returns a GradingOutput via TestModel."""
+    model = TestModel()
+    result = await judge_input_output(
+        inputs="PIRATE",
+        output="Avast ye!",
+        rubric="matches the style in the input",
+        model=model,
+    )
+    assert isinstance(result, GradingOutput)
+
+
+def test_judge_input_output_prompt_includes_input_section():
+    """``_build_prompt`` wraps the inputs in ``<Input>`` tags when provided."""
+    from ragpill.llm_judge import _build_prompt
+
+    prompt = _build_prompt(
+        output="the answer",
+        rubric="must mention X",
+        inputs="the question",
+    )
+    assert isinstance(prompt, str)
+    assert "<Input>" in prompt and "</Input>" in prompt
+    assert "the question" in prompt
+    assert "the answer" in prompt
+
+
+def test_judge_output_prompt_has_no_input_section():
+    """``_build_prompt`` omits the ``<Input>`` section when inputs is None."""
+    from ragpill.llm_judge import _build_prompt
+
+    prompt = _build_prompt(output="the answer", rubric="must mention X")
+    assert isinstance(prompt, str)
+    assert "<Input>" not in prompt
+    assert "<Output>" in prompt
+    assert "<Rubric>" in prompt
 
 
 def test_ssl_ca_cert_field():

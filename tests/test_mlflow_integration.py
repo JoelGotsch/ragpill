@@ -8,9 +8,8 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-from pydantic_evals import Case, Dataset
 
-from ragpill import evaluate_testset_with_mlflow, evaluate_testset_with_mlflow_sync
+from ragpill import Case, Dataset, evaluate_testset_with_mlflow
 from ragpill.base import TestCaseMetadata
 from ragpill.evaluators import RegexInOutputEvaluator
 from ragpill.settings import MLFlowSettings
@@ -66,23 +65,6 @@ async def test_evaluate_testset_with_mlflow_async():
 
 
 # ---------------------------------------------------------------------------
-# Sync version
-# ---------------------------------------------------------------------------
-
-
-@skip_unless_enabled
-def test_evaluate_testset_with_mlflow_sync():
-    testset = _make_minimal_testset()
-    result = evaluate_testset_with_mlflow_sync(
-        testset=testset,
-        task=_dummy_task,
-        mlflow_settings=_make_mlflow_settings(),
-    )
-    assert isinstance(result, EvaluationOutput)
-    assert len(result.runs) > 0
-
-
-# ---------------------------------------------------------------------------
 # Repeat integration (MLflow required)
 # ---------------------------------------------------------------------------
 
@@ -110,24 +92,6 @@ async def test_repeat_with_mlflow_async():
     assert len(result.cases) == 1
     # Summary has 1 row
     assert len(result.summary) == 1
-
-
-@skip_unless_enabled
-def test_repeat_with_mlflow_sync():
-    evaluator = RegexInOutputEvaluator(pattern="hello", expected=True, tags=set())
-    case = Case(
-        inputs="hello",
-        metadata=TestCaseMetadata(repeat=3, threshold=0.6),
-        evaluators=[evaluator],
-    )
-    testset = Dataset(cases=[case])
-    result = evaluate_testset_with_mlflow_sync(
-        testset=testset,
-        task=_dummy_task,
-        mlflow_settings=_make_mlflow_settings(),
-    )
-    assert isinstance(result, EvaluationOutput)
-    assert len(result.runs) == 3
 
 
 # ---------------------------------------------------------------------------

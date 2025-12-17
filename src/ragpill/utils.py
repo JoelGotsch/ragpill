@@ -9,10 +9,10 @@ from openai import AsyncOpenAI
 from pydantic_ai import models
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_evals import Dataset
 from pydantic_settings import BaseSettings
 
 from ragpill.base import BaseEvaluator, CaseMetadataT
+from ragpill.eval_types import Dataset
 
 
 def _prefix_settings_key(input: tuple[BaseSettings | dict[str, Any], str]) -> dict[str, Any]:

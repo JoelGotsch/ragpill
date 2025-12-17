@@ -1,8 +1,7 @@
 """Tests for _create_runs_dataframe and _create_cases_dataframe."""
 
-from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec
-
 from ragpill.base import TestCaseMetadata
+from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.mlflow_helper import _create_cases_dataframe, _create_runs_dataframe
 from ragpill.types import AggregatedResult, CaseResult, EvaluationOutput, RunResult
 
@@ -12,7 +11,7 @@ def _make_assertion(name: str, value: bool) -> EvaluationResult:
         name=name,
         value=value,
         reason=f"{name} reason",
-        source=EvaluatorSpec(name="CODE", arguments={"evaluation_name": "test"}),
+        source=EvaluatorSource(name="CODE", arguments={"evaluation_name": "test"}),
     )
 
 

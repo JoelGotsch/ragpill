@@ -1,9 +1,9 @@
 """Tests for ragpill.types (RunResult, EvaluationOutput)."""
 
 import pandas as pd
-from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec
 
 from ragpill.base import TestCaseMetadata
+from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.types import (
     AggregatedResult,
     CaseResult,
@@ -17,7 +17,7 @@ def _make_assertion(name: str, value: bool, reason: str = "") -> EvaluationResul
         name=name,
         value=value,
         reason=reason,
-        source=EvaluatorSpec(name="CODE", arguments={"evaluation_name": "test"}),
+        source=EvaluatorSource(name="CODE", arguments={"evaluation_name": "test"}),
     )
 
 
