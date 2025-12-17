@@ -88,9 +88,11 @@ nav:
     - Evaluators: guide/evaluators.md
     - Test Sets: guide/testsets.md
     - CSV Adapter: guide/csv-adapter.md
+    - Repeated Runs: guide/repeated-runs.md
   - How-To:
     - Custom Evaluator: how-to/custom-evaluator.md
     - Custom Type Evaluator: how-to/custom-type-evaluator.md
+    - Task Factory: how-to/task-factory.md
   - Tutorials:
     - Full Tutorial: tutorials/full.md
   - API Reference:
@@ -98,6 +100,7 @@ nav:
     - Evaluators: api/evaluators.md
     - CSV Module: api/csv.md
     - MLflow Helper: api/mlflow.md
+    - Result Types: api/types.md
     - Environment Settings: api/environment.md
     - Utils: api/utils.md
   - Development:

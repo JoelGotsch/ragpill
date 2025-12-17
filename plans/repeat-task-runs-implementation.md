@@ -10,6 +10,10 @@ Status: Ready to implement
 - Option 2: Return `EvaluationOutput` with `.runs`, `.cases`, `.summary` DataFrames
 - Factory invocation policy: per-run (fresh task instance per run)
 - Backward compatibility: not required (breaking change to return type is acceptable)
+- Global defaults on `MLFlowSettings`, per-case overrides on `TestCaseMetadata`
+- Two-phase execution: spans committed before evaluators run
+- ContextVar + trace subtree filtering for span-based evaluator isolation
+- MLflow assessment naming: `run-{i}_{evaluator_name}`, `agg_{evaluator_name}`
 
 ---
 
@@ -101,16 +105,16 @@ Tests to write:
     -> each run starts clean (demonstrates the fix)
 ```
 
-### Step 1.4 — Unit tests for `TestCaseMetadata` changes (`tests/test_base.py` — extend existing)
+### Step 1.4 — Unit tests for `TestCaseMetadata` and `MLFlowSettings` changes (`tests/test_base.py`, `tests/test_settings.py`)
 
-**Extend existing file.** Add tests for `repeat` and `threshold` fields.
+**Extend `test_base.py`.** Add tests for `repeat` and `threshold` fields on `TestCaseMetadata`.
 
 ```
 Tests to add to existing test_base.py:
 
-# TestCaseMetadata repeat/threshold
-- test_metadata_repeat_default: default repeat=1
-- test_metadata_threshold_default: default threshold=1.0
+# TestCaseMetadata repeat/threshold (per-case overrides, nullable)
+- test_metadata_repeat_default: default repeat=None (defers to global)
+- test_metadata_threshold_default: default threshold=None (defers to global)
 - test_metadata_repeat_valid: repeat=5 accepted
 - test_metadata_repeat_zero_rejected: repeat=0 -> ValidationError (ge=1)
 - test_metadata_repeat_negative_rejected: repeat=-1 -> ValidationError
@@ -119,6 +123,25 @@ Tests to add to existing test_base.py:
 - test_metadata_threshold_one_accepted: threshold=1.0 accepted
 - test_metadata_threshold_above_one_rejected: threshold=1.1 -> ValidationError (le=1.0)
 - test_metadata_threshold_negative_rejected: threshold=-0.1 -> ValidationError (ge=0.0)
+```
+
+**New file `test_settings.py`.** Tests for global defaults on `MLFlowSettings` and `resolve_repeat()`.
+
+```
+Tests to write:
+
+# MLFlowSettings global defaults
+- test_settings_repeat_default: default repeat=1
+- test_settings_threshold_default: default threshold=1.0
+- test_settings_repeat_from_env: MLFLOW_RAGPILL_REPEAT=5 -> repeat=5
+- test_settings_threshold_from_env: MLFLOW_RAGPILL_THRESHOLD=0.7 -> threshold=0.7
+
+# resolve_repeat() — merges per-case overrides with global defaults
+- test_resolve_both_none_uses_global: case has repeat=None, threshold=None -> uses settings values
+- test_resolve_case_overrides_repeat: case has repeat=5, settings has repeat=1 -> returns 5
+- test_resolve_case_overrides_threshold: case has threshold=0.5, settings has threshold=1.0 -> returns 0.5
+- test_resolve_case_overrides_both: case has both set -> both override
+- test_resolve_no_metadata_uses_global: metadata is None -> uses settings values
 ```
 
 ### Step 1.5 — Unit tests for CSV parsing of repeat/threshold (`tests/test_testset_csv.py` — extend existing)
@@ -146,32 +169,57 @@ What is X?,RegexInOutputEvaluator,true,factual,capital,3,0.6
 What is Y?,RegexInOutputEvaluator,true,geography,y,,
 ```
 
-### Step 1.6 — Unit tests for execution loop (`tests/test_execution.py`)
+### Step 1.6 — Unit tests for evaluator span isolation (`tests/test_evaluator_isolation.py`)
 
-**New file.** Tests for `_execute_run` and `_execute_case` without MLflow.
-
-These tests mock out MLflow (no actual tracing) but exercise the orchestration logic.
+**New file.** Tests for `_current_run_span_id` ContextVar and `_filter_trace_to_subtree()`.
 
 ```
 Tests to write:
 
-# _execute_run
-- test_execute_run_success: task returns output, evaluators pass -> RunResult with output, assertions, no error
-- test_execute_run_task_failure: task raises -> RunResult with error set, empty assertions
+# _filter_trace_to_subtree
+- test_filter_returns_only_subtree: trace with root -> [run-1 -> [llm, retriever], run-2 -> [llm]]
+    -> filter to run-1 span_id returns only run-1, llm, retriever spans
+- test_filter_single_span: filter to a leaf span -> returns just that span
+- test_filter_preserves_span_data: filtered spans have same attributes/inputs/outputs as originals
+- test_filter_unknown_span_id: span_id not in trace -> returns empty span list
+
+# ContextVar integration with SpanBaseEvaluator.get_trace()
+- test_get_trace_without_contextvar: _current_run_span_id is None -> returns full trace (existing behavior)
+- test_get_trace_with_contextvar: _current_run_span_id set to run-2 span_id
+    -> returned trace only contains run-2's subtree
+- test_contextvar_reset_after_run: after resetting token, get_trace returns full trace again
+```
+
+### Step 1.7 — Unit tests for execution loop (`tests/test_execution.py`)
+
+**New file.** Tests for `_execute_run` and `_execute_case` without MLflow.
+
+These tests mock out MLflow (no actual tracing) but exercise the two-phase orchestration logic.
+
+```
+Tests to write:
+
+# _execute_run (Phase 2 — evaluators only, spans already committed)
+- test_execute_run_success: task output + evaluators pass -> RunResult with output, assertions, no error
+- test_execute_run_task_failure: task raised in Phase 1 -> RunResult with error set, empty assertions
 - test_execute_run_evaluator_failure: evaluator raises -> RunResult with eval_failures populated
 - test_execute_run_mixed: some evaluators pass, some fail -> correct assertion values
 - test_execute_run_async_task: async task callable works correctly
 - test_execute_run_sync_task: sync task callable works correctly
 
-# _execute_case (orchestration)
+# _execute_case (two-phase orchestration)
 - test_execute_case_repeat_1: single run, collects one RunResult
 - test_execute_case_repeat_3: three runs, collects three RunResults, aggregation applied
 - test_execute_case_uses_factory_per_run: factory called once per run (verify via spy)
 - test_execute_case_sequential_runs: runs execute in order (run_index 0, 1, 2)
 - test_execute_case_partial_failures: 1 of 3 runs fails, others succeed -> correct aggregation
+- test_execute_case_phase1_then_phase2: verify all task spans are closed before evaluators run
+    (mock mlflow.start_span to track open/close ordering)
+- test_execute_case_contextvar_set_during_evaluation: verify _current_run_span_id is set
+    to the correct run span ID when each run's evaluators execute
 ```
 
-### Step 1.7 — Unit tests for DataFrame construction (`tests/test_dataframe.py`)
+### Step 1.8 — Unit tests for DataFrame construction (`tests/test_dataframe.py`)
 
 **New file.** Tests for the new DataFrame building functions.
 
@@ -195,7 +243,7 @@ Tests to write:
 - test_summary_df_overall_passed: overall case pass/fail reflects threshold
 ```
 
-### Step 1.8 — Integration tests (`tests/test_mlflow_integration.py` — extend existing)
+### Step 1.9 — Integration tests (`tests/test_mlflow_integration.py` — extend existing)
 
 **Extend existing file.** These require MLflow and are gated behind `RUN_MLFLOW_INTEGRATION_TESTS=1`.
 
@@ -251,6 +299,22 @@ Tests to add:
 - test_csv_repeat_with_mlflow: load testset_repeat.csv, run with MLflow
     -> cases with repeat=3 produce 3 runs each
     -> cases without repeat produce 1 run
+
+# --- MLflow assessment naming ---
+
+# Assessment naming convention
+- test_assessment_naming_multi_run: repeat=3, evaluator "RegexInOutput"
+    -> trace has assessments: run-0_RegexInOutput, run-1_RegexInOutput, run-2_RegexInOutput, agg_RegexInOutput
+- test_assessment_naming_single_run: repeat=1 -> only run-0_RegexInOutput, no agg_ prefix
+- test_aggregate_assessment_value: agg_ assessment value = (pass_rate >= threshold)
+
+# --- Global defaults from MLFlowSettings ---
+
+# Global repeat/threshold
+- test_global_repeat_from_settings: MLFlowSettings(ragpill_repeat=3), case has repeat=None
+    -> case runs 3 times (resolved from global)
+- test_case_overrides_global: MLFlowSettings(ragpill_repeat=3), case has repeat=5
+    -> case runs 5 times (per-case wins)
 ```
 
 ---
@@ -259,15 +323,32 @@ Tests to add:
 
 Implementation follows the test contracts. Each step makes a batch of tests pass.
 
-### Step 2.1 — `src/ragpill/base.py`: Add `repeat` and `threshold` to `TestCaseMetadata`
+### Step 2.1a — `src/ragpill/settings.py`: Add global `repeat` and `threshold` to `MLFlowSettings`
 
 ```python
-# Add to TestCaseMetadata:
-repeat: int = Field(default=1, ge=1, description="Number of times to run this case. Each run produces independent results.")
-threshold: float = Field(default=1.0, ge=0.0, le=1.0, description="Minimum fraction of runs that must pass for the case to pass. E.g., 0.8 means 80% of runs must succeed.")
+# Add to MLFlowSettings:
+ragpill_repeat: int = Field(default=1, ge=1, description="Default number of times to run each test case.")
+ragpill_threshold: float = Field(default=1.0, ge=0.0, le=1.0, description="Default minimum fraction of runs that must pass. Env: MLFLOW_RAGPILL_REPEAT, MLFLOW_RAGPILL_THRESHOLD.")
 ```
 
-**Makes pass:** Step 1.4 tests.
+### Step 2.1b — `src/ragpill/base.py`: Add `repeat` and `threshold` to `TestCaseMetadata` + `resolve_repeat()`
+
+```python
+# Add to TestCaseMetadata (nullable — None means "defer to global"):
+repeat: int | None = Field(default=None, ge=1, description="Per-case override: number of times to run. None defers to MLFlowSettings.ragpill_repeat.")
+threshold: float | None = Field(default=None, ge=0.0, le=1.0, description="Per-case override: minimum pass fraction. None defers to MLFlowSettings.ragpill_threshold.")
+```
+
+```python
+# New helper at bottom of base.py:
+def resolve_repeat(case_metadata: TestCaseMetadata | None, settings: "MLFlowSettings") -> tuple[int, float]:
+    """Resolve effective repeat/threshold from per-case override or global default."""
+    repeat = (case_metadata.repeat if (case_metadata and case_metadata.repeat is not None) else settings.ragpill_repeat)
+    threshold = (case_metadata.threshold if (case_metadata and case_metadata.threshold is not None) else settings.ragpill_threshold)
+    return repeat, threshold
+```
+
+**Makes pass:** Step 1.4 tests (TestCaseMetadata) + Step 1.4 tests (MLFlowSettings + resolve_repeat).
 
 ### Step 2.2 — `src/ragpill/types.py`: New result types
 
@@ -278,6 +359,7 @@ threshold: float = Field(default=1.0, ge=0.0, le=1.0, description="Minimum fract
 class RunResult:
     run_index: int
     input_key: str
+    run_span_id: str          # captured during Phase 1, used to set ContextVar in Phase 2
     output: Any
     duration: float
     assertions: dict[str, EvaluationResult]
@@ -365,31 +447,36 @@ Update `evaluate_testset_with_mlflow_sync` signature to match.
 
 **Makes pass:** Step 1.3 tests (validation subset).
 
-### Step 2.5 — `src/ragpill/mlflow_helper.py`: Execution loop
-
-Implement `_execute_run` and `_execute_case`:
+### Step 2.5a — `src/ragpill/base.py`: Add ContextVar for run span isolation
 
 ```python
-async def _execute_run(
+from contextvars import ContextVar
+
+# Module-level, after imports:
+_current_run_span_id: ContextVar[str | None] = ContextVar("_current_run_span_id", default=None)
+```
+
+This ContextVar is set during Phase 2 (evaluation) so that `SpanBaseEvaluator.get_trace()` can filter the returned trace to only the current run's subtree.
+
+### Step 2.5b — `src/ragpill/mlflow_helper.py`: Two-phase execution loop
+
+Implement `_evaluate_run` and `_execute_case` using a **two-phase design**:
+- **Phase 1** (inside span context): Execute task for all N runs, capture outputs + span IDs. All spans close at end of outer `with` block, so MLflow traces are committed.
+- **Phase 2** (after spans committed): For each run, set `_current_run_span_id` ContextVar, run evaluators, reset ContextVar. This ensures span-based evaluators can query committed traces and see only their run's subtree.
+
+```python
+from ragpill.base import _current_run_span_id
+
+async def _evaluate_run(
     case: Case,
-    task: TaskType,
+    output: Any,
+    duration: float,
     evaluators: list[BaseEvaluator],
     run_index: int,
     input_key: str,
+    run_span_id: str,
 ) -> RunResult:
-    """Execute task and evaluators for a single run."""
-    start = time.time()
-    try:
-        if inspect.iscoroutinefunction(task):
-            output = await task(case.inputs)
-        else:
-            output = task(case.inputs)
-    except Exception as e:
-        return RunResult(run_index=run_index, input_key=input_key, output=None,
-                        duration=time.time() - start, assertions={}, evaluator_failures=[], error=e)
-    duration = time.time() - start
-    
-    # Build EvaluatorContext
+    """Phase 2: Run evaluators for a single run (spans already committed)."""
     ctx = EvaluatorContext(
         name=case.name,
         inputs=case.inputs,
@@ -402,7 +489,6 @@ async def _execute_run(
         metrics={},
     )
     
-    # Run evaluators
     assertions: dict[str, EvaluationResult] = {}
     evaluator_failures: list = []
     for evaluator in evaluators:
@@ -426,8 +512,9 @@ async def _execute_run(
             evaluator_failures.append(...)
     
     return RunResult(
-        run_index=run_index, input_key=input_key, output=output,
-        duration=duration, assertions=assertions, evaluator_failures=evaluator_failures,
+        run_index=run_index, input_key=input_key, run_span_id=run_span_id,
+        output=output, duration=duration,
+        assertions=assertions, evaluator_failures=evaluator_failures,
     )
 
 
@@ -436,42 +523,100 @@ async def _execute_case(
     task_factory: Callable[[], TaskType],
     dataset_evaluators: list[BaseEvaluator],
     input_to_key: Callable[[Any], str],
+    repeat: int,
+    threshold: float,
 ) -> CaseResult:
-    """Execute all runs for a case and aggregate."""
+    """Execute all runs for a case (two-phase) and aggregate.
+    
+    repeat/threshold are the resolved values (from per-case override or global default).
+    """
     metadata = case.metadata
     assert isinstance(metadata, TestCaseMetadata)
     base_key = input_to_key(case.inputs)
     all_evaluators = list(case.evaluators) + list(dataset_evaluators)
     
-    run_results: list[RunResult] = []
-    for i in range(metadata.repeat):
-        fresh_task = task_factory()
-        # Wrap with MLflow span for this run
-        with mlflow.start_span(name=f"run_{i}", span_type=SpanType.TASK) as run_span:
-            run_span.set_inputs(case.inputs)
-            input_key = f"{base_key}_{i}"
-            run_span.set_attribute("input_key", input_key)
-            run_span.set_attribute("run_index", i)
-            
-            run_result = await _execute_run(case, fresh_task, all_evaluators, i, input_key)
-            
-            if run_result.output is not None:
-                run_span.set_outputs(run_result.output)
-            run_results.append(run_result)
+    # ── Phase 1: Task execution (inside span context) ──────────────────────
+    # All spans close at end of `with` block → traces committed to MLflow.
+    run_outputs: list[tuple[Any, Exception | None]] = []
+    run_span_ids: list[str] = []
+    run_durations: list[float] = []
     
-    aggregated = _aggregate_runs(run_results, metadata.threshold)
+    with mlflow.start_span(name=(case.name or str(case.inputs))[:60], span_type=SpanType.TASK) as parent_span:
+        parent_span.set_inputs(case.inputs)
+        parent_span.set_attribute("input_key", base_key)
+        parent_span.set_attribute("n_runs", repeat)
+        parent_trace_id = parent_span.request_id
+        
+        for i in range(repeat):
+            fresh_task = task_factory()
+            input_key = f"{base_key}_{i}"
+            try:
+                with mlflow.start_span(name=f"run-{i}", span_type=SpanType.TASK) as run_span:
+                    _run_span_id = run_span.span_id
+                    run_span.set_attribute("run_index", i)
+                    run_span.set_attribute("input_key", input_key)
+                    run_span.set_inputs(case.inputs)
+                    t0 = time.perf_counter()
+                    if inspect.iscoroutinefunction(fresh_task):
+                        output = await fresh_task(case.inputs)
+                    else:
+                        output = fresh_task(case.inputs)
+                    duration = time.perf_counter() - t0
+                    run_span.set_outputs(output)
+                run_outputs.append((output, None))
+            except Exception as e:
+                run_outputs.append((None, e))
+                duration = 0.0
+            run_span_ids.append(_run_span_id)
+            run_durations.append(duration)
+    
+    # ── Phase 2: Evaluation (all spans committed) ──────────────────────────
+    # Set _current_run_span_id so SpanBaseEvaluator.get_trace() filters to this run's subtree.
+    run_results: list[RunResult] = []
+    for i, ((output, exc), run_span_id, duration) in enumerate(
+        zip(run_outputs, run_span_ids, run_durations)
+    ):
+        input_key = f"{base_key}_{i}"
+        
+        if exc is not None:
+            # Task failed in Phase 1 — mark all evaluators as failed
+            assertions = {
+                ev.get_serialization_name(): EvaluationResult(
+                    name=ev.get_serialization_name(), value=False,
+                    reason=f"Task execution failed: {exc}",
+                    source=EvaluatorSpec(name="CODE", arguments={"evaluation_name": ev.evaluation_name}),
+                )
+                for ev in all_evaluators
+            }
+            run_results.append(RunResult(
+                run_index=i, input_key=input_key, run_span_id=run_span_id,
+                output=None, duration=0.0, assertions=assertions,
+                evaluator_failures=[], error=exc,
+            ))
+            continue
+        
+        token = _current_run_span_id.set(run_span_id)
+        try:
+            run_result = await _evaluate_run(
+                case, output, duration, all_evaluators, i, input_key, run_span_id,
+            )
+            run_results.append(run_result)
+        finally:
+            _current_run_span_id.reset(token)
+    
+    aggregated = _aggregate_runs(run_results, threshold)
     return CaseResult(
         case_name=case.name or str(case.inputs),
         inputs=case.inputs,
         metadata=metadata,
         base_input_key=base_key,
-        trace_id="",  # set by caller from MLflow trace context
+        trace_id=parent_trace_id,
         run_results=run_results,
         aggregated=aggregated,
     )
 ```
 
-**Makes pass:** Step 1.5 and Step 1.6 tests.
+**Makes pass:** Step 1.5, Step 1.6, and Step 1.7 tests.
 
 ### Step 2.6 — `src/ragpill/mlflow_helper.py`: DataFrame construction
 
@@ -537,9 +682,11 @@ def _create_cases_dataframe(case_results: list[CaseResult]) -> pd.DataFrame:
 
 ### Step 2.7 — `src/ragpill/mlflow_helper.py`: Main function rewrite
 
-Rewrite `evaluate_testset_with_mlflow` to use the new orchestration:
+Rewrite `evaluate_testset_with_mlflow` to use the new orchestration, `resolve_repeat()` for global/per-case resolution, and structured assessment naming:
 
 ```python
+from ragpill.base import resolve_repeat
+
 async def evaluate_testset_with_mlflow(
     testset: Dataset[Any, Any, CaseMetadataT],
     task: TaskType | None = None,
@@ -547,35 +694,52 @@ async def evaluate_testset_with_mlflow(
     mlflow_settings: MLFlowSettings | None = None,
     model_params: dict[str, str] | None = None,
 ) -> EvaluationOutput:
-    # 1. Validate task/task_factory
+    mlflow_settings = mlflow_settings or MLFlowSettings()
+    # 1. Validate task/task_factory (from Step 2.4)
     # 2. Setup MLflow
     # 3. Fix evaluator global flags
     # 4. For each case:
-    #      a. Start MLflow trace with case span
-    #      b. Call _execute_case (which runs N times, calling factory each time)
-    #      c. Collect CaseResult with trace_id
+    #      a. Resolve repeat/threshold via resolve_repeat(case.metadata, mlflow_settings)
+    #      b. Call _execute_case (two-phase: spans committed, then evaluators run)
+    #      c. Collect CaseResult (trace_id captured during Phase 1)
     # 5. Build runs and cases DataFrames
     # 6. Upload to MLflow (metrics, assessments, tags)
     # 7. End run
     # 8. Return EvaluationOutput
+    
+    case_results: list[CaseResult] = []
+    for case in testset.cases:
+        assert isinstance(case.metadata, TestCaseMetadata)
+        repeat, threshold = resolve_repeat(case.metadata, mlflow_settings)
+        all_evals = list(case.evaluators) + list(testset.evaluators)
+        case_result = await _execute_case(case, _factory, all_evals, default_input_to_key, repeat, threshold)
+        case_results.append(case_result)
     ...
 ```
 
-Key change: The MLflow upload logic (`_upload_mlflow`) needs updating to work with the new data structures. The core logic (log metrics, log assessments, set trace tags) stays the same but reads from `CaseResult` / `EvaluationOutput` instead of the old maps.
+**MLflow assessment naming convention:**
+
+When uploading assessments to MLflow traces, use this naming scheme:
+- Per-run: `run-{run_index}_{evaluator_name}` (e.g. `run-0_RegexInOutput`, `run-1_RegexInOutput`)
+- Aggregate (only when repeat > 1): `agg_{evaluator_name}` (e.g. `agg_RegexInOutput`)
+  - Value = `pass_rate >= threshold`
+  - Reason = `"Aggregate: {passed}/{total} runs passed (threshold={threshold})"`
+
+For repeat=1, only emit `run-0_{evaluator_name}` — no `agg_` prefix (redundant).
 
 Functions to **remove** (no longer needed):
-- `_get_input_key_trace_id_map` — we capture trace_id during execution
+- `_get_input_key_trace_id_map` — we capture trace_id during Phase 1
 - `_get_input_key_report_case_map` — we build CaseResult directly
 - `_get_evaluation_id_eval_metadata_map` — metadata comes from CaseResult
-- `_handle_task_failures` — handled in `_execute_run`
+- `_handle_task_failures` — handled in Phase 2 of `_execute_case`
 - `_create_evaluation_dataframe` — replaced by `_create_runs_dataframe` + `_create_cases_dataframe`
 
 Functions to **keep** (adapted):
 - `_setup_mlflow_experiment` — unchanged
 - `_delete_llm_judge_traces` — still needed for LLMJudge spans (they create their own traces)
-- `_upload_mlflow` — rewritten to accept `EvaluationOutput` and `list[CaseResult]`
+- `_upload_mlflow` — rewritten to accept `EvaluationOutput` and `list[CaseResult]`, uses new assessment naming
 
-**Makes pass:** Step 1.8 integration tests.
+**Makes pass:** Step 1.9 integration tests.
 
 ### Step 2.8 — `src/ragpill/csv/testset.py`: Parse repeat/threshold
 
@@ -586,8 +750,9 @@ Update `_parse_row_data` and `_create_case_from_rows`:
 2. In `_create_case_from_rows`, extract `repeat`/`threshold` from rows:
    ```python
    # Extract repeat/threshold (must be consistent across rows for same question)
-   repeat_values = {int(r.get("repeat") or 1) for r in rows}
-   threshold_values = {float(r.get("threshold") or 1.0) for r in rows}
+   # Use None when absent — resolve_repeat() will apply global defaults from MLFlowSettings
+   repeat_values = {int(r["repeat"]) if r.get("repeat") else None for r in rows}
+   threshold_values = {float(r["threshold"]) if r.get("threshold") else None for r in rows}
    if len(repeat_values) > 1:
        raise ValueError(f"Inconsistent 'repeat' values for question '{question}': {repeat_values}")
    if len(threshold_values) > 1:
@@ -605,18 +770,40 @@ Update `_parse_row_data` and `_create_case_from_rows`:
 
 **Makes pass:** Step 1.5 CSV tests.
 
-### Step 2.9 — `src/ragpill/evaluators.py`: SpanBaseEvaluator adaptation
+### Step 2.9 — `src/ragpill/evaluators.py`: SpanBaseEvaluator adaptation + trace subtree filtering
 
-Update `SpanBaseEvaluator.get_trace()` to handle hierarchical trace structure.
+Two changes: (a) add `_filter_trace_to_subtree()`, and (b) integrate `_current_run_span_id` ContextVar into `get_trace()`.
 
-With Approach C, the trace structure changes: the root span is a case span, and run spans are children. The current `get_trace` searches for traces where `spans[0]` (root) has the matching `input_key`. This still works because:
-
-1. For `repeat=1`: The run span IS nested inside a case span. The case span also has `input_key` set as an attribute.
-2. For `repeat>1`: Each run has a unique `input_key` (`{hash}_{run_index}`), and the evaluator runs within that run's context.
-
-**Minimal change needed:** Update `get_trace` to search any span in the trace for the `input_key`, not just `spans[0]`:
+**a) Add `_filter_trace_to_subtree()`:**
 
 ```python
+from copy import copy
+
+def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
+    """Return a copy of the trace containing only the subtree rooted at root_span_id.
+    
+    This ensures span-based evaluators only see spans from their specific run,
+    not spans from other runs in the same case trace.
+    """
+    all_spans = trace.data.spans
+    included: set[str] = set()
+    queue = [root_span_id]
+    while queue:
+        current = queue.pop()
+        included.add(current)
+        for span in all_spans:
+            if span.parent_id == current:
+                queue.append(span.span_id)
+    filtered_data = copy(trace.data)
+    filtered_data.spans = [s for s in all_spans if s.span_id in included]
+    return Trace(info=trace.info, data=filtered_data)
+```
+
+**b) Update `get_trace()` — search any span for `input_key`, then filter to run subtree:**
+
+```python
+from ragpill.base import _current_run_span_id
+
 def get_trace(self, inputs: Any) -> Trace:
     target_key = self.inputs_to_key_function(inputs)
     traces = mlflow.search_traces(...)
@@ -628,10 +815,21 @@ def get_trace(self, inputs: Any) -> Trace:
                 break
     if not matching:
         raise ValueError(f"No trace found for input {inputs}.")
-    return matching[0]
+    
+    trace = matching[0]
+    
+    # If we're inside a multi-run evaluation, filter to only the current run's subtree.
+    # This prevents evaluators from accidentally inspecting spans from other runs.
+    run_span_id = _current_run_span_id.get()
+    if run_span_id is not None:
+        trace = _filter_trace_to_subtree(trace, run_span_id)
+    
+    return trace
 ```
 
-**Note:** Since in Approach C each case produces one trace (with multiple run spans), and the evaluator runs within a specific run's span context, the `input_key` used for lookup is the run-specific key (`{hash}_{run_index}`). This naturally disambiguates repeated runs.
+**Why this matters:** Without filtering, a span-based evaluator (e.g. one that checks retriever spans) could see spans from run-0 when evaluating run-2. The ContextVar is set per-run during Phase 2 of `_execute_case`, ensuring each evaluator invocation only sees its own run's spans.
+
+**Makes pass:** Step 1.6 tests (evaluator isolation).
 
 ### Step 2.10 — `src/ragpill/__init__.py`: Update exports
 
@@ -671,7 +869,9 @@ Update docstrings in:
 |--------|------|----------------|
 | `evaluate_testset_with_mlflow()` | `mlflow_helper.py` | New signature (task/task_factory), new return type, examples |
 | `evaluate_testset_with_mlflow_sync()` | `mlflow_helper.py` | Mirror async docstring updates |
-| `TestCaseMetadata` | `base.py` | Document `repeat` and `threshold` fields with examples |
+| `MLFlowSettings` | `settings.py` | Document `ragpill_repeat` and `ragpill_threshold` global defaults |
+| `TestCaseMetadata` | `base.py` | Document `repeat` and `threshold` as nullable per-case overrides |
+| `resolve_repeat()` | `base.py` | Document merging logic |
 | `EvaluationOutput` | `types.py` | Document `.runs`, `.cases`, `.summary`, `.case_results` |
 | `RunResult` | `types.py` | All fields, `.all_passed` property |
 | `AggregatedResult` | `types.py` | All fields, threshold semantics |
@@ -736,35 +936,38 @@ Check `docs/tutorials/` for notebook files. If `full.md` references a notebook, 
 
 ```
 Phase 1: Tests
-  1.1  test_types.py          (new) — RunResult, AggregatedResult, EvaluationOutput
-  1.2  test_aggregation.py    (new) — _aggregate_runs()
-  1.3  test_task_factory.py   (new) — validation, factory invocation, isolation
-  1.4  test_base.py           (extend) — TestCaseMetadata repeat/threshold
-  1.5  test_testset_csv.py    (extend) — CSV parsing, testset_repeat.csv
-  1.6  test_execution.py      (new) — _execute_run, _execute_case
-  1.7  test_dataframe.py      (new) — runs/cases DataFrame construction
-  1.8  test_mlflow_integration.py (extend) — end-to-end with MLflow
+  1.1  test_types.py               (new) — RunResult, AggregatedResult, EvaluationOutput
+  1.2  test_aggregation.py         (new) — _aggregate_runs()
+  1.3  test_task_factory.py        (new) — validation, factory invocation, isolation
+  1.4  test_base.py, test_settings.py (extend/new) — TestCaseMetadata, MLFlowSettings, resolve_repeat()
+  1.5  test_testset_csv.py         (extend) — CSV parsing, testset_repeat.csv
+  1.6  test_evaluator_isolation.py (new) — _filter_trace_to_subtree, ContextVar integration
+  1.7  test_execution.py           (new) — two-phase _execute_case, _evaluate_run
+  1.8  test_dataframe.py           (new) — runs/cases DataFrame construction
+  1.9  test_mlflow_integration.py  (extend) — end-to-end with MLflow, assessment naming, global defaults
 
 Phase 2: Implementation
-  2.1  base.py                — repeat/threshold on TestCaseMetadata
-  2.2  types.py               (new) — RunResult, AggregatedResult, CaseResult, EvaluationOutput
-  2.3  mlflow_helper.py       — _aggregate_runs()
-  2.4  mlflow_helper.py       — task/task_factory validation
-  2.5  mlflow_helper.py       — _execute_run, _execute_case
-  2.6  mlflow_helper.py       — _create_runs_dataframe, _create_cases_dataframe
-  2.7  mlflow_helper.py       — main function rewrite
-  2.8  csv/testset.py         — parse repeat/threshold
-  2.9  evaluators.py          — SpanBaseEvaluator.get_trace() adaptation
-  2.10 __init__.py            — export new types
+  2.1a settings.py             — ragpill_repeat/ragpill_threshold on MLFlowSettings (global defaults)
+  2.1b base.py                 — repeat/threshold on TestCaseMetadata (nullable) + resolve_repeat()
+  2.2  types.py                (new) — RunResult (with run_span_id), AggregatedResult, CaseResult, EvaluationOutput
+  2.3  mlflow_helper.py        — _aggregate_runs()
+  2.4  mlflow_helper.py        — task/task_factory validation
+  2.5a base.py                 — _current_run_span_id ContextVar
+  2.5b mlflow_helper.py        — two-phase _execute_case + _evaluate_run
+  2.6  mlflow_helper.py        — _create_runs_dataframe, _create_cases_dataframe
+  2.7  mlflow_helper.py        — main function rewrite (resolve_repeat, assessment naming)
+  2.8  csv/testset.py          — parse repeat/threshold (None when absent)
+  2.9  evaluators.py           — _filter_trace_to_subtree + ContextVar in get_trace()
+  2.10 __init__.py             — export new types
   2.11 type check + lint + test
 
 Phase 3: Documentation
-  3.1  Docstrings             — all modified/new API
-  3.2  guide/repeated-runs.md (new)
-  3.3  how-to/task-factory.md (new)
-  3.4  Update existing docs   — quickstart, overview, testsets, csv-adapter, full tutorial
-  3.5  mkdocs.yml             — add new pages to nav
-  3.6  Notebooks              — if applicable
+  3.1  Docstrings              — all modified/new API (incl. MLFlowSettings, resolve_repeat)
+  3.2  guide/repeated-runs.md  (new)
+  3.3  how-to/task-factory.md  (new)
+  3.4  Update existing docs    — quickstart, overview, testsets, csv-adapter, full tutorial
+  3.5  mkdocs.yml              — add new pages to nav
+  3.6  Notebooks               — if applicable
 ```
 
 ---
@@ -780,3 +983,7 @@ Phase 3: Documentation
 4. **Concurrency**: Runs within a case are sequential. Cases are sequential in the initial implementation (can add `asyncio.Semaphore`-based concurrency later). This is simpler and sufficient.
 
 5. **`evaluate_testset_with_mlflow_sync`**: Must be updated to match the new async signature and return `EvaluationOutput`.
+
+6. **ContextVar thread safety**: `_current_run_span_id` uses `contextvars.ContextVar`, which is async-safe (each task gets its own context). Since runs within a case are sequential (not concurrent), there's no risk of one run's ContextVar leaking into another. If we later add concurrency (asyncio.Semaphore), each `asyncio.Task` gets its own copy of the ContextVar automatically.
+
+7. **Two-phase timing**: Phase 2 evaluators query MLflow for committed traces. There may be a small delay between span closure and trace availability in MLflow. If this becomes an issue, add a brief `await asyncio.sleep(0.1)` between phases, but this is unlikely with the local MLflow server.

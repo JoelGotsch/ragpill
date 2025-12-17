@@ -1,0 +1,4 @@
+Question,test_type,expected,tags,check,repeat,threshold
+What is X?,RegexInOutputEvaluator,true,factual,x,3,0.6
+What is X?,RegexInOutputEvaluator,true,factual,capital,3,0.6
+What is Y?,RegexInOutputEvaluator,true,geography,y,,

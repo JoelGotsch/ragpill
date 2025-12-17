@@ -1,6 +1,7 @@
 import json
 import re
 from collections.abc import Callable
+from copy import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,12 +11,17 @@ from pydantic_ai import models
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output, judge_output
 
-from ragpill.base import BaseEvaluator, EvaluatorMetadata, default_input_to_key
+from ragpill.base import (
+    BaseEvaluator,
+    EvaluatorMetadata,
+    _current_run_span_id,  # pyright: ignore[reportPrivateUsage]
+    default_input_to_key,
+)
 from ragpill.settings import LLMJudgeSettings, MLFlowSettings
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
+    _get_pydantic_ai_llm_model,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
-    get_pydantic_ai_llm_model,
 )
 
 
@@ -26,7 +32,7 @@ def _get_default_judge_llm() -> models.Model:
         raise ValueError(
             "LLMJudgeSettings must have api_key, base_url, and model_name set to get default LLM model. Set them via environment variables RAGPILL_LLMJUDGE_API_KEY, RAGPILL_LLMJUDGE_BASE_URL, and RAGPILL_LLMJUDGE_MODEL_NAME respectively."
         )
-    return get_pydantic_ai_llm_model(
+    return _get_pydantic_ai_llm_model(
         base_url=settings.base_url,
         api_key=settings.api_key.get_secret_value(),
         model_name=settings.model_name,
@@ -107,6 +113,14 @@ class LLMJudge(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
+        """Evaluate the output against the rubric using an LLM judge.
+
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result with the judge's reasoning.
+        """
         # Wrap in an explicit span so that both the pydantic-ai and openai autolog
         # integrations create child spans rather than competing root traces. Without this,
         # the two integrations race to INSERT a root trace with the same request_id, which
@@ -179,11 +193,46 @@ class WrappedPydanticEvaluator(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
+        """Delegate evaluation to the wrapped pydantic-evals evaluator.
+
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result from the wrapped evaluator.
+        """
         eval_output: Any = await self.pydantic_evaluator.evaluate(ctx)  # pyright: ignore[reportGeneralTypeIssues,reportUnknownVariableType]
         assert isinstance(eval_output, EvaluationReason), (
             "Wrapped pydantic evaluator did not return an EvaluationReason."
         )
         return eval_output
+
+
+def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
+    """Return a copy of the trace containing only the subtree rooted at root_span_id.
+
+    This ensures span-based evaluators only see spans from their specific run,
+    not spans from other runs in the same case trace.
+
+    Args:
+        trace: The full trace to filter.
+        root_span_id: The span ID of the subtree root.
+
+    Returns:
+        A new Trace with only the matching subtree spans.
+    """
+    all_spans = trace.data.spans
+    included: set[str] = set()
+    queue = [root_span_id]
+    while queue:
+        current = queue.pop()
+        included.add(current)
+        for span in all_spans:
+            if span.parent_id == current:
+                queue.append(span.span_id)
+    filtered_data = copy(trace.data)
+    filtered_data.spans = [s for s in all_spans if s.span_id in included]
+    return Trace(info=trace.info, data=filtered_data)
 
 
 @dataclass(kw_only=True, repr=False)
@@ -256,30 +305,37 @@ class SpanBaseEvaluator(BaseEvaluator):
         return result
 
     def get_trace(self, inputs: Any) -> Trace:
-        # find trace where root span has input_key
-        # unforunately, this can't be cashed because for some stupid reason, pydantic-ai is running one input + its evaluators after another,
-        # meaning every time this runs for a new input, there's new traces.
-        # it could be cashed per input though, which only makes sense if there
-        # are a lot of Span-based evaluators per input, which is not the common case, but could be in some scenarios.
-        # For now, we keep it simple and don't cache.
+        """Find the MLflow trace for the given inputs and optionally filter to the current run's subtree.
+
+        When ``_current_run_span_id`` is set (during multi-run evaluation Phase 2),
+        the returned trace is filtered to only contain spans from the current run's subtree.
+        This prevents evaluators from accidentally inspecting spans from other runs.
+        """
+        target_key = self.inputs_to_key_function(inputs)
         traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
             locations=[self.mlflow_experiment_id],
             run_id=self.mlflow_run_id,
-            # filter_string=f"span.attributes.input_key LIKE '{self.inputs_to_key_function(inputs)}'",
             return_type="list",
         )
-        traces = [
-            t
-            for t in traces
-            if t.data.spans and t.data.spans[0].attributes.get("input_key", "") == self.inputs_to_key_function(inputs)
-        ]
-        # assert len(traces) == 1, f"Expected exactly one trace for input {inputs}, found {len(traces)}."
-        if len(traces) == 0:
+        # Match traces by input_key on any span (not just root), since in multi-run
+        # mode the root span is the case-level parent and run spans are children.
+        matching: list[Trace] = []
+        for t in traces:
+            for span in t.data.spans or []:
+                if span.attributes.get("input_key", "") == target_key:
+                    matching.append(t)
+                    break
+        if len(matching) == 0:
             raise ValueError(f"No trace found for input {inputs}.")
-        if len(traces) > 1:
-            # todo: find right trace (parent)
-            return traces[0]  # or raise an error if multiple traces are not expected
-        return traces[0]
+
+        trace = matching[0]
+
+        # If we're inside a multi-run evaluation, filter to only the current run's subtree.
+        run_span_id = _current_run_span_id.get()
+        if run_span_id is not None:
+            trace = _filter_trace_to_subtree(trace, run_span_id)
+
+        return trace
 
 
 @dataclass(kw_only=True, repr=False)
@@ -295,6 +351,17 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
     custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
     def get_documents(self, inputs: Any) -> list[Document]:
+        """Retrieve source documents from MLflow trace spans.
+
+        Searches retriever, tool, and reranker spans in the trace for the given
+        inputs and collects all documents found in their outputs.
+
+        Args:
+            inputs: The task inputs used to look up the corresponding trace.
+
+        Returns:
+            List of documents extracted from the trace spans.
+        """
         trace = self.get_trace(inputs)
         retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
@@ -317,6 +384,14 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
         self,
         ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
+        """Retrieve source documents and apply the evaluation function.
+
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result with a custom reason message.
+        """
         documents = self.get_documents(ctx.inputs)
         result = self.evaluation_function(documents)
         return EvaluationReason(
@@ -539,6 +614,14 @@ class RegexInOutputEvaluator(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
+        """Check whether the regex pattern matches the normalized task output.
+
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result indicating whether the pattern matched.
+        """
         output_str = _normalize_text(str(ctx.output))
         matches = bool(self._compiled_pattern.search(output_str))
         reason = (

@@ -25,4 +25,8 @@ async contexts — including Jupyter notebooks and FastAPI route handlers.
 
 ## See Also
 
+- [Result Types](types.md) - `EvaluationOutput`, `CaseResult`, `RunResult`, `AggregatedResult`
+
 - [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
+- [Repeated Runs Guide](../guide/repeated-runs.md) - Multi-run evaluation with aggregation
+- [Task Factory How-To](../how-to/task-factory.md) - Stateful tasks with repeat

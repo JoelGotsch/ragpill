@@ -9,7 +9,12 @@ Each input is first processed by a Task (usually a llm-agent), which generates a
 The evaluators then can compare the output and traces to the specified criteria, like if a certain fact is part of the answer, a certain document was retrieved in the process, etc.
 Each evaluator for each of the Test-[Case](https://ai.pydantic.dev/evals/core-concepts/#case)s, a EvaluationReason is generated.
 
-!!! note "Error Handling During Task Execution"
-    If an error occurs during task execution (e.g., LLM timeouts, parsing errors, or other runtime exceptions), all associated test cases for that input will evaluate to `False`. This ensures that execution failures are properly reflected in the evaluation results.
+### Repeated Runs
 
+Because LLM outputs are stochastic, ragpill supports running each test case multiple times and aggregating results. Configure `repeat` (number of runs) and `threshold` (minimum pass fraction) per-case or globally via `MLFlowSettings`. This gives statistical confidence that your agent's behavior is reliable, not just lucky on a single run.
+
+See the [Repeated Runs Guide](repeated-runs.md) for details.
+
+!!! note "Error Handling During Task Execution"
+    If an error occurs during task execution (e.g., LLM timeouts, parsing errors, or other runtime exceptions), all associated evaluators for that run will evaluate to `False`. This ensures that execution failures are properly reflected in the evaluation results.
 
