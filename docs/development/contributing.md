@@ -208,56 +208,71 @@ refactor: simplify testset loading logic
 ragpill/
 ├── src/
 │   └── ragpill/
-│       ├── __init__.py
-│       ├── base.py              # Base classes
-│       ├── evaluators.py        # Pre-built evaluators
-│       ├── mlflow_helper.py     # MLflow integration
-│       ├── utils.py             # Utilities
-│       └── csv/                 # CSV module
-│           ├── testset.py       # CSV loading
-│           └── constructors.py  # Constructor helpers
+│       ├── __init__.py          # Curated public API
+│       ├── base.py              # BaseEvaluator, metadata, resolve_repeat
+│       ├── eval_types.py        # Case / Dataset / EvaluatorContext primitives
+│       ├── evaluators.py        # Built-in evaluators (LLMJudge, Regex…, quotes)
+│       ├── execution.py         # execute_dataset (capture layer)
+│       ├── evaluation.py        # evaluate_results (evaluate layer)
+│       ├── upload.py            # upload_results (upload layer)
+│       ├── mlflow_helper.py     # evaluate_testset — chains the three layers
+│       ├── settings.py          # TrackingSettings / LLMJudgeSettings
+│       ├── types.py             # Result types (EvaluationOutput, …)
+│       ├── utils.py             # Text/quote helpers, model construction
+│       ├── backends/            # Pluggable tracking backends + protocols
+│       ├── trace/               # Vendor-neutral trace model + dialect adapters
+│       ├── report/              # LLM-readable / triage report renderers
+│       └── csv/testset.py       # CSV -> Dataset loader
 ├── tests/                       # Test files
 ├── docs/                        # Documentation
-├── pyproject.toml              # Project config
-└── mkdocs.yml                  # Docs config (used by zensical)
+├── pyproject.toml               # Project config
+└── mkdocs.yml                   # Docs config
 ```
 
 ## Adding New Features
 
 ### Adding a New Evaluator
 
-1. Create evaluator class in `evaluators.py`
-2. Inherit from `BaseEvaluator`
-3. Implement `evaluate()` method
-4. Add tests in `tests/`
-5. Add documentation in `docs/api/evaluators.md`
-6. Add example in tutorial notebook
+1. Create the evaluator class in `evaluators.py` (or your own module).
+2. Inherit from `BaseEvaluator` — and decorate with `@dataclass(kw_only=True)`
+   if you add fields, since `BaseEvaluator` is a dataclass.
+3. Implement the required `from_csv_line()` classmethod and the async `run()`.
+4. Register it under a `test_type` key when calling `load_testset`
+   (`default_evaluator_classes | {"MyEval": MyEvaluator}`).
+5. Add tests in `tests/` and API docs in `docs/api/evaluators.md`.
 
 Example:
 
 ```python
+from dataclasses import dataclass
+from typing import Any
+
+from ragpill.base import BaseEvaluator, EvaluatorMetadata
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
+
+
+@dataclass(kw_only=True)
 class MyEvaluator(BaseEvaluator):
     """Your evaluator description."""
-    
-    def __init__(
-        self,
-        expected: bool,
-        tags: str,
-        check: str,
-        custom_param: str,
-    ):
-        super().__init__(expected, tags, check)
-        self.custom_param = custom_param
-    
-    async def evaluate(self, input_val: str, output: str) -> EvalOutput:
-        # Your logic
-        passed = True  # Your check
-        return EvalOutput(
-            name=f"my_check_{self.check}",
-            passed=passed,
-            reason="Reason for pass/fail",
-        )
+
+    custom_param: str
+
+    @classmethod
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "MyEvaluator":
+        return cls(expected=expected, tags=tags, attributes=kwargs, custom_param=check)
+
+    async def run(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> EvaluationReason:
+        passed = self.custom_param in str(ctx.output)
+        return EvaluationReason(value=passed, reason="Reason for pass/fail")
 ```
+
+### Adding a New Tracking Backend
+
+See `src/ragpill/backends/` — implement the four capability protocols in
+`backends/_base.py` (the contract docstrings are the spec), reuse the mixins in
+`backends/_common.py`, and copy `backends/langfuse_backend.py` as a template.
+Add your class to `ALL_BACKENDS` in `tests/test_backend_contract.py` to inherit
+the conformance suite.
 
 ### Adding Documentation
 
@@ -269,8 +284,13 @@ class MyEvaluator(BaseEvaluator):
 ## Getting Help
 
 - **Issues**: Open an issue on GitHub
-- **Discussions**: Use GitHub Discussions
-- **Documentation**: Check the [docs] TODO: add tfs link
+- **Documentation**: <https://joelgotsch.github.io/ragpill/>
+
+## Releases
+
+Releases are cut from `main` by tagging a version (`vX.Y.Z`); the `publish.yml`
+workflow builds and publishes. Pre-1.0, minor versions may include breaking
+changes — record them in `CHANGELOG.md` under **Breaking**.
 
 ## Code of Conduct
 

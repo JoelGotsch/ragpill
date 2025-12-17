@@ -6,11 +6,22 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–8 of the review follow-up: correctness blockers, honest failure
+The full review follow-up (Phases 1–9): correctness blockers, honest failure
 attribution, a backend-neutral API clean break, concurrency foundations, upload
-robustness, backend data fidelity, and a documentation golden-path sprint.
-Backwards compatibility is a non-goal pre-1.0, so the renames below have no
-deprecated aliases.
+robustness, backend data fidelity, a documentation golden-path sprint, and
+contributor-facing test/governance work. Backwards compatibility is a non-goal
+pre-1.0, so the renames below have no deprecated aliases.
+
+### Contributor experience
+
+- Added a **parametrized backend-contract test suite**
+  (`tests/test_backend_contract.py`): a new adapter joins `ALL_BACKENDS` to
+  inherit protocol-conformance and run-tag-no-op checks.
+- Added governance files: root `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+  `SECURITY.md`, a PR template, and issue templates.
+- Refreshed `docs/development/contributing.md`: the project-structure tree and
+  the "add an evaluator" example now match the current (0.5+) API, plus an
+  "add a backend" pointer and a release-process note.
 
 ### Documentation
 
