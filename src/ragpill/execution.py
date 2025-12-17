@@ -280,7 +280,7 @@ def _dataset_run_from_dict(d: dict[str, Any]) -> DatasetRunOutput:
         raise ValueError(
             f"Unsupported run-JSON schema_version {version!r}; this build reads "
             f"v{_RUN_JSON_SCHEMA_VERSION}. v1 files store mlflow-shaped traces and are not "
-            "migrated (the trace model changed in 0.6.0 — see CHANGELOG / ADR-0014). "
+            "migrated (the trace model changed in 0.5.0 — see CHANGELOG / ADR-0014). "
             "Re-run the evaluation to produce a v2 file."
         )
     return DatasetRunOutput(

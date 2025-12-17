@@ -23,8 +23,8 @@ downstream consumes the neutral model only.
 
 Run-JSON writes the new shape with `schema_version=2` and ships no v1
 migrator. Backward compatibility is explicitly not a target. The breaking
-changes are documented in a CHANGELOG and the package version is bumped
-0.5.0 → 0.6.0:
+changes are documented in the CHANGELOG and ship as part of the 0.4.x → 0.5.0
+release:
 
 - `EvaluatorContext.trace` type changes
 - `SpanBaseEvaluator.get_trace` return type changes
@@ -56,7 +56,7 @@ separately in ADR-0015.)
 - `ragpill.trace.Trace`, `ragpill.trace.Span`
 - `EvaluatorContext.trace`, `SpanBaseEvaluator.get_trace`
 - run-JSON layer (`schema_version=2`)
-- CHANGELOG; version bump 0.5.0 → 0.6.0
+- CHANGELOG; part of the 0.4.x → 0.5.0 release
 - `designs/otel-trace-ingestion.md` Phase 2
 - ADR-0013 (adapter interface), ADR-0015 (compat shim)
 - Chat session 2026-06-19

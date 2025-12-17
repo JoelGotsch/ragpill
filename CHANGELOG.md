@@ -4,7 +4,18 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/). This project is
 pre-1.0, so minor versions may carry breaking changes.
 
-## [0.6.0] - 2026-06-19
+## [0.5.0] - 2026-06-19
+
+The 0.4.x → 0.5.0 release: MLflow becomes an optional backend behind a small
+set of protocols, and the captured trace is decoupled from MLflow into a
+vendor-neutral model.
+
+### Changed
+
+- **MLflow is now an optional dependency.** `pip install ragpill` no longer
+  pulls MLflow; opt in with `pip install ragpill[mlflow]`. Tracking is driven
+  through a small backend protocol (`ragpill.backends`) so other backends can
+  be added without touching the execute/evaluate/upload layers.
 
 ### Breaking
 
