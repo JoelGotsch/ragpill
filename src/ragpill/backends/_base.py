@@ -231,6 +231,28 @@ class ResultsBackend(Protocol):
         """Attach a searchable tag to a trace."""
         ...
 
+    def set_run_tag(self, run_id: str, key: str, value: str) -> None:
+        """Set a key/value tag on the run itself (not a trace).
+
+        Used by the upload layer to record its progress (an upload-state marker)
+        so a re-run is idempotent. Backends without a native run concept no-op.
+        """
+        ...
+
+    def get_run_tag(self, run_id: str, key: str) -> str | None:
+        """Read a run tag, or ``None`` when absent. Backends without a native
+        run concept return ``None`` (so the idempotency guard simply proceeds)."""
+        ...
+
+    def delete_run_artifact(self, run_id: str, artifact_path: str) -> None:
+        """Delete a previously-logged run artifact if present.
+
+        Lets the upload layer replace an append-only artifact (e.g. MLflow's
+        ``log_table``) on retry instead of duplicating rows. No-op when absent
+        or unsupported.
+        """
+        ...
+
 
 @runtime_checkable
 class LifecycleBackend(Protocol):

@@ -124,6 +124,20 @@ class NoopResultsMixin(UnsupportedCapabilityWarner):
         _ = local_path, artifact_path
         self._warn_unsupported("log_artifact")
 
+    def set_run_tag(self, run_id: str, key: str, value: str) -> None:
+        _ = run_id, key, value
+        self._warn_unsupported("set_run_tag")
+
+    def get_run_tag(self, run_id: str, key: str) -> str | None:
+        # No native run concept -> no stored tags. Returning None lets the
+        # upload idempotency guard simply proceed for these backends.
+        _ = run_id, key
+        return None
+
+    def delete_run_artifact(self, run_id: str, artifact_path: str) -> None:
+        _ = run_id, artifact_path
+        self._warn_unsupported("delete_run_artifact")
+
 
 class SyntheticRunMixin:
     """``start_run``/``end_run``/``is_run_active`` for backends with no native

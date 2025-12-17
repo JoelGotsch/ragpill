@@ -6,13 +6,24 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–4 of the review follow-up: correctness blockers, honest failure
-attribution, a backend-neutral API clean break, and concurrency foundations.
-Backwards compatibility is a non-goal pre-1.0, so the renames below have no
-deprecated aliases.
+Phases 1–5 of the review follow-up: correctness blockers, honest failure
+attribution, a backend-neutral API clean break, concurrency foundations, and
+upload robustness. Backwards compatibility is a non-goal pre-1.0, so the renames
+below have no deprecated aliases.
 
 ### Added
 
+- **Idempotent, resumable upload.** `upload_results` records an upload-state tag
+  on the run: a run that already completed refuses to re-upload (raising unless
+  `overwrite=True`), and a retry after a partial failure replaces the append-only
+  results-table artifact instead of duplicating rows. Adds `set_run_tag` /
+  `get_run_tag` / `delete_run_artifact` to the backend protocol (no-ops on
+  backends without a native run concept).
+- **`upload_results(tracking_uri=…)`** and destination provenance: the upload
+  destination resolves as explicit arg > the run's recorded
+  `DatasetRunOutput.tracking_uri` > `settings.tracking_uri`, so an upload can no
+  longer silently reattach a run against a different server than it was captured
+  on.
 - **Opt-in, caller-specified timeouts.** `execute_dataset(task_timeout_s=…)`
   bounds each task and `LLMJudge(timeout_s=…)` bounds each judge call; both
   default to `None` (no timeout) — ragpill never imposes a latency budget on
@@ -25,6 +36,9 @@ deprecated aliases.
 
 ### Changed
 
+- **Judge-trace cleanup is no longer silently capped at 1000.** `delete_judge_traces`
+  now searches with a large limit (MLflow paginates internally) and logs how
+  many judge traces it deleted, so large runs don't leave judge clutter behind.
 - **Synchronous tasks run off the event loop** (via `anyio.to_thread`), so a
   blocking client (e.g. a `requests`-based RAG call) no longer stalls the loop
   and the tracking exporters running on it.

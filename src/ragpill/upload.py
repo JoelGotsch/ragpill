@@ -33,13 +33,15 @@ from ragpill.types import CaseResult, EvaluationOutput
 # ---------------------------------------------------------------------------
 
 
-def _reattach_run(settings: TrackingSettings, run_id: str | None) -> tuple[str | None, str]:
+def _reattach_run(settings: TrackingSettings, run_id: str | None, tracking_uri: str | None) -> tuple[str | None, str]:
     """Reattach to an existing run (from execute_dataset) or start a new one.
 
     Args:
         settings: Tracking configuration.
         run_id: Optional existing run id. When provided, the active run is
             re-opened; otherwise a new run is started.
+        tracking_uri: The resolved destination to point the backend at (see
+            :func:`upload_results` for the precedence rule).
 
     Returns:
         ``(previous_tracking_uri, active_run_id)``. The previous URI lets the
@@ -48,7 +50,7 @@ def _reattach_run(settings: TrackingSettings, run_id: str | None) -> tuple[str |
     """
     backend = get_backend()
     previous_uri = backend.get_tracking_uri()
-    backend.set_destination(settings.tracking_uri, settings.experiment_name)
+    backend.set_destination(tracking_uri, settings.experiment_name)
     if run_id:
         handle = backend.start_run(run_id=run_id)
     else:
@@ -78,7 +80,7 @@ def _log_table_and_metrics(
 ) -> None:
     """Log the runs DataFrame as a tracking-backend table plus overall + per-tag + per-attribute accuracy."""
     backend = get_backend()
-    backend.log_table(evaluation.runs, "evaluation_results.json")
+    backend.log_table(evaluation.runs, _RESULTS_TABLE_ARTIFACT)
     if model_params:
         backend.log_params(model_params)
     if evaluation.runs.empty:
@@ -181,29 +183,49 @@ def _resolve_experiment_id(settings: TrackingSettings) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Run tag recording upload progress, so a re-run is idempotent.
+_UPLOAD_STATE_TAG = "ragpill_upload_state"
+_RESULTS_TABLE_ARTIFACT = "evaluation_results.json"
+
+
 def upload_results(
     evaluation: EvaluationOutput,
     settings: TrackingSettings | None = None,
     *,
+    tracking_uri: str | None = None,
     model_params: dict[str, str] | None = None,
     upload_traces: bool = False,
+    overwrite: bool = False,
 ) -> None:
     """Persist an :class:`EvaluationOutput` to the configured tracking backend.
 
-    The name is retained for backward compatibility; behaviour is
-    backend-driven via :func:`ragpill.backends.get_backend` (MLflow by
-    default, Langfuse / Arize Phoenix when their adapter is registered).
+    Behaviour is backend-driven via :func:`ragpill.backends.get_backend`
+    (MLflow by default, Langfuse / Arize Phoenix when their adapter is
+    registered). The upload is **idempotent**: it marks the run's upload state
+    and refuses to re-upload a run that already completed (unless
+    ``overwrite=True``), and on a retry it replaces the results-table artifact
+    instead of appending duplicate rows.
 
     Args:
         evaluation: Output of :func:`ragpill.evaluation.evaluate_results`.
         settings: Backend connection + experiment info. When omitted, a
             default :class:`TrackingSettings` is loaded from environment vars.
+        tracking_uri: Explicit destination override. When omitted, the
+            destination is resolved as: this argument > the run's recorded
+            ``DatasetRunOutput.tracking_uri`` (so an upload can't reattach the
+            run against a *different* server than it was captured on) >
+            ``settings.tracking_uri``.
         model_params: Optional model parameters to log for reproducibility.
         upload_traces: When ``True``, serialize
             ``evaluation.dataset_run.to_json()`` and upload it as a run
             artifact. Use this for the "disconnected execution + upload later"
             workflow where traces were captured offline and are not yet on the
             server.
+        overwrite: Re-upload a run whose upload state is already ``complete``.
+            Without it, a completed run raises rather than duplicating data.
+
+    Raises:
+        RuntimeError: If the run was already uploaded and ``overwrite`` is False.
 
     Example:
         ```python
@@ -221,6 +243,10 @@ def upload_results(
     dataset_run = evaluation.dataset_run
     run_id: str | None = dataset_run.run_id if (dataset_run and dataset_run.run_id) else None
 
+    # Destination precedence: explicit arg > the run's recorded URI > settings.
+    recorded_uri = dataset_run.tracking_uri if (dataset_run and dataset_run.tracking_uri) else None
+    dest_uri = tracking_uri or recorded_uri or settings.tracking_uri
+
     # Record which judge prompts produced these scores, so a ragpill upgrade
     # that edits a judge system prompt (and thus shifts every score) is visible
     # on the run rather than silent. Only when the run actually used a judge.
@@ -230,8 +256,22 @@ def upload_results(
         params.setdefault("ragpill_judge_prompt_version", str(JUDGE_PROMPT_VERSION))
         params.setdefault("ragpill_judge_prompt_hash", judge_prompt_hash())
 
-    previous_uri, active_run_id = _reattach_run(settings, run_id)
+    previous_uri, active_run_id = _reattach_run(settings, run_id, dest_uri)
     try:
+        # Idempotency: refuse to re-upload a completed run; on a prior partial or
+        # (overwrite) complete run, replace the append-only results table so
+        # retries don't duplicate rows. Mark ``partial`` before writing and
+        # ``complete`` only after everything succeeds.
+        prior_state = backend.get_run_tag(active_run_id, _UPLOAD_STATE_TAG)
+        if prior_state == "complete" and not overwrite:
+            raise RuntimeError(
+                f"Run {active_run_id!r} was already uploaded (upload state 'complete'). "
+                "Pass overwrite=True to re-upload."
+            )
+        backend.set_run_tag(active_run_id, _UPLOAD_STATE_TAG, "partial")
+        if prior_state in ("partial", "complete"):
+            backend.delete_run_artifact(active_run_id, _RESULTS_TABLE_ARTIFACT)
+
         _log_table_and_metrics(evaluation, params or None)
         _log_assessments_and_tags(evaluation.case_results)
         if upload_traces:
@@ -241,6 +281,8 @@ def upload_results(
         experiment_id = _resolve_experiment_id(settings)
         if backend.is_run_active():
             backend.delete_judge_traces(experiment_id, active_run_id)
+
+        backend.set_run_tag(active_run_id, _UPLOAD_STATE_TAG, "complete")
     finally:
         if backend.is_run_active():
             backend.end_run()

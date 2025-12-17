@@ -24,13 +24,17 @@ if TYPE_CHECKING:
 
     from ragpill.trace import Trace as NeutralTrace
 
-from ragpill.backends._common import poll_for_trace
+from ragpill.backends._common import logger, poll_for_trace
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 # MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
 # other backends have their own rules, so the slugging lives here, not in the
 # shared upload layer.
 _METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
+
+# Upper bound for judge-trace search. mlflow.search_traces auto-paginates up to
+# this, so it removes the old silent 1000-trace cap without truly unbounded reads.
+_JUDGE_TRACE_SEARCH_LIMIT = 1_000_000
 
 
 def _is_not_found(exc: Any) -> bool:
@@ -244,14 +248,20 @@ class MLflowBackend:
         # the ``ragpill_is_judge_trace`` attribute. Native introspection
         # (``trace.data._get_root_span`` is not public API) is confined here —
         # only this adapter knows MLflow's trace shape.
+        #
+        # ``mlflow.search_traces`` auto-paginates internally up to ``max_results``,
+        # so a large cap avoids the old silent 1000-trace truncation on big runs
+        # (cases x repeats x judges easily exceeds 1000).
         traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
-            return_type="list", run_id=run_id, locations=[experiment_id], max_results=1000
+            return_type="list", run_id=run_id, locations=[experiment_id], max_results=_JUDGE_TRACE_SEARCH_LIMIT
         )
         judge_trace_ids: list[str] = []
         for trace in traces:
             root = trace.data._get_root_span()
             if root and root.attributes.get("ragpill_is_judge_trace"):
                 judge_trace_ids.append(trace.info.trace_id)
+        if judge_trace_ids:
+            logger.info("Deleting %d judge trace(s) from run %s.", len(judge_trace_ids), run_id)
         self.delete_traces(experiment_id=experiment_id, trace_ids=judge_trace_ids)
 
     # ------------------------------------------------------------------
@@ -286,6 +296,38 @@ class MLflowBackend:
 
     def set_trace_tag(self, trace_id: str, key: str, value: str) -> None:
         mlflow.set_trace_tag(trace_id, key, value)
+
+    def set_run_tag(self, run_id: str, key: str, value: str) -> None:
+        self._client().set_tag(run_id, key, value)
+
+    def get_run_tag(self, run_id: str, key: str) -> str | None:
+        from mlflow.exceptions import MlflowException
+
+        try:
+            run: Any = self._client().get_run(run_id)
+        except MlflowException as e:
+            if _is_not_found(e):
+                return None
+            raise
+        tags: dict[str, str] = dict(run.data.tags or {})
+        return tags.get(key)
+
+    def delete_run_artifact(self, run_id: str, artifact_path: str) -> None:
+        from mlflow.exceptions import MlflowException
+        from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
+
+        client: Any = self._client()
+        try:
+            existing = {str(f.path) for f in client.list_artifacts(run_id)}
+        except MlflowException as e:
+            if _is_not_found(e):
+                return
+            raise
+        if artifact_path not in existing:
+            return
+        info: Any = client.get_run(run_id).info
+        repo: Any = get_artifact_repository(info.artifact_uri)
+        repo.delete_artifacts(artifact_path)
 
     # ------------------------------------------------------------------
     # LifecycleBackend
