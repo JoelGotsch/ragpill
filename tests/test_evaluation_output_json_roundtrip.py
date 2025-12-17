@@ -60,7 +60,10 @@ def _build_case_results() -> list[CaseResult]:
         duration=0.42,
         assertions={
             "E": EvaluationResult(
-                name="E", value=True, reason="ok", source=EvaluatorSource(name="E", arguments={"k": 1})
+                name="E",
+                value=True,
+                reason="ok",
+                source=EvaluatorSource(name="E", arguments={"k": 1}, source_type="LLM_JUDGE"),
             ),
             "F": EvaluationResult(name="F", value=False, reason="bad", source=EvaluatorSource(name="F")),
         },
@@ -105,6 +108,9 @@ def test_roundtrip_preserves_case_results_structure():
     assert rr.assertions["E"].value is True
     assert rr.assertions["F"].reason == "bad"
     assert rr.assertions["E"].source.arguments == {"k": 1}
+    # source_type must survive the round trip (regression guard for the serde gap).
+    assert rr.assertions["E"].source.source_type == "LLM_JUDGE"
+    assert rr.assertions["F"].source.source_type == "CODE"
     assert len(rr.evaluator_failures) == 1
     assert rr.evaluator_failures[0].name == "X"
     # Exceptions become RuntimeError after round trip — content is preserved as a string.

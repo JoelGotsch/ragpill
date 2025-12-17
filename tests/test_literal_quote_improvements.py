@@ -18,15 +18,15 @@ from unittest.mock import patch
 
 import pytest
 
+from ragpill._text import (
+    extract_markdown_quotes,
+    normalize_for_quote_comparison,
+    normalize_text,
+)
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import LiteralQuoteEvaluator
 from ragpill.trace import Document
-from ragpill.utils import (  # pyright: ignore[reportPrivateUsage]
-    _extract_markdown_quotes,
-    _normalize_for_quote_comparison,
-    _normalize_text,
-)
 
 
 def _ctx(output: str) -> EvaluatorContext[str, str, EvaluatorMetadata]:
@@ -73,9 +73,9 @@ def _ctx(output: str) -> EvaluatorContext[str, str, EvaluatorMetadata]:
     ],
 )
 def test_category_a_normalization_strips_artifacts(source: str, agent_quote: str) -> None:
-    # Aggressive normalization is comparison-only — _normalize_text stays lean
+    # Aggressive normalization is comparison-only — normalize_text stays lean
     # so the runs-table text keeps emphasis / citation noise verbatim.
-    assert _normalize_for_quote_comparison(agent_quote) in _normalize_for_quote_comparison(source)
+    assert normalize_for_quote_comparison(agent_quote) in normalize_for_quote_comparison(source)
 
 
 # ---------------------------------------------------------------------------
@@ -111,14 +111,14 @@ def test_category_a_normalization_strips_artifacts(source: str, agent_quote: str
 def test_category_b_bracketed_paraphrase_markers_become_wildcards(source: str, agent_blockquote: str) -> None:
     """After extraction, bracketed elision markers become `.*` and the regex matches the source."""
     output = f"The report says:\n> {agent_blockquote}\n(File: foo.txt, Para: 1)"
-    quotes = _extract_markdown_quotes(output)
+    quotes = extract_markdown_quotes(output)
     assert len(quotes) == 1
     quote, _ = quotes[0]
     assert ".*" in quote
     import re
 
     pattern = re.escape(quote).replace(r"\.\*", ".*")
-    assert re.search(pattern, _normalize_text(source)) is not None
+    assert re.search(pattern, normalize_text(source)) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -133,26 +133,26 @@ def test_category_c_inline_referenced_file_marker_is_stripped_at_compare_time() 
     output = (
         "> the inspector verified that the lab was feeding (Referenced file: REPORT/2024/12) up to 1044 module-1 units"
     )
-    quotes = _extract_markdown_quotes(output)
+    quotes = extract_markdown_quotes(output)
     quote, _ = quotes[0]
     # Extraction preserves the marker verbatim.
     assert "referenced file" in quote
     assert "report/2024/12" in quote
     # Comparison normalization removes it.
-    compared = _normalize_for_quote_comparison(quote)
+    compared = normalize_for_quote_comparison(quote)
     assert "referenced file" not in compared
     assert "report/2024/12" not in compared
 
 
 def test_category_c_inline_file_marker_is_stripped_at_compare_time() -> None:
     output = "> the verification step (File: foo.txt) completed successfully"
-    quotes = _extract_markdown_quotes(output)
+    quotes = extract_markdown_quotes(output)
     quote, _ = quotes[0]
     # Extraction preserves the marker verbatim.
     assert "file:" in quote
     assert "foo.txt" in quote
     # Comparison normalization removes it.
-    compared = _normalize_for_quote_comparison(quote)
+    compared = normalize_for_quote_comparison(quote)
     assert "file:" not in compared
     assert "foo.txt" not in compared
 
@@ -186,7 +186,7 @@ async def test_category_d_distinguishes_zero_sources_from_quote_mismatch() -> No
 
 def test_category_g_stray_leading_quote_is_trimmed() -> None:
     output = ">'On 22 February 2025, the inspector verified at Site-A'\n(File: foo, Para: 1)"
-    quotes = _extract_markdown_quotes(output)
+    quotes = extract_markdown_quotes(output)
     quote, _ = quotes[0]
     assert not quote.startswith("'")
     assert not quote.endswith("'")
@@ -214,14 +214,14 @@ def test_category_g_stray_leading_quote_is_trimmed() -> None:
 )
 def test_category_i_dash_and_space_variants_normalize(source: str, agent_quote: str) -> None:
     # Dash / NBSP / soft-hyphen folding lives in the comparison-only normalization.
-    assert _normalize_for_quote_comparison(agent_quote) in _normalize_for_quote_comparison(source)
+    assert normalize_for_quote_comparison(agent_quote) in normalize_for_quote_comparison(source)
 
 
 # ---------------------------------------------------------------------------
 # Category H — trailing-punctuation widening is intentionally NOT done here.
 #
 # Widening beyond `.` would break regex evaluators that flow patterns through
-# ``_normalize_text`` (e.g. a pattern ending in ``\?`` would lose its ``?``).
+# ``normalize_text`` (e.g. a pattern ending in ``\?`` would lose its ``?``).
 # This is documented as a future split: a separate normalization function for
 # literal-text contexts could safely strip ``,;:!?``.
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ def test_category_i_dash_and_space_variants_normalize(source: str, agent_quote: 
 
 def test_category_h_trailing_period_still_stripped() -> None:
     """Regression: trailing period stripping must keep working."""
-    assert not _normalize_text("ends with a period.").endswith(".")
+    assert not normalize_text("ends with a period.").endswith(".")
 
 
 # ---------------------------------------------------------------------------

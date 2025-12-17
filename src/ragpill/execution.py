@@ -47,10 +47,16 @@ from ragpill.base import (
 from ragpill.eval_types import Case, Dataset
 from ragpill.settings import TrackingSettings
 from ragpill.trace import filter_to_subtree, trace_from_dict, trace_to_dict
-from ragpill.utils import _fix_evaluator_global_flag  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from ragpill.trace import Trace
+
+
+def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:
+    """Mark every dataset-level (global) evaluator as global."""
+    for evaluator in dataset.evaluators:
+        evaluator.is_global = True
+
 
 # Run-JSON schema version. v2 stores the vendor-neutral ragpill.trace.Trace
 # (v1 stored mlflow.entities.Trace JSON). No v1 migrator — see ADR-0014.

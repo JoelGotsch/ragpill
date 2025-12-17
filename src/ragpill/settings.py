@@ -1,8 +1,36 @@
 from typing import Any
 
+from httpx import AsyncClient
+from openai import AsyncOpenAI
 from pydantic import Field, PrivateAttr, SecretStr
 from pydantic_ai import models
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _get_pydantic_ai_llm_model(
+    base_url: str | None,
+    api_key: str | None,
+    model_name: str,
+    temperature: float = 0.0,
+    ssl_ca_cert: str | None = None,
+    ssl_verify: bool = True,
+) -> models.Model:
+    """Build a pydantic-ai model from the given connection settings.
+
+    Args:
+        ssl_ca_cert: Path to a custom CA certificate bundle. When set, this is
+            passed as the ``verify`` parameter to ``httpx.AsyncClient``.
+        ssl_verify: Whether to verify SSL certificates. Ignored when
+            *ssl_ca_cert* is provided.
+    """
+    verify: str | bool = ssl_ca_cert if ssl_ca_cert else ssl_verify
+    http_client = AsyncClient(verify=verify)
+    openai_client = AsyncOpenAI(max_retries=3, base_url=base_url, api_key=api_key, http_client=http_client)
+    return OpenAIChatModel(
+        model_name, provider=OpenAIProvider(openai_client=openai_client), settings={"temperature": temperature}
+    )
 
 
 class RagpillTraceSettings(BaseSettings):
@@ -160,8 +188,6 @@ class LLMJudgeSettings(BaseSettings):
         Use :meth:`set_model` to inject a fully custom model instance instead.
         """
         if self._cached_model is None:
-            from ragpill.utils import _get_pydantic_ai_llm_model  # pyright: ignore[reportPrivateUsage]
-
             # base_url / api_key are optional: when unset, the OpenAI client
             # resolves them from OPENAI_BASE_URL / OPENAI_API_KEY (the documented
             # default path). Only a fully-missing API key fails — and that error

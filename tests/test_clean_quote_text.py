@@ -2,7 +2,7 @@
 
 import pytest
 
-from ragpill.utils import _clean_quote_text
+from ragpill._text import _clean_quote_text
 
 
 @pytest.mark.parametrize(

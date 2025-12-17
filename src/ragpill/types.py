@@ -283,11 +283,15 @@ def _df_from_json(s: str) -> pd.DataFrame:
 
 
 def _evaluator_source_to_dict(src: EvaluatorSource) -> dict[str, Any]:
-    return {"name": src.name, "arguments": src.arguments}
+    return {"name": src.name, "arguments": src.arguments, "source_type": src.source_type}
 
 
 def _evaluator_source_from_dict(d: dict[str, Any]) -> EvaluatorSource:
-    return EvaluatorSource(name=d["name"], arguments=dict(d.get("arguments", {})))
+    return EvaluatorSource(
+        name=d["name"],
+        arguments=dict(d.get("arguments", {})),
+        source_type=d.get("source_type", "CODE"),
+    )
 
 
 def _evaluation_result_to_dict(er: EvaluationResult) -> dict[str, Any]:

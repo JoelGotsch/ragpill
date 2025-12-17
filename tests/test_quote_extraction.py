@@ -1,17 +1,17 @@
-"""Regression tests for ``_extract_markdown_quotes`` (quote_extraction_regression.md).
+"""Regression tests for ``extract_markdown_quotes`` (quote_extraction_regression.md).
 
 Locks the pre-0.4.2 extraction contract: the extractor produces the
 agent's quote text verbatim (lean normalization only), with elision
 markers converted to ``.*`` placeholders. The aggressive normalization
 that was briefly merged into ``_normalize_text`` in 0.4.2 — citation
 stripping, markdown emphasis stripping, dash folding — now lives in
-:func:`ragpill.utils._normalize_for_quote_comparison` and is applied
+:func:`ragpill._text.normalize_for_quote_comparison` and is applied
 **only inside** :class:`~ragpill.evaluators.LiteralQuoteEvaluator.run`.
 """
 
 from __future__ import annotations
 
-from ragpill.utils import _extract_markdown_quotes  # pyright: ignore[reportPrivateUsage]
+from ragpill._text import extract_markdown_quotes
 
 # ---------------------------------------------------------------------------
 # Case 1 — bare ellipsis preserves surrounding whitespace
@@ -21,7 +21,7 @@ from ragpill.utils import _extract_markdown_quotes  # pyright: ignore[reportPriv
 def test_collapse_multiple_dots_keeps_space_after_wildcard():
     """``ellipsis... and`` -> ``ellipsis.* and`` — the space before ``and`` survives."""
     output = "> This quote has ellipsis... and mid...section..."
-    quote, _ = _extract_markdown_quotes(output)[0]
+    quote, _ = extract_markdown_quotes(output)[0]
     assert quote == "this quote has ellipsis.* and mid.*section"
 
 
@@ -34,7 +34,7 @@ def test_extract_preserves_internal_single_quotes():
     """The outer ``"..."`` is stripped; the inner ``'...'`` pairs that are
     *content* are not."""
     output = "> \"'no longer outstanding at this stage' does not mean 'resolved'.\""
-    quote, _ = _extract_markdown_quotes(output)[0]
+    quote, _ = extract_markdown_quotes(output)[0]
     assert quote == "'no longer outstanding at this stage' does not mean 'resolved'"
 
 
@@ -55,7 +55,7 @@ def test_nested_quote_source_markers_survive_extraction():
         "> trailing outer text\n"
         "(File: [outer.txt](https://example.test/outer))\n"
     )
-    quote, source = _extract_markdown_quotes(output)[0]
+    quote, source = extract_markdown_quotes(output)[0]
     assert source == "outer.txt"
     # The nested subquote's source marker is preserved inline in the
     # collapsed-quote text.
@@ -73,7 +73,7 @@ def test_extract_preserves_markdown_emphasis():
     inside ``LiteralQuoteEvaluator.run`` handles the asymmetry vs source
     documents that lack the formatting."""
     output = "> This quote has **bold** and *italic* text\n> and also `code` formatting"
-    quote, _ = _extract_markdown_quotes(output)[0]
+    quote, _ = extract_markdown_quotes(output)[0]
     assert "**bold**" in quote
     assert "*italic*" in quote
 
@@ -89,7 +89,7 @@ def test_extract_preserves_markdown_link_text():
     bracketed-gloss form of ``_AGENT_ELISION_RE`` excludes any ``[...]``
     followed immediately by ``(`` to leave links alone."""
     output = "> Check out [this link](https://example.com) for details\n> And also [another link](https://test.org)"
-    quote, _ = _extract_markdown_quotes(output)[0]
+    quote, _ = extract_markdown_quotes(output)[0]
     assert "this link" in quote
     assert "another link" in quote
     # The links themselves stay intact.

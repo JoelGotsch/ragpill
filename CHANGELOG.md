@@ -132,8 +132,27 @@ pre-1.0, so the renames below have no deprecated aliases.
 - **Trace-adapter entry-point discovery is cached** (`functools.cache`), so
   `parse_otel` no longer re-scans installed distributions once per span.
 
+### Internal
+
+- Split the text/markdown-quote machinery out of `utils.py` into a cohesive,
+  stdlib-only `ragpill._text` with public `normalize_text` /
+  `normalize_for_quote_comparison` / `extract_markdown_quotes` — removing the
+  cross-module private imports (and their `reportPrivateUsage` ignores) from the
+  evaluators. `_fix_evaluator_global_flag` and `_get_pydantic_ai_llm_model` moved
+  to their sole consumers (`execution.py` / `settings.py`).
+- Cleaned up the quote parser: deduped the two near-identical normalization
+  loops in `_clean_quote_text` and removed the dead commented-out `empty_run`
+  experiment — behavior unchanged (the full quote/normalization test corpus
+  still passes). The higher-risk full state-machine rewrite was intentionally
+  not done; likewise the hand-rolled result serde was kept rather than swapped
+  for pydantic `TypeAdapter`, which would change the on-disk run-JSON format and
+  regress the `to_json` graceful fallback for non-serializable task outputs.
+
 ### Fixed
 
+- **`EvaluationOutput` round-trip no longer drops `EvaluatorSource.source_type`.**
+  The JSON serde was not updated when `source_type` was added, so a saved-and-
+  reloaded evaluation silently reset every assessment's provenance to `"CODE"`.
 - **A trace that could not be read is now an evaluator error, not a false
   `False`.** When a span-based evaluator's trace was unavailable (fetch timed
   out, backend error, or the run's spans were still in flight), `get_trace`

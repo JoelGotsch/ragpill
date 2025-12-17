@@ -12,17 +12,13 @@ from pydantic_ai import models
 if TYPE_CHECKING:
     from ragpill.trace import Trace
 
+from ragpill._text import extract_markdown_quotes, normalize_for_quote_comparison, normalize_text
 from ragpill.backends import CaptureSpanKind, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
 from ragpill.settings import get_llm_judge_settings
 from ragpill.trace import Document, filter_to_subtree
-from ragpill.utils import (
-    _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
-    _normalize_for_quote_comparison,  # pyright: ignore[reportPrivateUsage]
-    _normalize_text,  # pyright: ignore[reportPrivateUsage]
-)
 
 # Source spans whose outputs count as retrieved documents. Compared against the
 # string value of the neutral ``ragpill.trace.CaptureSpanKind`` (a StrEnum) so we don't
@@ -326,7 +322,7 @@ def _regex_in_any_document_content(pattern: str) -> Callable[[list[Document]], b
 
     def evaluation_function(documents: list[Document]) -> bool:
         for doc in documents:
-            normalized_content = _normalize_text(doc.content)
+            normalized_content = normalize_text(doc.content)
             if regex.search(normalized_content):
                 return True
         return False
@@ -341,7 +337,7 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
     The documents are retrieved from mlflow trace and include documents from retriever, tool, and reranker spans.
 
     Both the pattern and document contents are normalized before matching via
-    ``_normalize_text``, which applies:
+    ``normalize_text``, which applies:
 
     - **Case-folding** - all text is lowercased (``str.casefold``), so matching
       is always case-insensitive. Using the ``(?i)`` flag is therefore redundant.
@@ -383,7 +379,7 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
             check: Regex pattern to search for in document contents
             **kwargs: Additional attributes for the evaluator
         """
-        pattern = _normalize_text(check)
+        pattern = normalize_text(check)
         evaluation_function = _regex_in_any_document_content(pattern)
         return cls(
             expected=expected,
@@ -402,7 +398,7 @@ def _regex_in_doc_metadata(key: str, pattern: str) -> Callable[[list[Document]],
 
     def evaluation_function(documents: list[Document]) -> bool:
         for doc in documents:
-            normalized_metadata_value = _normalize_text(str(doc.metadata.get(key, "")))
+            normalized_metadata_value = normalize_text(str(doc.metadata.get(key, "")))
             if key in doc.metadata and regex.search(normalized_metadata_value):
                 return True
         return False
@@ -423,7 +419,7 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
     Then checks if any document in the used sources has metadata[key] matching the regex pattern.
 
     Both the pattern and metadata values are normalized before matching via
-    ``_normalize_text``, which applies case-folding (``str.casefold``),
+    ``normalize_text``, which applies case-folding (``str.casefold``),
     Unicode NFKC, whitespace collapsing, and quote normalization. Because text
     is already case-folded, the ``(?i)`` flag is redundant.
 
@@ -472,7 +468,7 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
             raise ValueError(f"Check must be a JSON object with 'pattern' and 'key'. Got: {check}")
         pattern: str = str(check_dict["pattern"])  # pyright: ignore[reportUnknownArgumentType]
         metadata_key: str = str(check_dict["key"])  # pyright: ignore[reportUnknownArgumentType]
-        pattern = _normalize_text(pattern)
+        pattern = normalize_text(pattern)
         evaluation_function = _regex_in_doc_metadata(metadata_key, pattern)
         return cls(
             expected=expected,
@@ -491,7 +487,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
     """Check whether a regex pattern matches the stringified output.
 
     Both the pattern and the output are normalized before matching via
-    ``_normalize_text``, which applies case-folding (``str.casefold``),
+    ``normalize_text``, which applies case-folding (``str.casefold``),
     Unicode NFKC, whitespace collapsing, and quote normalization.
     Because text is already case-folded, the ``(?i)`` flag is redundant.
 
@@ -505,7 +501,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
     def __post_init__(self) -> None:
         # The output is matched in normalized form, so normalize the pattern
         # the same way regardless of construction path (constructor or CSV).
-        self.pattern = _normalize_text(self.pattern)
+        self.pattern = normalize_text(self.pattern)
         try:
             self._compiled_pattern = re.compile(self.pattern)
         except re.error as exc:  # pragma: no cover - defensive
@@ -545,7 +541,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
         Returns:
             The evaluation result indicating whether the pattern matched.
         """
-        output_str = _normalize_text(str(ctx.output))
+        output_str = normalize_text(str(ctx.output))
         matches = bool(self._compiled_pattern.search(output_str))
         reason = (
             f'Regex pattern "{self.pattern}" matched output.'
@@ -674,7 +670,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         output_str = str(ctx.output)
 
         # Extract normalized quotes from output
-        quotes = _extract_markdown_quotes(output_str)
+        quotes = extract_markdown_quotes(output_str)
 
         if not quotes:
             return EvaluationReason(
@@ -705,14 +701,14 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         # Apply the comparison-only aggressive normalization to both sides so
         # citation noise, LaTeX wrappers, dash variants, and markdown emphasis
         # don't cause spurious mismatches. The lean extraction in
-        # _extract_markdown_quotes leaves those features in the quote text
+        # extract_markdown_quotes leaves those features in the quote text
         # so the runs DataFrame still shows the agent's original wording.
-        normalized_docs = [_normalize_for_quote_comparison(doc.content) for doc in documents]
+        normalized_docs = [normalize_for_quote_comparison(doc.content) for doc in documents]
 
         # Check each quote
         not_found: list[str] = []
         for quote, referenced_file in unique_quotes:
-            compare_quote = _normalize_for_quote_comparison(quote)
+            compare_quote = normalize_for_quote_comparison(quote)
             # Use regex search if quote contains .* (from ellipsis conversion), otherwise use substring match
             if ".*" in compare_quote:
                 pattern = re.escape(compare_quote).replace(r"\.\*", ".*")
@@ -895,7 +891,7 @@ class HasQuotesEvaluator(BaseEvaluator):
             List of quote texts (after cleaning)
         """
         # Use shared function and discard file references
-        return [quote for quote, _ in _extract_markdown_quotes(output)]
+        return [quote for quote, _ in extract_markdown_quotes(output)]
 
     async def run(
         self,
