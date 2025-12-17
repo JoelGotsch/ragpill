@@ -4,11 +4,11 @@ import json
 from unittest.mock import patch
 
 import pytest
-from mlflow.entities import Document
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import RegexInDocumentMetadataEvaluator
+from ragpill.trace import Document
 
 
 def create_test_context(inputs: str, output: str) -> EvaluatorContext:
@@ -72,7 +72,7 @@ async def test_match_in_metadata():
     evaluator = RegexInDocumentMetadataEvaluator.from_csv_line(
         expected=True, tags=set(), check='{"pattern": "report", "key": "source"}'
     )
-    docs = [Document(page_content="text", metadata={"source": "annual-report.pdf"})]
+    docs = [Document(content="text", metadata={"source": "annual-report.pdf"})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
         result = await evaluator.run(ctx)
@@ -84,7 +84,7 @@ async def test_no_match_in_metadata():
     evaluator = RegexInDocumentMetadataEvaluator.from_csv_line(
         expected=True, tags=set(), check='{"pattern": "secret", "key": "source"}'
     )
-    docs = [Document(page_content="text", metadata={"source": "public.pdf"})]
+    docs = [Document(content="text", metadata={"source": "public.pdf"})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
         result = await evaluator.run(ctx)
@@ -96,7 +96,7 @@ async def test_key_not_present():
     evaluator = RegexInDocumentMetadataEvaluator.from_csv_line(
         expected=True, tags=set(), check='{"pattern": "x", "key": "missing_key"}'
     )
-    docs = [Document(page_content="text", metadata={"source": "file.pdf"})]
+    docs = [Document(content="text", metadata={"source": "file.pdf"})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
         result = await evaluator.run(ctx)
@@ -120,8 +120,8 @@ async def test_match_across_multiple_documents():
         expected=True, tags=set(), check='{"pattern": "target", "key": "tag"}'
     )
     docs = [
-        Document(page_content="a", metadata={"tag": "irrelevant"}),
-        Document(page_content="b", metadata={"tag": "target-doc"}),
+        Document(content="a", metadata={"tag": "irrelevant"}),
+        Document(content="b", metadata={"tag": "target-doc"}),
     ]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
@@ -155,7 +155,7 @@ async def test_match_across_multiple_documents():
 async def test_normalization_end_to_end(pattern, metadata_value, should_match, desc):
     check = json.dumps({"pattern": pattern, "key": "source"})
     evaluator = RegexInDocumentMetadataEvaluator.from_csv_line(expected=True, tags=set(), check=check)
-    docs = [Document(page_content="text", metadata={"source": metadata_value})]
+    docs = [Document(content="text", metadata={"source": metadata_value})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
         result = await evaluator.run(ctx)

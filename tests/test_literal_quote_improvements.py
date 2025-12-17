@@ -17,11 +17,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from mlflow.entities import Document
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import LiteralQuoteEvaluator
+from ragpill.trace import Document
 from ragpill.utils import (  # pyright: ignore[reportPrivateUsage]
     _extract_markdown_quotes,
     _normalize_for_quote_comparison,
@@ -248,7 +248,7 @@ async def test_duplicate_quotes_appear_once_in_failure_message() -> None:
 > The same paragraph appears twice in the answer.
 (File: foo, Para: 2)
 """
-    docs = [Document(page_content="totally unrelated content", metadata={"source": "x"})]
+    docs = [Document(content="totally unrelated content", metadata={"source": "x"})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         result = await evaluator.run(_ctx(output))
     assert result.value is False
@@ -267,7 +267,7 @@ async def test_real_failure_pandoc_footnote_now_passes() -> None:
     evaluator = LiteralQuoteEvaluator()
     docs = [
         Document(
-            page_content=(
+            content=(
                 "The lab did not detect contaminants.\\[Footnote: trace amounts of organics "
                 "were detected.\\] Further investigation is required."
             ),
@@ -291,7 +291,7 @@ async def test_real_failure_referenced_file_marker_now_passes() -> None:
     evaluator = LiteralQuoteEvaluator()
     docs = [
         Document(
-            page_content="the inspector verified that the lab was feeding up to 1044 module-1 units at Site-A",
+            content="the inspector verified that the lab was feeding up to 1044 module-1 units at Site-A",
             metadata={"source": "site-a.txt"},
         )
     ]
@@ -312,7 +312,7 @@ async def test_real_failure_bracketed_elision_now_passes() -> None:
     evaluator = LiteralQuoteEvaluator()
     docs = [
         Document(
-            page_content=(
+            content=(
                 "intermittently feeding sample into module-1, module-2m, module-4 and module-6 units. "
                 "On 15 February 2024, batch 5 was reconfigured."
             ),

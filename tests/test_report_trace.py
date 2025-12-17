@@ -16,6 +16,7 @@ import pytest
 from mlflow.entities import SpanType, Trace
 
 from ragpill.report._trace import REDACTED, render_spans
+from ragpill.trace import Trace as RagpillTrace, from_mlflow_trace
 
 
 @pytest.fixture(autouse=True)
@@ -33,16 +34,20 @@ def _isolated_mlflow_backend() -> Iterator[None]:
         mlflow.set_tracking_uri(previous)
 
 
-def _build_trace(setup) -> Trace:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
-    """Run ``setup()`` inside a fresh mlflow run and return the resulting Trace."""
+def _build_trace(setup) -> RagpillTrace:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+    """Run ``setup()`` in a fresh mlflow run; return the neutral ``ragpill.trace.Trace``.
+
+    The renderer consumes the vendor-neutral model, so the real mlflow trace is
+    converted via ``from_mlflow_trace`` — the same path production code takes.
+    """
     with mlflow.start_run():
         setup()
     traces: list[Trace] = mlflow.search_traces(return_type="list", max_results=1)  # pyright: ignore[reportAssignmentType]
     assert traces, "expected at least one trace"
-    return traces[0]
+    return from_mlflow_trace(traces[0])
 
 
-def _simple_trace() -> Trace:
+def _simple_trace() -> RagpillTrace:
     def build() -> None:
         with mlflow.start_span(name="root", span_type=SpanType.AGENT) as s:
             s.set_inputs({"q": "hi"})
@@ -95,7 +100,7 @@ def test_render_spans_filter_keeps_spans_with_ragpill_attributes():
 
 def test_render_spans_subtree_root():
     trace = _simple_trace()
-    retriever_id = next(s.span_id for s in trace.data.spans if s.name == "retrieve")
+    retriever_id = next(s.span_id for s in trace.spans if s.name == "retrieve")
     out = render_spans(trace, root_span_id=retriever_id, max_chars=10_000)
     assert "retrieve" in out
     assert "root" not in out

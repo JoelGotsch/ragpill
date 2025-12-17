@@ -158,17 +158,21 @@ async def test_execute_dataset_rejects_neither_task_nor_factory():
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_trace_delegates_to_await_trace():
+def test_fetch_trace_delegates_to_await_trace_then_converts():
     from unittest.mock import MagicMock, patch
 
     from ragpill.execution import _fetch_trace
 
     backend = MagicMock()
-    sentinel = object()
-    backend.await_trace.return_value = sentinel
-    with patch("ragpill.execution.get_backend", return_value=backend):
+    mlflow_trace = MagicMock(name="mlflow_trace")
+    backend.await_trace.return_value = mlflow_trace
+    neutral = object()
+    with (
+        patch("ragpill.execution.get_backend", return_value=backend),
+        patch("ragpill.execution.from_mlflow_trace", return_value=neutral) as conv,
+    ):
         result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=7.0, poll_interval_s=0.25)
-    assert result is sentinel
+    # Fetched via the polling await_trace, then converted to the neutral model.
     backend.await_trace.assert_called_once_with(
         "trace-1",
         run_id="run-1",
@@ -176,5 +180,23 @@ def test_fetch_trace_delegates_to_await_trace():
         timeout_s=7.0,
         poll_interval_s=0.25,
     )
+    conv.assert_called_once_with(mlflow_trace)
+    assert result is neutral
     # No best-effort search_traces fallback that could return the wrong trace.
     backend.search_traces.assert_not_called()
+
+
+def test_fetch_trace_returns_none_without_converting_on_miss():
+    from unittest.mock import MagicMock, patch
+
+    from ragpill.execution import _fetch_trace
+
+    backend = MagicMock()
+    backend.await_trace.return_value = None
+    with (
+        patch("ragpill.execution.get_backend", return_value=backend),
+        patch("ragpill.execution.from_mlflow_trace") as conv,
+    ):
+        result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=1.0, poll_interval_s=0.1)
+    assert result is None
+    conv.assert_not_called()

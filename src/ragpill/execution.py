@@ -33,9 +33,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ragpill.backends import SpanKind, get_backend
-
-if TYPE_CHECKING:
-    from mlflow.entities import Trace
 from ragpill.base import (
     CaseMetadataT,
     TestCaseMetadata,
@@ -44,7 +41,15 @@ from ragpill.base import (
 )
 from ragpill.eval_types import Case, Dataset
 from ragpill.settings import MLFlowSettings
+from ragpill.trace import filter_to_subtree, from_mlflow_trace, trace_from_dict, trace_to_dict
 from ragpill.utils import _fix_evaluator_global_flag  # pyright: ignore[reportPrivateUsage]
+
+if TYPE_CHECKING:
+    from ragpill.trace import Trace
+
+# Run-JSON schema version. v2 stores the vendor-neutral ragpill.trace.Trace
+# (v1 stored mlflow.entities.Trace JSON). No v1 migrator — see ADR-0014.
+_RUN_JSON_SCHEMA_VERSION = 2
 
 TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
 
@@ -63,11 +68,12 @@ class TaskRunOutput:
         input_key: Unique key for this run, formatted as ``{base_hash}_{run_index}``.
         output: Return value of the task, or ``None`` if the task raised.
         duration: Wall-clock seconds the task took to run.
-        trace: Captured ``Trace`` scoped to this run. In session-mode
-            backends (e.g. MLflow with ``mlflow.trace.session`` metadata
-            set) this is the run's own top-level trace; in span-mode
-            backends it's the per-run subtree filtered out of the
-            case-level trace. ``None`` when tracing is disabled.
+        trace: Captured vendor-neutral ``ragpill.trace.Trace`` scoped to this
+            run. In session-mode backends (e.g. MLflow with
+            ``mlflow.trace.session`` metadata set) this is the run's own
+            top-level trace; in span-mode backends it's the per-run subtree
+            filtered out of the case-level trace. ``None`` when tracing is
+            disabled.
         run_span_id: Span ID captured at the per-run span open. In
             session mode this is the trace's root span id; in span mode
             it's the child span id under the case's parent.
@@ -100,9 +106,9 @@ class CaseRunOutput:
         expected_output: The case's expected output, if any.
         metadata: Case metadata as a plain dict (for JSON round-trip).
         base_input_key: Hash of the inputs (no run-index suffix).
-        trace: Full case-level MLflow ``Trace`` (including all run subtrees).
-            ``None`` when tracing is disabled.
-        trace_id: MLflow trace id string.
+        trace: Full case-level ``ragpill.trace.Trace`` (including all run
+            subtrees). ``None`` when tracing is disabled.
+        trace_id: Backend trace id string.
         task_runs: One :class:`TaskRunOutput` per repeat.
     """
 
@@ -139,8 +145,8 @@ class DatasetRunOutput:
     def to_json(self) -> str:
         """Serialize this output to a JSON string.
 
-        Traces are serialized via ``Trace.to_json()``. Other fields are
-        preserved as-is.
+        Traces are serialized via the neutral ``ragpill.trace`` model
+        (``schema_version`` 2). Other fields are preserved as-is.
 
         Returns:
             A JSON string that ``from_json`` can round-trip back into an
@@ -208,7 +214,7 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
         "input_key": tr.input_key,
         "output": tr.output,
         "duration": tr.duration,
-        "trace": tr.trace.to_json() if tr.trace is not None else None,
+        "trace": trace_to_dict(tr.trace) if tr.trace is not None else None,
         "run_span_id": tr.run_span_id,
         "trace_id": tr.trace_id,
         "error": tr.error,
@@ -216,13 +222,8 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
 
 
 def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
-    trace_json: str | None = d.get("trace")
-    if trace_json:
-        from mlflow.entities import Trace
-
-        trace = Trace.from_json(trace_json)
-    else:
-        trace = None
+    trace_payload = d.get("trace")
+    trace = trace_from_dict(trace_payload) if trace_payload else None
     return TaskRunOutput(
         run_index=d["run_index"],
         input_key=d["input_key"],
@@ -242,20 +243,15 @@ def _case_run_to_dict(cr: CaseRunOutput) -> dict[str, Any]:
         "expected_output": cr.expected_output,
         "metadata": cr.metadata,
         "base_input_key": cr.base_input_key,
-        "trace": cr.trace.to_json() if cr.trace is not None else None,
+        "trace": trace_to_dict(cr.trace) if cr.trace is not None else None,
         "trace_id": cr.trace_id,
         "task_runs": [_task_run_to_dict(tr) for tr in cr.task_runs],
     }
 
 
 def _case_run_from_dict(d: dict[str, Any]) -> CaseRunOutput:
-    trace_json: str | None = d.get("trace")
-    if trace_json:
-        from mlflow.entities import Trace
-
-        trace = Trace.from_json(trace_json)
-    else:
-        trace = None
+    trace_payload = d.get("trace")
+    trace = trace_from_dict(trace_payload) if trace_payload else None
     return CaseRunOutput(
         case_name=d["case_name"],
         inputs=d.get("inputs"),
@@ -270,6 +266,7 @@ def _case_run_from_dict(d: dict[str, Any]) -> CaseRunOutput:
 
 def _dataset_run_to_dict(dr: DatasetRunOutput) -> dict[str, Any]:
     return {
+        "schema_version": _RUN_JSON_SCHEMA_VERSION,
         "cases": [_case_run_to_dict(c) for c in dr.cases],
         "tracking_uri": dr.tracking_uri,
         "mlflow_run_id": dr.mlflow_run_id,
@@ -278,6 +275,14 @@ def _dataset_run_to_dict(dr: DatasetRunOutput) -> dict[str, Any]:
 
 
 def _dataset_run_from_dict(d: dict[str, Any]) -> DatasetRunOutput:
+    version = d.get("schema_version", 1)
+    if version != _RUN_JSON_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported run-JSON schema_version {version!r}; this build reads "
+            f"v{_RUN_JSON_SCHEMA_VERSION}. v1 files store mlflow-shaped traces and are not "
+            "migrated (the trace model changed in 0.6.0 — see CHANGELOG / ADR-0014). "
+            "Re-run the evaluation to produce a v2 file."
+        )
     return DatasetRunOutput(
         cases=[_case_run_from_dict(c) for c in d.get("cases", [])],
         tracking_uri=d.get("tracking_uri", ""),
@@ -375,29 +380,6 @@ def _teardown_tracing(ctx: _TracingContext | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
-    """Return a copy of ``trace`` containing only the subtree rooted at
-    ``root_span_id``, or ``None`` when that span is not present."""
-    from copy import copy
-
-    from mlflow.entities import Trace as _Trace
-
-    all_spans = trace.data.spans or []
-    if not any(s.span_id == root_span_id for s in all_spans):
-        return None
-    included: set[str] = set()
-    queue = [root_span_id]
-    while queue:
-        current = queue.pop()
-        included.add(current)
-        for span in all_spans:
-            if span.parent_id == current:
-                queue.append(span.span_id)
-    filtered_data = copy(trace.data)
-    filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return _Trace(info=trace.info, data=filtered_data)
-
-
 def _fetch_trace(
     experiment_id: str,
     run_id: str,
@@ -406,21 +388,23 @@ def _fetch_trace(
     timeout_s: float,
     poll_interval_s: float,
 ) -> Trace | None:
-    """Fetch the trace ``parent_trace_id``, polling until it is exported.
+    """Fetch the trace ``parent_trace_id`` and return it as a neutral ``Trace``.
 
     Spans flush to the backend asynchronously, so a fetch issued right after
     the case grouping context closes can miss a trace still in flight. The
     backend polls by id and returns ``None`` (never a different trace) on
     timeout — a miss leaves the SpanBaseEvaluators without a trace rather than
-    silently scoring the wrong one.
+    silently scoring the wrong one. The captured MLflow trace is converted to
+    the vendor-neutral model at this boundary; nothing downstream sees mlflow.
     """
-    return get_backend().await_trace(
+    mlflow_trace = get_backend().await_trace(
         parent_trace_id,
         run_id=run_id,
         experiment_id=experiment_id,
         timeout_s=timeout_s,
         poll_interval_s=poll_interval_s,
     )
+    return from_mlflow_trace(mlflow_trace) if mlflow_trace is not None else None
 
 
 async def _execute_case_runs(
@@ -485,22 +469,24 @@ async def _execute_case_runs(
             if case_trace is not None:
                 for tr in task_runs:
                     if tr.run_span_id:
-                        tr.trace = _filter_trace_to_subtree(case_trace, tr.run_span_id)
+                        tr.trace = filter_to_subtree(case_trace, tr.run_span_id)
         elif grouping_mode == "session":
             # Session mode: each repeat already produced its own trace; fetch
             # them individually by the trace_id captured at span open. Poll for
             # export, same as span mode — get_trace right after the context
-            # exits races the async flush just as search_traces did.
+            # exits races the async flush just as search_traces did. Convert each
+            # to the neutral model at this boundary.
             backend = get_backend()
             for tr in task_runs:
                 if tr.trace_id:
-                    tr.trace = backend.await_trace(
+                    mlflow_trace = backend.await_trace(
                         tr.trace_id,
                         run_id=tracing.run_id,
                         experiment_id=tracing.experiment_id,
                         timeout_s=tracing.trace_fetch_timeout_s,
                         poll_interval_s=tracing.trace_fetch_poll_interval_s,
                     )
+                    tr.trace = from_mlflow_trace(mlflow_trace) if mlflow_trace is not None else None
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),

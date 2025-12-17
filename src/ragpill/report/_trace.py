@@ -14,11 +14,10 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from ragpill.backends._dialects import MLFLOW_INTERNAL_SPAN_ATTRS
 from ragpill.report._text import render_value, truncate
 
 if TYPE_CHECKING:
-    from mlflow.entities import Span, Trace
+    from ragpill.trace import Span, Trace
 
 
 DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
@@ -31,11 +30,6 @@ Kept intentionally narrow — secret redaction is opt-out, not a security barrie
 """
 
 REDACTED = "<redacted>"
-
-# Span attributes the renderer treats as "internal" — surfaced through
-# dedicated paths (inputs/outputs/type) rather than dumped in the attribute
-# bullet. Phase 1 ships only the MLflow dialect.
-_INTERNAL_ATTR_KEYS: frozenset[str] = MLFLOW_INTERNAL_SPAN_ATTRS
 
 
 def render_spans(
@@ -69,10 +63,10 @@ def render_spans(
         A multi-line markdown string. Empty when ``trace`` is ``None`` or has
         no matching spans.
     """
-    if trace is None or not trace.data.spans:
+    if trace is None or not trace.spans:
         return ""
 
-    spans = list(trace.data.spans)
+    spans = list(trace.spans)
     children: dict[str | None, list[Span]] = {}
     for sp in spans:
         children.setdefault(sp.parent_id, []).append(sp)
@@ -141,8 +135,7 @@ def render_spans(
 def _span_kept(span: Span, type_filter: set[str] | None) -> bool:
     if type_filter is None:
         return True
-    span_type = str(span.span_type) if span.span_type else ""
-    if span_type in type_filter:
+    if str(span.kind) in type_filter:
         return True
     # Keep spans that carry ragpill-managed attributes even if type doesn't match.
     for key in span.attributes or {}:
@@ -152,7 +145,7 @@ def _span_kept(span: Span, type_filter: set[str] | None) -> bool:
 
 
 def _format_span_header(span: Span) -> str:
-    span_type = str(span.span_type) if span.span_type else "UNKNOWN"
+    span_type = str(span.kind)
     duration_ms = (
         max(0, (span.end_time_ns - span.start_time_ns) // 1_000_000) if span.end_time_ns and span.start_time_ns else 0
     )
@@ -174,10 +167,11 @@ def _format_span_body(span: Span, redact_compiled: list[re.Pattern[str]], per_sp
 
 
 def _interesting_attributes(attrs: dict[str, Any], redact_compiled: list[re.Pattern[str]]) -> dict[str, Any]:
+    # The neutral Span.attributes bag already excludes dialect bookkeeping keys
+    # (the adapter lifts span type/inputs/outputs to first-class fields), so
+    # everything here is genuine user/instrumentation attribute data.
     result: dict[str, Any] = {}
     for k, v in attrs.items():
-        if k in _INTERNAL_ATTR_KEYS:
-            continue
         if any(p.search(k) for p in redact_compiled):
             result[k] = REDACTED
         else:

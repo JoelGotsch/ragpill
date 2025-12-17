@@ -3,25 +3,31 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from copy import copy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai import models
 
 if TYPE_CHECKING:
-    from mlflow.entities import Document, Trace
+    from ragpill.trace import Trace
 
 from ragpill.backends import SpanKind, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
 from ragpill.settings import get_llm_judge_settings
+from ragpill.trace import Document, filter_to_subtree
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
     _normalize_for_quote_comparison,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
 )
+
+# Source spans whose outputs count as retrieved documents. Compared against the
+# string value of the neutral ``ragpill.trace.SpanKind`` (a StrEnum) so we don't
+# import a second SpanKind into this module — ``SpanKind`` above is the
+# write-side enum used by ``LLMJudge.start_span``.
+_SOURCE_SPAN_KINDS: frozenset[str] = frozenset({"RETRIEVER", "TOOL", "RERANKER"})
 
 
 def _get_default_judge_llm() -> models.Model:
@@ -155,42 +161,14 @@ class LLMJudge(BaseEvaluator):
         )
 
 
-def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
-    """Return a copy of the trace containing only the subtree rooted at root_span_id.
-
-    This ensures span-based evaluators only see spans from their specific run,
-    not spans from other runs in the same case trace.
-
-    Args:
-        trace: The full trace to filter.
-        root_span_id: The span ID of the subtree root.
-
-    Returns:
-        A new Trace with only the matching subtree spans.
-    """
-    from mlflow.entities import Trace as _Trace
-
-    all_spans = trace.data.spans
-    included: set[str] = set()
-    queue = [root_span_id]
-    while queue:
-        current = queue.pop()
-        included.add(current)
-        for span in all_spans:
-            if span.parent_id == current:
-                queue.append(span.span_id)
-    filtered_data = copy(trace.data)
-    filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return _Trace(info=trace.info, data=filtered_data)
-
-
 @dataclass(kw_only=True, repr=False)
 class SpanBaseEvaluator(BaseEvaluator):
-    """Base class for evaluators that inspect the MLflow trace of a run.
+    """Base class for evaluators that inspect the captured trace of a run.
 
-    Subclasses call :meth:`get_trace` to obtain a :class:`mlflow.entities.Trace`
-    scoped to the current run. This is populated by the Phase 1 execute layer
-    and passed through :class:`~ragpill.eval_types.EvaluatorContext`.
+    Subclasses call :meth:`get_trace` to obtain a vendor-neutral
+    :class:`ragpill.trace.Trace` scoped to the current run. This is populated by
+    the execute layer and passed through
+    :class:`~ragpill.eval_types.EvaluatorContext`.
 
     Why Span-Based Evaluation?
     Traditional evaluators assess task inputs and outputs. For simple tasks,
@@ -207,8 +185,8 @@ class SpanBaseEvaluator(BaseEvaluator):
             ctx: The evaluator context. ``ctx.trace`` must be non-None.
 
         Returns:
-            The MLflow ``Trace`` for this run, filtered to the run's subtree
-            when ``ctx.run_span_id`` is set.
+            The ``ragpill.trace.Trace`` for this run, filtered to the run's
+            subtree when ``ctx.run_span_id`` is set.
 
         Raises:
             ValueError: If ``ctx.trace`` is ``None``.
@@ -221,7 +199,11 @@ class SpanBaseEvaluator(BaseEvaluator):
             )
         trace = ctx.trace
         if ctx.run_span_id:
-            trace = _filter_trace_to_subtree(trace, ctx.run_span_id)
+            # Restrict to the run's subtree; if the span isn't present (e.g. the
+            # trace is already scoped), keep the full trace rather than nothing.
+            subtree = filter_to_subtree(trace, ctx.run_span_id)
+            if subtree is not None:
+                trace = subtree
         return trace
 
 
@@ -238,34 +220,35 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
     custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
     def get_documents(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> list[Document]:
-        """Retrieve source documents from the run's MLflow trace.
+        """Retrieve source documents from the run's trace.
 
         Args:
             ctx: The evaluator context; ``ctx.trace`` is read via
                 :meth:`SpanBaseEvaluator.get_trace`.
 
         Returns:
-            List of documents extracted from retriever, tool, and reranker
-            spans in the trace.
+            List of :class:`ragpill.trace.Document` extracted from retriever,
+            tool, and reranker spans in the trace.
         """
-        from mlflow.entities import Document as _Document, SpanType
-
         trace = self.get_trace(ctx)
-        retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
-        tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
-        reranker_spans = trace.search_spans(span_type=SpanType.RERANKER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         all_documents: list[Document] = []
-        for span in retriever_spans + tool_spans + reranker_spans:
-            if isinstance(span.outputs, list) and len(span.outputs) > 0:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                try:
-                    docs = [
-                        _Document(**output)  # pyright: ignore[reportUnknownArgumentType]
-                        for output in span.outputs  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-                        if isinstance(output, dict) and "page_content" in output and "metadata" in output
-                    ]
-                except Exception:
-                    continue
-                all_documents.extend(docs)
+        for span in trace.spans:
+            if span.kind not in _SOURCE_SPAN_KINDS:
+                continue
+            outputs = span.outputs
+            if not isinstance(outputs, list) or not outputs:
+                continue
+            for output in outputs:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(output, dict) and "page_content" in output and "metadata" in output:
+                    doc = cast("dict[str, Any]", output)
+                    all_documents.append(
+                        Document(
+                            content=doc["page_content"],
+                            metadata=doc["metadata"],
+                            id=doc.get("id"),
+                            score=doc.get("score"),
+                        )
+                    )
         return all_documents
 
     async def run(
@@ -295,7 +278,7 @@ def _regex_in_any_document_content(pattern: str) -> Callable[[list[Document]], b
 
     def evaluation_function(documents: list[Document]) -> bool:
         for doc in documents:
-            normalized_content = _normalize_text(doc.page_content)
+            normalized_content = _normalize_text(doc.content)
             if regex.search(normalized_content):
                 return True
         return False
@@ -672,7 +655,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         # don't cause spurious mismatches. The lean extraction in
         # _extract_markdown_quotes leaves those features in the quote text
         # so the runs DataFrame still shows the agent's original wording.
-        normalized_docs = [_normalize_for_quote_comparison(doc.page_content) for doc in documents]
+        normalized_docs = [_normalize_for_quote_comparison(doc.content) for doc in documents]
 
         # Check each quote
         not_found: list[str] = []

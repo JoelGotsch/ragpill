@@ -139,10 +139,10 @@ async def test_json_roundtrip_preserves_trace_spans():
     orig_run = run_output.cases[0].task_runs[0]
     new_run = restored.cases[0].task_runs[0]
     assert new_run.trace is not None and orig_run.trace is not None
-    assert len(new_run.trace.data.spans) == len(orig_run.trace.data.spans)
+    assert len(new_run.trace.spans) == len(orig_run.trace.spans)
     # Span ids survive
-    orig_ids = sorted(s.span_id for s in orig_run.trace.data.spans)
-    new_ids = sorted(s.span_id for s in new_run.trace.data.spans)
+    orig_ids = sorted(s.span_id for s in orig_run.trace.spans)
+    new_ids = sorted(s.span_id for s in new_run.trace.spans)
     assert orig_ids == new_ids
     # The trace_id captured at span-open is preserved too.
     assert new_run.trace_id == orig_run.trace_id

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from ragpill.trace.loader import from_mlflow_trace
 from ragpill.trace.model import Document, Message, Span, SpanKind, Trace, Usage
+from ragpill.trace.ops import filter_to_subtree
+from ragpill.trace.serde import trace_from_dict, trace_to_dict
 
 __all__ = [
     "Document",
@@ -27,5 +29,8 @@ __all__ = [
     "SpanKind",
     "Trace",
     "Usage",
+    "filter_to_subtree",
     "from_mlflow_trace",
+    "trace_from_dict",
+    "trace_to_dict",
 ]
