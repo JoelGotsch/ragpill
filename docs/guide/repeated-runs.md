@@ -84,11 +84,22 @@ See the [Task Factory How-To](../how-to/task-factory.md) for detailed guidance.
 The `threshold` parameter controls how pass/fail is decided:
 
 - **threshold=1.0** (default): All runs must pass. A single failure means the case fails.
-- **threshold=0.0**: The case always passes regardless of run results.
+- **threshold=0.0**: The case passes regardless of failed runs (but not infra-degraded ones — see below).
 - **threshold=0.8**: At least 80% of runs must pass.
 - The comparison is `pass_rate >= threshold`, so `threshold=0.6` with 2/3 runs passing (0.667) is a pass.
 
 A run counts as "passed" when **all** its evaluators pass. If any evaluator fails, the entire run is considered failed.
+
+### Infra-degraded runs fail closed
+
+`pass_rate` is a **conservative lower bound**: a run whose evaluators could not run
+at all (for example the trace never arrived from the backend) counts in the
+denominator as a non-pass, and any such run **blocks the case verdict** regardless
+of the threshold — infrastructure trouble can only ever push results down, never
+lift them. The diagnostic companion `pass_rate_evaluated` (pass rate over the runs
+that could actually be scored) ships alongside, with `runs_evaluated` and
+`runs_infra_error` coverage counts, so you can tell an agent problem from an infra
+problem at a glance. The design rationale is recorded in ADR-0018.
 
 ## Reading the Results
 
@@ -100,11 +111,11 @@ One row per (run x evaluator). Includes `run_index`, `repeat_total`, `threshold`
 
 ### `.cases` — Aggregated per case
 
-One row per (case x evaluator). Includes `pass_rate` and `passed` columns showing the aggregated result across runs.
+One row per (case x evaluator). Includes the conservative `pass_rate` and gate `passed` columns plus the diagnostic `pass_rate_evaluated`, `runs_evaluated`, and `runs_errored` columns.
 
 ### `.summary` — Overall verdict
 
-One row per case with `passed`, `pass_rate`, `threshold`, and a human-readable `summary` string.
+One row per case with `passed`, `pass_rate`, `pass_rate_evaluated`, `runs_infra_error`, `threshold`, and a human-readable `summary` string.
 
 ## Per-Case Overrides vs. Global Defaults
 
@@ -159,7 +170,7 @@ When viewing traces in the MLflow UI, assessments follow this naming convention:
 - **Per-run:** `run-0_RegexInOutput`, `run-1_RegexInOutput`, `run-2_RegexInOutput`
 - **Aggregate** (only when repeat > 1): `agg_RegexInOutput`
 
-The aggregate assessment value is `pass_rate >= threshold`, with a rationale like `"Aggregate: 2/3 runs passed (threshold=0.6)"`.
+The aggregate assessment verdict is conservative (ADR-0018): runs where the evaluator errored count against the rate and any errored run blocks it. The rationale reads like `"Aggregate: 2/3 runs passed (evaluated-only: 2/2; threshold=0.6, 1 errored (counted as non-passes))"`.
 
 ## Failure Explanations
 
