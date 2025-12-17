@@ -42,7 +42,9 @@ The triage view orders failing cases first (by ascending pass rate), shows
 each failing run's evaluator verdicts and reasons, and surfaces the relevant
 trace subtree for each failing run — filtered to `RETRIEVER`, `TOOL`, `LLM`,
 `RERANKER`, `CHAT_MODEL`, and `AGENT` spans by default. Passing cases collapse
-to one bullet each.
+to one bullet each. When the dataset uses tags (on cases or evaluators), a
+**Pass rate by tag** table appears in the header so the worst-performing
+tags surface first.
 
 A trimmed shape:
 
@@ -54,6 +56,14 @@ A trimmed shape:
 - Evaluator rollup:
   - `LLMJudge` — 11/12 passed
   - `RegexInSourcesEvaluator` — 6/12 passed
+
+## Pass rate by tag
+
+| Tag | Pass rate | n |
+|---|---|---|
+| `q2-numerics` | 33% | 9 |
+| `factual-recall` | 75% | 24 |
+| `tone` | 100% | 12 |
 
 ## Failing cases
 
@@ -100,6 +110,19 @@ When the document exceeds `max_chars`, the renderer sheds content in this
 order: (1) the passing-case section, (2) per-run detail on failing cases past
 index 5, (3) trailing failing cases (replaced with a `… (N additional cases
 not shown)` marker).
+
+### Per-tag accuracy without the markdown wrapper
+
+The same tag breakdown is available as a plain dict for programmatic use:
+
+```python
+result.per_tag_accuracy()
+# {"q2-numerics": 0.33, "factual-recall": 0.75, "tone": 1.0}
+```
+
+Tags can sit on cases (`TestCaseMetadata.tags`) or on evaluators
+(`BaseEvaluator.tags`) — both are union-merged before grouping. Rows where
+an evaluator raised an exception are excluded from the denominator.
 
 ---
 
