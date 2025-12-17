@@ -18,8 +18,23 @@ from ragpill.settings import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_singleton():
-    """Ensure each test starts with a fresh singleton."""
+def _reset_singleton(monkeypatch):
+    """Ensure each test starts with a fresh singleton and clean SSL env.
+
+    The LLMJudge construction path ends up calling
+    ``httpx.AsyncClient(verify=True)`` via
+    :func:`ragpill.utils._get_pydantic_ai_llm_model`. ``httpx`` reads
+    ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` /
+    ``SSL_CERT_DIR`` at construction time. When another test (or the
+    surrounding environment) leaves one of those env vars pointing at a
+    no-longer-existing path, the ``AsyncClient`` construction raises a
+    confusing ``FileNotFoundError`` from inside the SSL module rather
+    than an obvious bad-config error. Force a clean SSL env so this
+    test file behaves identically whether it runs first, last, or
+    alongside an integration test that touched these vars.
+    """
+    for var in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        monkeypatch.delenv(var, raising=False)
     reset_llm_judge_settings()
     yield
     reset_llm_judge_settings()
