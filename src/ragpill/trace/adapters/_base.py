@@ -55,6 +55,36 @@ class AdapterDeclined(Exception):
     """
 
 
+def require_span_id(span: dict[str, Any], dialect: str) -> str:
+    """Return the span's id, raising :class:`AdapterDeclined` when missing."""
+    span_id = span.get("span_id")
+    if not span_id:
+        raise AdapterDeclined(f"{dialect} span dict is missing 'span_id'")
+    return str(span_id)
+
+
+def common_span_fields(span: dict[str, Any], *, dialect: str) -> dict[str, Any]:
+    """The ``Span`` constructor kwargs every dialect lifts identically.
+
+    Covers ids, name, timing, status, raw events, and the dialect tag —
+    adapters add only their dialect-specific fields (kind, I/O, messages,
+    documents, usage, attributes) on top.
+    """
+    status: dict[str, Any] = span.get("status") or {}
+    return {
+        "span_id": str(span.get("span_id", "")),
+        "parent_id": span.get("parent_span_id"),
+        "trace_id": str(span.get("trace_id", "")),
+        "name": str(span.get("name", "")),
+        "start_time_ns": int(span.get("start_time_unix_nano") or 0),
+        "end_time_ns": int(span.get("end_time_unix_nano") or 0),
+        "status": str(status.get("code", "UNSET")),
+        "status_message": status.get("message"),
+        "events": list(span.get("events") or []),
+        "dialect": dialect,
+    }
+
+
 class SpanAdapter(ABC):
     """Convert a normalised OTLP-JSON span dict into a ``ragpill.trace.Span``."""
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import Any, cast
 
-from ragpill.trace.adapters._base import AdapterDeclined, SpanAdapter
+from ragpill.trace.adapters._base import SpanAdapter, common_span_fields, require_span_id
 from ragpill.trace.model import Document, Message, Span, SpanKind, Usage
 
 _KIND_KEY = "openinference.span.kind"
@@ -69,10 +69,8 @@ class OpenInferenceAdapter(SpanAdapter):
 
     @classmethod
     def from_otel(cls, span: dict[str, Any]) -> Span:
+        require_span_id(span, cls.name)
         attributes: dict[str, Any] = dict(span.get("attributes") or {})
-        span_id = span.get("span_id")
-        if not span_id:
-            raise AdapterDeclined("openinference span dict is missing 'span_id'")
 
         kind = _KIND_MAP.get(str(attributes.get(_KIND_KEY)), SpanKind.UNKNOWN)
 
@@ -101,18 +99,10 @@ class OpenInferenceAdapter(SpanAdapter):
             output_tokens=attributes.get("llm.token_count.completion"),
             total_tokens=attributes.get("llm.token_count.total"),
         )
-        status: dict[str, Any] = span.get("status") or {}
 
         return Span(
-            span_id=str(span_id),
-            parent_id=span.get("parent_span_id"),
-            trace_id=str(span.get("trace_id", "")),
-            name=str(span.get("name", "")),
+            **common_span_fields(span, dialect=cls.name),
             kind=kind,
-            start_time_ns=int(span.get("start_time_unix_nano") or 0),
-            end_time_ns=int(span.get("end_time_unix_nano") or 0),
-            status=str(status.get("code", "UNSET")),
-            status_message=status.get("message"),
             inputs=attributes.get("input.value"),
             outputs=attributes.get("output.value"),
             messages_in=messages_in,
@@ -121,6 +111,4 @@ class OpenInferenceAdapter(SpanAdapter):
             model=attributes.get("llm.model_name"),
             usage=usage,
             attributes=attributes,
-            events=list(span.get("events") or []),
-            dialect=cls.name,
         )

@@ -79,3 +79,21 @@ def test_usage_and_params():
 def test_missing_span_id_declines():
     with pytest.raises(AdapterDeclined):
         GenAIAdapter.from_otel(_span(span_id=None))
+
+
+def test_assistant_history_event_is_an_input():
+    # Per the GenAI semconv, gen_ai.assistant.message is a *prompt* event (a
+    # prior assistant turn); only gen_ai.choice is the completion.
+    span = GenAIAdapter.from_otel(
+        _span(
+            events=[
+                {"name": "gen_ai.user.message", "attributes": {"content": "hi"}},
+                {"name": "gen_ai.assistant.message", "attributes": {"content": "earlier answer"}},
+                {"name": "gen_ai.user.message", "attributes": {"content": "and now?"}},
+                {"name": "gen_ai.choice", "attributes": {"content": "final answer"}},
+            ]
+        )
+    )
+    assert [m.role for m in span.messages_in] == ["user", "assistant", "user"]
+    assert span.messages_in[1].content == "earlier answer"
+    assert [m.content for m in span.messages_out] == ["final answer"]

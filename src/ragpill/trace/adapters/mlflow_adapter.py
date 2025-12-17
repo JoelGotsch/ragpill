@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ragpill.trace.adapters._base import AdapterDeclined, SpanAdapter
+from ragpill.trace.adapters._base import SpanAdapter, common_span_fields, require_span_id
 from ragpill.trace.model import Span, SpanKind
 
 _SPAN_TYPE_KEY = "mlflow.spanType"
@@ -34,8 +34,9 @@ _INTERNAL_ATTRS: frozenset[str] = frozenset(
     }
 )
 
-# MLflow SpanType string -> our ingest-side SpanKind. MLflow has no
-# GUARDRAIL/TASK; unknown values fall back to UNKNOWN rather than raising.
+# MLflow SpanType string -> our ingest-side SpanKind. MLflow kinds without a
+# neutral equivalent (EVALUATOR, MEMORY, WORKFLOW, …) fall back to UNKNOWN
+# rather than raising.
 _KIND_BY_SPAN_TYPE: dict[str, SpanKind] = {
     "LLM": SpanKind.LLM,
     "CHAT_MODEL": SpanKind.CHAT_MODEL,
@@ -46,6 +47,8 @@ _KIND_BY_SPAN_TYPE: dict[str, SpanKind] = {
     "RERANKER": SpanKind.RERANKER,
     "EMBEDDING": SpanKind.EMBEDDING,
     "PARSER": SpanKind.PARSER,
+    "TASK": SpanKind.TASK,
+    "GUARDRAIL": SpanKind.GUARDRAIL,
     "UNKNOWN": SpanKind.UNKNOWN,
 }
 
@@ -63,30 +66,17 @@ class MLflowAdapter(SpanAdapter):
 
     @classmethod
     def from_otel(cls, span: dict[str, Any]) -> Span:
+        require_span_id(span, cls.name)
         attributes: dict[str, Any] = dict(span.get("attributes") or {})
-        span_id = span.get("span_id")
-        if not span_id:
-            raise AdapterDeclined("MLflow span dict is missing 'span_id'")
 
         span_type = attributes.get(_SPAN_TYPE_KEY)
         kind = _KIND_BY_SPAN_TYPE.get(str(span_type), SpanKind.UNKNOWN)
-
-        status: dict[str, Any] = span.get("status") or {}
         passthrough = {k: v for k, v in attributes.items() if k not in _INTERNAL_ATTRS}
 
         return Span(
-            span_id=str(span_id),
-            parent_id=span.get("parent_span_id"),
-            trace_id=str(span.get("trace_id", "")),
-            name=str(span.get("name", "")),
+            **common_span_fields(span, dialect=cls.name),
             kind=kind,
-            start_time_ns=int(span.get("start_time_unix_nano") or 0),
-            end_time_ns=int(span.get("end_time_unix_nano") or 0),
-            status=str(status.get("code", "UNSET")),
-            status_message=status.get("message"),
             inputs=attributes.get(_INPUTS_KEY),
             outputs=attributes.get(_OUTPUTS_KEY),
             attributes=passthrough,
-            events=list(span.get("events") or []),
-            dialect=cls.name,
         )

@@ -14,19 +14,22 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from ragpill.trace.adapters._base import AdapterDeclined, SpanAdapter
+from ragpill.trace.adapters._base import SpanAdapter, common_span_fields, require_span_id
 from ragpill.trace.model import Message, Span, SpanKind, Usage
 
 _SYSTEM_KEY = "gen_ai.system"
 
 # event name -> chat role; choices are outputs, the rest are inputs.
+# Per the GenAI semconv, ``gen_ai.assistant.message`` is a *prompt* event
+# (a prior assistant turn fed back to the model); only ``gen_ai.choice``
+# carries the completion.
 _INPUT_EVENT_ROLES = {
     "gen_ai.user.message": "user",
     "gen_ai.system.message": "system",
     "gen_ai.assistant.message": "assistant",
     "gen_ai.tool.message": "tool",
 }
-_OUTPUT_EVENT_NAMES = {"gen_ai.choice", "gen_ai.assistant.message"}
+_OUTPUT_EVENT_NAMES = {"gen_ai.choice"}
 
 
 def _event_content(ev: dict[str, Any]) -> Any:
@@ -49,10 +52,8 @@ class GenAIAdapter(SpanAdapter):
 
     @classmethod
     def from_otel(cls, span: dict[str, Any]) -> Span:
+        require_span_id(span, cls.name)
         attributes: dict[str, Any] = dict(span.get("attributes") or {})
-        span_id = span.get("span_id")
-        if not span_id:
-            raise AdapterDeclined("gen_ai span dict is missing 'span_id'")
 
         messages_in: list[Message] = []
         messages_out: list[Message] = []
@@ -74,24 +75,14 @@ class GenAIAdapter(SpanAdapter):
             for k in ("temperature", "top_p", "max_tokens", "stop_sequences")
             if f"gen_ai.request.{k}" in attributes
         }
-        status: dict[str, Any] = span.get("status") or {}
 
         return Span(
-            span_id=str(span_id),
-            parent_id=span.get("parent_span_id"),
-            trace_id=str(span.get("trace_id", "")),
-            name=str(span.get("name", "")),
+            **common_span_fields(span, dialect=cls.name),
             kind=SpanKind.LLM,
-            start_time_ns=int(span.get("start_time_unix_nano") or 0),
-            end_time_ns=int(span.get("end_time_unix_nano") or 0),
-            status=str(status.get("code", "UNSET")),
-            status_message=status.get("message"),
             messages_in=messages_in,
             messages_out=messages_out,
             model=attributes.get("gen_ai.response.model") or attributes.get("gen_ai.request.model"),
             model_parameters=model_parameters,
             usage=usage,
             attributes=attributes,
-            events=list(span.get("events") or []),
-            dialect=cls.name,
         )

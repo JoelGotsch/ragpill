@@ -107,3 +107,12 @@ def test_status_message_carried():
 def test_missing_span_id_declines():
     with pytest.raises(AdapterDeclined):
         MLflowAdapter.from_otel(_span_dict(span_id=None))
+
+
+def test_task_and_guardrail_span_types_map_to_matching_kinds():
+    # ragpill's own run spans are written as SpanType.TASK; they must not
+    # degrade to UNKNOWN on ingestion.
+    task = MLflowAdapter.from_otel(_span_dict(attributes={"mlflow.spanType": "TASK"}))
+    assert task.kind is SpanKind.TASK
+    guardrail = MLflowAdapter.from_otel(_span_dict(attributes={"mlflow.spanType": "GUARDRAIL"}))
+    assert guardrail.kind is SpanKind.GUARDRAIL
