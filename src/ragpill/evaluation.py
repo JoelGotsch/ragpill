@@ -25,6 +25,7 @@ import anyio
 import pandas as pd
 from pydantic import TypeAdapter
 
+from ragpill.backends import Backend
 from ragpill.base import (
     BaseEvaluator,
     CaseMetadataT,
@@ -402,6 +403,7 @@ async def evaluate_results(
     settings: TrackingSettings | None = None,
     *,
     max_concurrency: int = 1,
+    backend: Backend | None = None,
 ) -> EvaluationOutput:
     """Run evaluators against a captured :class:`DatasetRunOutput`.
 
@@ -422,6 +424,12 @@ async def evaluate_results(
             behaviour). Raise it to overlap judge-heavy testsets — evaluation
             has no capture-time ordering constraint. Results are identical
             regardless of the value.
+        backend: Accepted for pipeline symmetry with
+            :func:`ragpill.execution.execute_dataset` and
+            :func:`ragpill.upload.upload_results`. Evaluation itself never
+            contacts the tracking backend (traces are read from
+            ``dataset_run``), so the value is currently unused; span capture
+            inside LLM-judge evaluators still resolves the process registry.
 
     Returns:
         :class:`EvaluationOutput` with ``.runs``, ``.cases``, and
@@ -439,6 +447,11 @@ async def evaluate_results(
         [`upload_results`][ragpill.upload.upload_results]: Phase 3.
     """
     _settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
+    # Reserved seam (see the docstring): evaluation reads captured traces from
+    # ``dataset_run`` and never contacts the tracking backend, so ``backend``
+    # is accepted but not resolved — resolving it here would force a backend to
+    # exist for a deliberately server-free layer.
+    _ = backend
 
     if len(dataset_run.cases) != len(testset.cases):
         raise ValueError(f"dataset_run has {len(dataset_run.cases)} cases but testset has {len(testset.cases)}")

@@ -31,65 +31,55 @@ import shutil
 import tempfile
 import time
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import anyio
 import anyio.to_thread
 from pydantic import PlainSerializer, PlainValidator, TypeAdapter
 
-from ragpill.backends import CaptureSpanKind, get_backend
+from ragpill.backends import Backend, CaptureSpanKind, get_backend
+from ragpill.backends._registry import tracking_state_lock
 from ragpill.base import (
     CaseMetadataT,
     TestCaseMetadata,
     default_input_to_key,
     resolve_repeat,
 )
-from ragpill.eval_types import Case, Dataset
+from ragpill.eval_types import Case, Dataset, TraceStatus
 from ragpill.settings import TrackingSettings
 from ragpill.trace import Trace, filter_to_subtree, trace_from_dict, trace_to_dict
 
 logger = logging.getLogger("ragpill.execution")
 
-# Trace-availability of a run, recorded so downstream evaluators/reporting can
-# distinguish an infrastructure failure from a real result. "ok" = complete
-# trace; "incomplete" = a trace was read but the export was still settling at
-# the fetch deadline (possibly missing spans); "unavailable" = no trace at all
-# (fetch timed out empty, backend errored, or the run's subtree was absent).
-TraceStatus = Literal["ok", "incomplete", "unavailable"]
 
-# Serializes traced ``execute_dataset`` calls: capture mutates process-global
-# tracking state (the active tracking URI / MLflow session), so two concurrent
-# traced runs would cross-tag each other's traces or corrupt the destination.
-# anyio synchronization primitives bind to the running event loop, so we key one
-# lock per loop (a process normally has exactly one; test suites create a fresh
-# loop per test). Cross-loop serialization is meaningless anyway.
-_capture_locks: dict[Any, anyio.Lock] = {}
+@asynccontextmanager
+async def _hold_tracking_state() -> AsyncGenerator[None]:
+    """Hold the process-global tracking-state lock without blocking the event loop.
 
-
-def _get_capture_lock() -> anyio.Lock:
-    import sniffio
-
+    Capture mutates process-global tracking state (the backend's active
+    tracking URI and active run), so traced runs and uploads serialize on
+    :data:`ragpill.backends._registry.tracking_state_lock` — a
+    ``threading.Lock``, because the state is shared across threads and event
+    loops. Acquiring it inline would stall every other task on the loop, so
+    the (potentially long) acquire is offloaded to a worker thread. A
+    ``threading.Lock`` may be released from a different thread than the one
+    that acquired it, so releasing inline in ``finally`` is safe.
+    """
+    acquire_start = time.perf_counter()
+    await anyio.to_thread.run_sync(tracking_state_lock.acquire)
     try:
-        lib = sniffio.current_async_library()
-    except sniffio.AsyncLibraryNotFoundError:
-        key: Any = "none"
-    else:
-        if lib == "asyncio":
-            import asyncio
-
-            key = id(asyncio.get_running_loop())
-        elif lib == "trio":
-            import trio
-
-            key = id(trio.lowlevel.current_trio_token())
-        else:  # pragma: no cover - only asyncio/trio are supported by anyio
-            key = lib
-    lock = _capture_locks.get(key)
-    if lock is None:
-        lock = _capture_locks[key] = anyio.Lock()
-    return lock
+        waited = time.perf_counter() - acquire_start
+        if waited > 0.05:
+            logger.info(
+                "execute_dataset: waited %.2fs for another traced run/upload to release the tracking state.",
+                waited,
+            )
+        yield
+    finally:
+        tracking_state_lock.release()
 
 
 def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:
@@ -359,8 +349,8 @@ class _TracingContext:
     trace_fetch_poll_interval_s: float  # interval between readiness polls
 
 
-def _setup_tracing(uri: str | None, settings: TrackingSettings) -> _TracingContext:
-    """Configure the tracing destination and open a run.
+def _setup_tracing(backend: Backend, uri: str | None, settings: TrackingSettings) -> _TracingContext:
+    """Configure the tracing destination on ``backend`` and open a run.
 
     With an explicit ``uri``, traces go straight to that server. Without one,
     file-store backends (``supports_local_file_store``, e.g. MLflow) get a
@@ -370,10 +360,9 @@ def _setup_tracing(uri: str | None, settings: TrackingSettings) -> _TracingConte
     Phoenix) get ``uri=None`` and fall back to their own environment-derived
     destination.
     """
-    backend = get_backend()
     previous_uri = backend.get_tracking_uri()
     temp_dir: str | None = None
-    if uri is None and getattr(backend, "supports_local_file_store", False):
+    if uri is None and backend.supports_local_file_store:
         temp_dir = tempfile.mkdtemp(prefix="ragpill_exec_")
         db_path = os.path.join(temp_dir, "mlflow.db")
         artifacts_path = os.path.join(temp_dir, "mlartifacts")
@@ -393,14 +382,11 @@ def _setup_tracing(uri: str | None, settings: TrackingSettings) -> _TracingConte
     )
 
 
-def _teardown_tracing(ctx: _TracingContext | None) -> None:
-    """End the active run and restore the previous tracking URI.
+def _teardown_tracing(backend: Backend, ctx: _TracingContext) -> None:
+    """End the active run on ``backend`` and restore the previous tracking URI.
 
     For the local-temp backend, also removes the temp directory.
     """
-    if ctx is None:
-        return
-    backend = get_backend()
     try:
         if backend.is_run_active():
             backend.end_run()
@@ -417,6 +403,7 @@ def _teardown_tracing(ctx: _TracingContext | None) -> None:
 
 
 def _fetch_trace(
+    backend: Backend,
     experiment_id: str,
     run_id: str,
     parent_trace_id: str,
@@ -424,7 +411,7 @@ def _fetch_trace(
     timeout_s: float,
     poll_interval_s: float,
 ) -> tuple[Trace | None, bool]:
-    """Fetch ``parent_trace_id`` as a neutral ``Trace``; return ``(trace, stable)``.
+    """Fetch ``parent_trace_id`` from ``backend`` as a neutral ``Trace``; return ``(trace, stable)``.
 
     Backends now *raise* on transport/auth/server errors (rather than swallowing
     them as a miss). Catch that here — a trace-store blip must not destroy the
@@ -436,7 +423,7 @@ def _fetch_trace(
     ``Exception`` — and propagates as normal.
     """
     try:
-        return get_backend().await_trace(
+        return backend.await_trace(
             parent_trace_id,
             run_id=run_id,
             experiment_id=experiment_id,
@@ -458,11 +445,14 @@ async def _execute_case_runs(
     task_factory: Callable[[], TaskType],
     input_to_key: Callable[[Any], str],
     repeat: int,
-    capture_traces: bool,
+    backend: Backend | None,
     tracing: _TracingContext | None,
     task_timeout_s: float | None = None,
 ) -> CaseRunOutput:
     """Execute all ``repeat`` runs for a single case and return its output.
+
+    ``backend`` is the resolved tracing backend when traces are being captured,
+    ``None`` for non-traced runs (in which case ``tracing`` is ``None`` too).
 
     Tracing-mode branches on the backend's ``start_case_grouping`` handle:
 
@@ -485,8 +475,7 @@ async def _execute_case_runs(
     case_trace_id = ""
     grouping_mode: str = "span"
 
-    if capture_traces and tracing is not None:
-        backend = get_backend()
+    if backend is not None and tracing is not None:
         with backend.start_case_grouping(
             case_id=base_key,
             name=(case.name or str(case.inputs))[:60],
@@ -497,23 +486,19 @@ async def _execute_case_runs(
             case_trace_id = case_handle.case_trace_id or ""
             for i in range(repeat):
                 task_runs.append(
-                    await _execute_single_run(
-                        case, task_factory, base_key, i, capture_traces=True, task_timeout_s=task_timeout_s
-                    )
+                    await _execute_single_run(case, task_factory, base_key, i, backend, task_timeout_s=task_timeout_s)
                 )
     else:
         for i in range(repeat):
             task_runs.append(
-                await _execute_single_run(
-                    case, task_factory, base_key, i, capture_traces=False, task_timeout_s=task_timeout_s
-                )
+                await _execute_single_run(case, task_factory, base_key, i, None, task_timeout_s=task_timeout_s)
             )
 
     # Attach traces after spans have been committed. ``await_trace`` is a
     # synchronous polling call (time.sleep between readiness checks), so it is
     # offloaded to a worker thread rather than run on the event loop.
     case_trace: Trace | None = None
-    if capture_traces and tracing is not None:
+    if backend is not None and tracing is not None:
         if grouping_mode == "span" and case_trace_id:
             # Span mode: one case trace, filtered per repeat. ``await_trace`` is a
             # synchronous polling call, so it is offloaded to a worker thread
@@ -522,6 +507,7 @@ async def _execute_case_runs(
             case_trace, case_stable = await anyio.to_thread.run_sync(
                 functools.partial(
                     _fetch_trace,
+                    backend,
                     tracing.experiment_id,
                     tracing.run_id,
                     case_trace_id,
@@ -533,7 +519,18 @@ async def _execute_case_runs(
                 if case_trace is None:
                     tr.trace_status = "unavailable"
                     continue
-                subtree = filter_to_subtree(case_trace, tr.run_span_id) if tr.run_span_id else None
+                if not tr.run_span_id:
+                    # The backend could not provide a per-run span id (the
+                    # SpanHandle protocol explicitly permits an empty string —
+                    # the Langfuse adapter can return one). The case trace WAS
+                    # fetched, so the trace is available, just not scoped to
+                    # this run: leave ``tr.trace`` as ``None`` so evaluation's
+                    # existing case-trace fallback serves the whole trace to
+                    # span evaluators. "unavailable" is reserved for genuinely
+                    # missing traces.
+                    tr.trace_status = "ok" if case_stable else "incomplete"
+                    continue
+                subtree = filter_to_subtree(case_trace, tr.run_span_id)
                 if subtree is None:
                     # The run's spans aren't in the fetched trace (still in flight).
                     tr.trace_status = "unavailable"
@@ -552,6 +549,7 @@ async def _execute_case_runs(
                 fetched[idx] = await anyio.to_thread.run_sync(
                     functools.partial(
                         _fetch_trace,
+                        backend,
                         tracing.experiment_id,
                         tracing.run_id,
                         tid,
@@ -587,10 +585,14 @@ async def _execute_single_run(
     task_factory: Callable[[], TaskType],
     base_key: str,
     run_index: int,
-    capture_traces: bool,
+    backend: Backend | None,
     task_timeout_s: float | None = None,
 ) -> TaskRunOutput:
-    """Execute one repeat of a case; capture output, duration, span id, error."""
+    """Execute one repeat of a case; capture output, duration, span id, error.
+
+    ``backend`` non-``None`` means "capture this run as a span on that
+    backend"; ``None`` runs the task without tracing.
+    """
     input_key = f"{base_key}_{run_index}"
     fresh_task = task_factory()
     run_span_id = ""
@@ -619,9 +621,11 @@ async def _execute_single_run(
             # releases the awaiting side: without it, run_sync waits for the
             # thread to finish even after the enclosing fail_after cancels,
             # making the timeout a no-op for exactly the blocking tasks the
-            # offload exists for. Python cannot kill a thread, so the worker
-            # keeps running in the background (it still occupies a pool slot);
-            # the run is recorded as a TimeoutError regardless.
+            # offload exists for. Python cannot kill a thread, so the worker is
+            # *abandoned*, not stopped: its limiter token is released at
+            # cancellation, so each timed-out sync task leaves one extra live
+            # thread running in the background until it returns on its own.
+            # The run is recorded as a TimeoutError regardless.
             result = await anyio.to_thread.run_sync(call, case.inputs, abandon_on_cancel=True)
         if inspect.isawaitable(result):
             return await result
@@ -633,9 +637,9 @@ async def _execute_single_run(
         with anyio.fail_after(task_timeout_s):
             return await _call()
 
-    if capture_traces:
+    if backend is not None:
         try:
-            with get_backend().start_span(name=f"run-{run_index}", span_type=CaptureSpanKind.TASK) as run_span:
+            with backend.start_span(name=f"run-{run_index}", span_type=CaptureSpanKind.TASK) as run_span:
                 run_span_id = run_span.span_id
                 trace_id = run_span.trace_id
                 run_span.set_attribute("run_index", run_index)
@@ -687,6 +691,7 @@ async def execute_dataset(
     tracking_uri: str | None = None,
     capture_traces: bool = True,
     task_timeout_s: float | None = None,
+    backend: Backend | None = None,
 ) -> DatasetRunOutput:
     """Run every case in a dataset and return the captured outputs + traces.
 
@@ -718,15 +723,24 @@ async def execute_dataset(
             execution continues with the next repeat/case. Caveat for
             *synchronous* tasks: Python cannot kill a worker thread, so on
             timeout the awaiting side is released but the task's thread is
-            *abandoned*, not stopped — a truly hung thread keeps occupying a
-            thread-pool slot until it returns on its own.
+            *abandoned*, not stopped — its thread-pool slot is released at
+            cancellation, so each timed-out sync task leaves one extra live
+            background thread running until it returns on its own.
+        backend: Explicit tracking backend to use for this call. ``None``
+            (default) resolves the process-registered backend via
+            :func:`ragpill.backends.get_backend` (the registry is only
+            consulted when ``capture_traces=True``). Pass one directly to
+            avoid the process-global registry, e.g. in tests or programs
+            driving several backends.
 
     Note:
         Cases and repeats run sequentially during capture: trace correctness
         depends on process-global tracking state (e.g. MLflow's active session),
         so the concurrency ceiling here is a deliberate constraint, not an
-        oversight. Bounded-concurrent *evaluation* is available separately via
-        ``evaluate_results(max_concurrency=...)``.
+        oversight. Traced calls also serialize process-wide (across threads and
+        event loops, and against ``upload_results``) on the shared
+        tracking-state lock. Bounded-concurrent *evaluation* is available
+        separately via ``evaluate_results(max_concurrency=...)``.
 
     Returns:
         A :class:`DatasetRunOutput` with one :class:`CaseRunOutput` per case
@@ -771,11 +785,21 @@ async def execute_dataset(
     _settings = settings or TrackingSettings()  # pyright: ignore[reportCallIssue]
     _fix_evaluator_global_flag(testset)
 
-    async def _run() -> DatasetRunOutput:
+    # Resolve the backend once at entry; every helper below receives it
+    # explicitly (no module-level get_backend() calls inside the pipeline).
+    # Non-traced runs never touch a backend, so the registry is left alone.
+    if backend is None and capture_traces:
+        backend = get_backend()
+
+    # Traced: hold the process-global tracking-state lock for the entire
+    # URI-save → capture → URI-restore critical section, so concurrent traced
+    # runs and uploads (from any thread or event loop) can never interleave.
+    lock_ctx = _hold_tracking_state() if capture_traces else nullcontext()
+    async with lock_ctx:
         tracing: _TracingContext | None = None
         try:
-            if capture_traces:
-                tracing = _setup_tracing(tracking_uri or None, _settings)
+            if backend is not None and capture_traces:
+                tracing = _setup_tracing(backend, tracking_uri or None, _settings)
 
             case_outputs: list[CaseRunOutput] = []
             for case in testset.cases:
@@ -788,7 +812,7 @@ async def execute_dataset(
                     _factory,
                     default_input_to_key,
                     repeat,
-                    capture_traces=capture_traces,
+                    backend=backend if capture_traces else None,
                     tracing=tracing,
                     task_timeout_s=task_timeout_s,
                 )
@@ -801,16 +825,8 @@ async def execute_dataset(
                 experiment_id=tracing.experiment_id if (tracing and tracing.temp_dir is None) else "",
             )
         finally:
-            _teardown_tracing(tracing)
-
-    if not capture_traces:
-        return await _run()
-    # Traced: serialize against other traced runs (shared global tracking state).
-    capture_lock = _get_capture_lock()
-    if capture_lock.locked():
-        logger.info("execute_dataset: another traced run holds the tracking backend; waiting for it to finish.")
-    async with capture_lock:
-        return await _run()
+            if backend is not None and tracing is not None:
+                _teardown_tracing(backend, tracing)
 
 
 __all__ = [

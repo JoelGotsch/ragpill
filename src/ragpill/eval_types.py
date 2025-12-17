@@ -16,6 +16,13 @@ InputsT = TypeVar("InputsT", default=Any)
 OutputT = TypeVar("OutputT", default=Any)
 MetadataT = TypeVar("MetadataT", default=Any)
 
+# Trace-availability of a run, recorded so downstream evaluators/reporting can
+# distinguish an infrastructure failure from a real result. "ok" = complete
+# trace; "incomplete" = a trace was read but the export was still settling at
+# the fetch deadline (possibly missing spans); "unavailable" = no trace at all
+# (fetch timed out empty, backend errored, or the run's subtree was absent).
+TraceStatus = Literal["ok", "incomplete", "unavailable"]
+
 
 @dataclass
 class EvaluationReason:
@@ -86,6 +93,8 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
             Used by span-based evaluators to restrict attention to the current
             run's subtree when multiple runs share a trace. Empty string or
             None when tracing was disabled.
+        trace_status: Trace availability for this run (see
+            :data:`~ragpill.eval_types.TraceStatus`).
     """
 
     name: str | None
@@ -98,10 +107,9 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
     metrics: dict[str, int | float] = field(default_factory=dict)
     trace: Trace | None = None
     run_span_id: str | None = None
-    # Trace-availability for this run: "ok", "incomplete", or "unavailable".
     # Span-based evaluators treat anything other than "ok" as an infrastructure
     # failure (raise TraceUnavailableError) rather than an evaluation result.
-    trace_status: str = "ok"
+    trace_status: TraceStatus = "ok"
 
 
 @dataclass

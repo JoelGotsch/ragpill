@@ -22,6 +22,19 @@ _instance: Backend | None = None
 # calls don't build two backends or race the factory swap.
 _lock = threading.Lock()
 
+# Process-global tracking-state lock.
+#
+# Guards the backend's process-global mutable state — the active tracking URI
+# and the active run — around every save → mutate/use → restore section. Traced
+# ``execute_dataset`` calls and ``upload_results`` both hold it for their whole
+# critical section, so a traced run and an upload can never interleave their
+# URI swaps, regardless of which thread or event loop each runs on. It is a
+# plain ``threading.Lock`` (not an async primitive) on purpose: the state it
+# protects is shared across threads and event loops, so the lock must be too.
+# Async callers acquire it via a worker thread (see
+# ``ragpill.execution._hold_tracking_state``) to keep the event loop free.
+tracking_state_lock = threading.Lock()
+
 
 def configure_backend(factory: Callable[[], Backend]) -> None:
     """Install a backend factory.
