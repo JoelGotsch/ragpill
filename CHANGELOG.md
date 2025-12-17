@@ -19,8 +19,8 @@ pre-1.0, so the renames below have no deprecated aliases.
   (`ok`/`incomplete`/`unavailable`) threads to a schema-v3 run JSON and into the
   evaluator context, so a partial/in-flight trace is an infra error, not a false
   "not found". The execution layer catches backend fetch errors (a transient 5xx
-  no longer destroys the whole run), and error-state runs are excluded from every
-  pass-rate denominator (`AggregatedResult.error_counts` surfaces the outage), so
+  no longer destroys the whole run), and error-state runs follow the ADR-0018
+  semantics below (`AggregatedResult.error_counts` surfaces the outage), so
   the case and per-evaluator dashboards agree.
 - **`task_timeout_s` now works for synchronous tasks** (thread offload with
   `abandon_on_cancel=True`; the abandoned-thread caveat is documented).
@@ -36,14 +36,74 @@ pre-1.0, so the renames below have no deprecated aliases.
   placeholder-lambda `__init__`; `get_documents` moved up to `SpanBaseEvaluator`).
 - **`max_concurrency` parallelizes per-evaluator** (judges within a run overlap);
   the untested sequential branch was removed.
-- **Concurrent traced `execute_dataset` calls are serialized** by a per-event-loop
-  lock; the backend registry is guarded by a lock; `supports_local_file_store` is
-  a declared `ClassVar[bool]`.
+- **Concurrent traced `execute_dataset` calls and `upload_results` are
+  serialized** on one process-global tracking-state lock (works across threads
+  and event loops); the backend registry is guarded by a lock;
+  `supports_local_file_store` is a declared `ClassVar[bool]`.
 - Phoenix reads filter by `trace_id` server-side when the client supports it;
   MLflow's not-found detection folded into the shared `is_http_not_found`;
   `ragpill.backends` gained `__dir__`; `DatasetRunOutput` gained public
   `to_dict`/`from_dict` (removing a cross-module private import); doc snippets
   fixed for the `tracking_uri=None` default.
+
+### Breaking (review round 3, ADR-0018)
+
+- **Gateable metrics are conservative; infra failures fail closed.**
+  `pass_rate` (aggregates, uploads, DataFrames) is now a lower bound: runs
+  whose evaluators could not run at all count in the denominator as
+  non-passes, so an infra outage can only push the number down — a pipeline
+  gating staging promotion on the uploaded scalar can never be helped by a
+  backend failure. The diagnostic evaluated-only rate ships alongside as
+  `pass_rate_evaluated` with `runs_evaluated`/`runs_infra_error` coverage
+  counts. The case verdict (`AggregatedResult.passed`, uploaded `agg_*`
+  assessments, the DataFrame `passed` columns) additionally fails on any
+  infra-degraded/errored run. ADR-0012 is superseded by ADR-0018; reported
+  pass rates drop for runs with evaluator errors.
+
+### Fixed (review round 3)
+
+- The Phoenix server-side trace filter actually filters: the `SpanQuery` was
+  passed positionally to a keyword-only client API and the resulting
+  `TypeError` was silently swallowed into the full-project fallback. The
+  capability is now probed once per process, SDK errors propagate, and span
+  fetches pass an explicit `limit` instead of the client's truncating
+  default of 1000.
+- Unknown span timestamps survive end-to-end: the adapter layer no longer
+  coerces `to_unix_nano`'s `None` back to a fabricated `0` (same for raw
+  OTLP-JSON), so in-flight Phoenix spans render "duration unknown" and match
+  Langfuse's encoding.
+- Traced runs and uploads from different threads or event loops no longer
+  interleave tracking-URI swaps (the previous capture lock was per event
+  loop and the upload path was unguarded).
+- `SourcesBaseEvaluator` no longer short-circuits to `False` on empty
+  retrieval — the user's evaluation function always runs and decides the
+  verdict; the distinct "no documents retrieved" reason is attached only to
+  `False` verdicts.
+- Nested blockquote source refs are attributed at their own nesting level
+  instead of being re-attributed to the enclosing quote (validated by a 30k
+  input fuzz comparison against the previous parser).
+- Runs whose backend cannot provide a per-run span id (empty `span_id`,
+  permitted by the `SpanHandle` protocol) keep `trace_status="ok"` and span
+  evaluators fall back to the full case trace instead of blanket-erroring.
+- `evaluator_failures` are emitted in declaration order under concurrent
+  evaluation (was completion order — nondeterministic run-to-run).
+- The triage report uses the same pass-rate semantics as aggregates and
+  shows per-case infra-degraded counts with the evaluated-only rate.
+- `overwrite=True` re-uploads against runs written by pre-tag ragpill clean
+  up legacy judge traces (root-span-attribute fallback sweep when the tag
+  filter matches nothing); the tag-filtered cleanup search no longer
+  downloads span payloads (`include_spans=False`).
+
+### Added (review round 3)
+
+- `execute_dataset`, `evaluate_results`, and `upload_results` accept an
+  explicit `backend=` argument, bypassing the process-global registry.
+- `tests/data/golden_evaluation_output_v3.json` pins the result wire format;
+  `EvaluationOutput.to_json` serializes in one pass via pydantic `dump_json`
+  (wire format unchanged, now provably so).
+- One canonical value→text helper (`ragpill._text.to_text`) shared by span
+  attributes and report rendering; `TraceStatus` lives in `ragpill.eval_types`
+  and types `EvaluatorContext.trace_status`.
 
 ### Contributor experience
 
