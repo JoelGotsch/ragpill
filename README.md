@@ -26,7 +26,7 @@
 If you are building an LLM-based application, ragpill's ultimate goal is to help you:
 
 1. **Build a testset** that captures what "good" looks like for your application — facts, sources, tool calls, and domain-specific criteria.
-2. **Run it locally** against your app, with first-class integrations for **MLflow** (today) and **Langfuse** (planned), so traces and evaluations live next to your existing observability stack.
+2. **Run it locally** against your app, with first-class integrations for **MLflow**, **Langfuse**, and **Arize Phoenix**, so traces and evaluations live next to your existing observability stack.
 3. **Integrate it into your workflow** (CI/CD, pre-deploy checks, local iteration loops) to **prevent regressions** and **objectively measure progress** when you tweak system prompts, swap models, change retrieval parameters, or refactor agent logic.
 
 It specializes in "offline" evaluation of LLM-based systems — meant to be part of your CI/CD pipeline or scheduled tests, not real-time monitoring.
@@ -110,6 +110,19 @@ Evaluators can have:
 Metrics are automatically calculated per tag and attribute.
 
 
+## Installation
+
+The tracking backend is an optional extra — pick one:
+
+```bash
+pip install "ragpill[mlflow]"     # default backend
+pip install "ragpill[langfuse]"   # Langfuse (co-installable with mlflow)
+pip install "ragpill[phoenix]"    # Arize Phoenix (NOT co-installable with mlflow)
+```
+
+See [Installation](docs/getting-started/installation.md) for the backend
+trade-offs, then the [Quick Start](docs/getting-started/quickstart.md).
+
 ## Quick Navigation
 
 ### Getting Started:
@@ -118,6 +131,9 @@ Metrics are automatically calculated per tag and attribute.
 - [Quick Start](docs/getting-started/quickstart.md)
 
 ### Evaluators:
+
+- [Built-in Evaluators](docs/api/evaluators.md)
+- [Writing custom evaluators](docs/guide/evaluators.md)
 
 ## Key Concepts
 
@@ -128,7 +144,7 @@ ragpill is built around three independent layers — execute, evaluate, upload �
 
 - **Dataset / Case**: Plain dataclasses from `ragpill.eval_types` that hold test cases with inputs, evaluators, and metadata
 - **Evaluators**: Check if outputs meet criteria (LLMJudge, regex matchers, custom evaluators)
-- **Three-Layer Pipeline**: `execute_dataset` (run tasks + capture traces) → `evaluate_results` (apply evaluators) → `upload_to_mlflow` (persist). Use the layers independently or together via `evaluate_testset_with_mlflow`. See the [Layered Architecture Guide](docs/guide/layered-architecture.md).
+- **Three-Layer Pipeline**: `execute_dataset` (run tasks + capture traces) → `evaluate_results` (apply evaluators) → `upload_results` (persist). Use the layers independently or together via `evaluate_testset`. See the [Layered Architecture Guide](docs/guide/layered-architecture.md).
 
 ## Features
 

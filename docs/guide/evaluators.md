@@ -17,6 +17,12 @@ All custom evaluators must:
 2. Implement `from_csv_line()` class method with standard signature
 3. Implement `async run()` method
 
+!!! important "Subclasses that add fields must be dataclasses"
+    `BaseEvaluator` is a dataclass. If your evaluator declares **new fields**
+    (e.g. `pattern: str`, `settings: MySettings`), decorate the class with
+    `@dataclass(kw_only=True)` so those fields become constructor arguments.
+    A subclass that adds no fields (like the one below) needs no decorator.
+
 ```python
 from typing import Any
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
@@ -71,6 +77,8 @@ There are two ways to parameterize custom evaluators:
 Use this for configuration shared across all instances (API keys, global thresholds, etc.):
 
 ```python
+from dataclasses import dataclass
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
@@ -82,6 +90,7 @@ class LengthEvaluatorSettings(BaseSettings):
     min_length: int = 10
     max_length: int = 1000
 
+@dataclass(kw_only=True)
 class LengthEvaluator(BaseEvaluator):
     """Checks if output length is within bounds from settings."""
     
@@ -119,7 +128,9 @@ Use this for parameters that vary per test case (regex patterns, specific values
 
 ```python
 import json
+from dataclasses import dataclass
 
+@dataclass(kw_only=True)
 class RegexEvaluator(BaseEvaluator):
     """Checks if output matches a regex pattern from check column."""
     
@@ -253,12 +264,16 @@ class MyEvaluator(BaseEvaluator):
 You can attach multiple evaluators to a single test case:
 
 ```python
+from ragpill import Case
+from ragpill.base import TestCaseMetadata
+
 case = Case(
-    input=BaseTestInput(metadata=metadata),
+    inputs="What is the capital of France?",
+    metadata=TestCaseMetadata(),
     evaluators=[
-        LLMJudge(...),  # Check correctness
-        LengthEvaluator(...),  # Check length
-        RegexEvaluator(...),  # Check format
+        LLMJudge(rubric="Mentions Paris"),  # Check correctness
+        LengthEvaluator(settings=LengthEvaluatorSettings()),  # Check length
+        RegexEvaluator(pattern="paris"),  # Check format
     ],
 )
 ```

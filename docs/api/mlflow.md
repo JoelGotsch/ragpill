@@ -7,9 +7,9 @@ pipeline. For direct access to individual layers, see
 !!! tip "Recommendation"
     Create dedicated MLflow experiments for evaluations. Don't mix with production traces.
 
-## evaluate_testset_with_mlflow
+## evaluate_testset
 
-::: ragpill.evaluate_testset_with_mlflow
+::: ragpill.evaluate_testset
     options:
       show_root_heading: true
       show_source: true
@@ -20,7 +20,7 @@ pipeline. For direct access to individual layers, see
   the combined entry point vs. the individual layers.
 - [Execution Layer](execution.md) - `execute_dataset`
 - [Evaluation Layer](evaluation.md) - `evaluate_results`
-- [Upload Layer](upload.md) - `upload_to_mlflow`
+- [Upload Layer](upload.md) - `upload_results`
 - [Result Types](types.md) - `EvaluationOutput`, `CaseResult`, `RunResult`, `AggregatedResult`
 - [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
 - [Repeated Runs Guide](../guide/repeated-runs.md) - Multi-run evaluation with aggregation

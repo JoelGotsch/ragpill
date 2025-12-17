@@ -4,9 +4,9 @@ The upload layer persists an `EvaluationOutput` to a running MLflow server —
 runs table, metrics, assessments, and optionally the captured traces as a JSON
 artifact.
 
-## upload_to_mlflow
+## upload_results
 
-::: ragpill.upload.upload_to_mlflow
+::: ragpill.upload.upload_results
     options:
       show_root_heading: true
       show_source: true

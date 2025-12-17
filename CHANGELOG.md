@@ -6,12 +6,34 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–6 of the review follow-up: correctness blockers, honest failure
+Phases 1–8 of the review follow-up: correctness blockers, honest failure
 attribution, a backend-neutral API clean break, concurrency foundations, upload
-robustness, and backend data fidelity. Backwards compatibility is a non-goal
-pre-1.0, so the renames below have no deprecated aliases.
+robustness, backend data fidelity, and a documentation golden-path sprint.
+Backwards compatibility is a non-goal pre-1.0, so the renames below have no
+deprecated aliases.
+
+### Documentation
+
+- Rewrote the getting-started surface around the current API: correct `RAGPILL_`
+  env vars (the docs previously showed a nonexistent `EVAL_MLFLOW_*` prefix),
+  the backend extras and the Phoenix↔MLflow conflict, a finished `index.md`
+  homepage, a zero-server quickstart with `asyncio.run(...)`, and the renamed
+  functions/settings throughout (guides, how-tos, tutorial notebook).
+- Custom-evaluator examples now decorate field-bearing subclasses with
+  `@dataclass(kw_only=True)` (they previously raised `TypeError`) and drop the
+  nonexistent `BaseTestInput`/`input=` API.
+- README gained an install section with the extras; Langfuse/Phoenix are shown
+  as shipped (not "planned"); the ableist LLMJudge analogy in the test-sets
+  guide was replaced.
+- ADRs are now in the mkdocs nav; the stale pydantic-evals `site_description`
+  was corrected. A `tests/test_docs_quickstart.py` exercises the documented
+  zero-server flow so it can't silently rot.
 
 ### Fixed
+
+- **The traced capture path is now portable across asyncio and trio.** The
+  trace-fetch offloading used asyncio primitives directly; it now uses anyio,
+  so traced runs work under either backend (matching the Phase 4 evaluation path).
 
 - **Langfuse and Phoenix traces now carry real span timestamps and status.**
   Both adapters previously hard-coded `start_time`/`end_time` to `0`, so every

@@ -24,10 +24,10 @@ Runs tasks against every case in a dataset and captures MLflow traces. It is
 the only layer that interacts with MLflow **during task execution**. Two
 tracing backends are supported:
 
-- **Local temp SQLite** (default; `mlflow_tracking_uri=None`): a private temp
+- **Local temp SQLite** (default; `tracking_uri=None`): a private temp
   DB is created for the run and deleted when execution completes. Traces are
   copied into the returned `DatasetRunOutput` before cleanup.
-- **Direct server tracing**: when you pass `mlflow_tracking_uri=<uri>`, traces
+- **Direct server tracing**: when you pass `tracking_uri=<uri>`, traces
   go directly to that server.
 
 Output: [`DatasetRunOutput`](../api/execution.md#datasetrunoutput) — JSON-serializable.
@@ -41,7 +41,7 @@ which makes it trivial to unit-test.
 Output: [`EvaluationOutput`](../api/types.md) — `runs` / `cases` DataFrames
 plus the structured `case_results`.
 
-### 3. Upload — `upload_to_mlflow()`
+### 3. Upload — `upload_results()`
 
 Persists the aggregated results (runs table, metrics, per-trace assessments,
 tags) to an MLflow server. When traces were captured offline, passing
@@ -51,7 +51,7 @@ artifact.
 ## The combined shortcut
 
 For the common case where you want all three layers in one call, use
-[`evaluate_testset_with_mlflow()`](../api/mlflow.md) — it chains the three
+[`evaluate_testset()`](../api/mlflow.md) — it chains the three
 layers internally with sensible defaults.
 
 ## Four use cases
@@ -113,14 +113,14 @@ Run offline (no server), then upload once the server is reachable. Pass
 aggregated results on the server.
 
 ```python
-from ragpill import execute_dataset, evaluate_results, upload_to_mlflow
+from ragpill import execute_dataset, evaluate_results, upload_results
 
 # Offline phase — local temp backend:
 run_output = await execute_dataset(testset, task=my_task)
 eval_output = await evaluate_results(run_output, testset)
 
 # Later, when the server is reachable:
-upload_to_mlflow(eval_output, settings, upload_traces=True)
+upload_results(eval_output, settings, upload_traces=True)
 ```
 
 ## Async-only
@@ -130,7 +130,7 @@ The library is async-only. If your caller cannot use `await`, wrap calls in
 
 ## Migration notes
 
-- `evaluate_testset_with_mlflow_sync()` was removed. Use `asyncio.run(evaluate_testset_with_mlflow(...))`.
+- `evaluate_testset_sync()` was removed. Use `asyncio.run(evaluate_testset(...))`.
 - `WrappedPydanticEvaluator` was removed along with the `pydantic_evals`
   dependency. If you relied on wrapping pydantic-evals evaluators, implement
   the logic as a direct `BaseEvaluator` subclass.

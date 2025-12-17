@@ -32,8 +32,8 @@ While the column names can be customized, by default the CSV adapter expects the
 ### Optional Columns
 
 - **tags**: Comma separated tags
-- **repeat**: Number of times to run this test case (integer, e.g. `3`). Empty or absent defers to `MLFlowSettings.ragpill_repeat` (default: 1).
-- **threshold**: Minimum fraction of runs that must pass (float, e.g. `0.8`). Empty or absent defers to `MLFlowSettings.ragpill_threshold` (default: 1.0).
+- **repeat**: Number of times to run this test case (integer, e.g. `3`). Empty or absent defers to `TrackingSettings.repeat` (default: 1).
+- **threshold**: Minimum fraction of runs that must pass (float, e.g. `0.8`). Empty or absent defers to `TrackingSettings.threshold` (default: 1.0).
 
 !!! note
     All rows for the same question must have the same `repeat` and `threshold` values. Inconsistent values will raise a `ValueError`.
@@ -148,6 +148,8 @@ You can create custom evaluators with the CSV adapter. There are two patterns fo
 Use this when all instances of your evaluator need the same configuration (e.g., API keys, base URLs, thresholds).
 
 ```python
+from dataclasses import dataclass
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
@@ -161,6 +163,7 @@ class MyEvaluatorSettings(BaseSettings):
     api_key: SecretStr
     threshold: float = 0.8
 
+@dataclass(kw_only=True)
 class MySharedConfigEvaluator(BaseEvaluator):
     """Evaluator with shared configuration via environment variables."""
     
@@ -209,10 +212,13 @@ Use this when different test cases need different parameters (e.g., different re
 
 ```python
 import json
+from dataclasses import dataclass
+
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.csv.testset import load_testset, default_evaluator_classes
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 
+@dataclass(kw_only=True)
 class MyJsonConfigEvaluator(BaseEvaluator):
     """Evaluator with per-instance configuration via JSON in check column."""
     

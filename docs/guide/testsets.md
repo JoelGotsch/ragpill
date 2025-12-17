@@ -8,15 +8,15 @@ When creating test sets, keep the following principles in mind:
 - **Range of scenarios**: Cover common, edge, and failure cases
 - **Create realistic inputs**: Use inputs that reflect real-world usage, not idealized question formulations
 - **Deterministic first**: Start with deterministic checks (e.g., regex match) before moving to probabilistic ones (e.g., LLM judge)
-- **LLMJudge**: Think of it like an autistic kid that follows instructions literally. Be explicit in your rubric.
+- **LLMJudge**: Think of it as an extremely literal-minded reader that follows the rubric to the letter. Be explicit in your rubric.
 
 
 ## Repeat and Threshold
 
 Each test case can specify how many times to run and what pass fraction is required:
 
-- **`repeat`**: Number of times to execute the task for this case (default: 1, inherited from `MLFlowSettings.ragpill_repeat`).
-- **`threshold`**: Minimum fraction of runs that must pass (default: 1.0, inherited from `MLFlowSettings.ragpill_threshold`).
+- **`repeat`**: Number of times to execute the task for this case (default: 1, inherited from `TrackingSettings.repeat`).
+- **`threshold`**: Minimum fraction of runs that must pass (default: 1.0, inherited from `TrackingSettings.threshold`).
 
 Set these on `TestCaseMetadata` when building test cases programmatically:
 

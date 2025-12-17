@@ -7,8 +7,8 @@ LLM outputs are stochastic. The same input can produce different answers across 
 Run each test case 3 times and require at least 80% of runs to pass:
 
 ```python
-from ragpill import Case, Dataset, evaluate_testset_with_mlflow
-from ragpill.settings import MLFlowSettings
+from ragpill import Case, Dataset, evaluate_testset
+from ragpill.settings import TrackingSettings
 from ragpill.base import TestCaseMetadata
 from ragpill.evaluators import RegexInOutputEvaluator
 
@@ -20,10 +20,10 @@ case = Case(
 )
 testset = Dataset(cases=[case])
 
-result = await evaluate_testset_with_mlflow(
+result = await evaluate_testset(
     testset=testset,
     task=my_agent,
-    mlflow_settings=MLFlowSettings(),
+    settings=TrackingSettings(),
 )
 
 # Three views of the data:
@@ -62,7 +62,7 @@ def create_agent():
     """Return a fresh agent instance with empty history."""
     return MyAgent(history=[])
 
-result = await evaluate_testset_with_mlflow(
+result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,
 )
@@ -91,7 +91,7 @@ A run counts as "passed" when **all** its evaluators pass. If any evaluator fail
 
 ## Reading the Results
 
-`evaluate_testset_with_mlflow` returns an `EvaluationOutput` with three DataFrame views:
+`evaluate_testset` returns an `EvaluationOutput` with three DataFrame views:
 
 ### `.runs` — Per-run detail
 
@@ -109,17 +109,17 @@ One row per case with `passed`, `pass_rate`, `threshold`, and a human-readable `
 
 You can set `repeat` and `threshold` at two levels:
 
-**Global defaults** via `MLFlowSettings`:
+**Global defaults** via `TrackingSettings`:
 
 ```python
-settings = MLFlowSettings(ragpill_repeat=3, ragpill_threshold=0.8)
+settings = TrackingSettings(repeat=3, threshold=0.8)
 ```
 
 Or via environment variables:
 
 ```bash
-export MLFLOW_RAGPILL_REPEAT=3
-export MLFLOW_RAGPILL_THRESHOLD=0.8
+export RAGPILL_REPEAT=3
+export RAGPILL_THRESHOLD=0.8
 ```
 
 **Per-case overrides** via `TestCaseMetadata`:
@@ -146,7 +146,7 @@ What is Y?,RegexInOutputEvaluator,true,geography,y,,
 
 - `What is X?` will run 3 times with threshold 0.6
 - `What is Y?` will use global defaults (repeat=1, threshold=1.0 unless overridden)
-- Empty values defer to the global `MLFlowSettings` defaults
+- Empty values defer to the global `TrackingSettings` defaults
 
 !!! note
     All rows for the same question must have the same `repeat` and `threshold` values. Inconsistent values will raise a `ValueError`.

@@ -22,7 +22,7 @@ This module is backend-agnostic: it drives whichever backend is registered via
 
 from __future__ import annotations
 
-import asyncio
+import functools
 import inspect
 import json
 import os
@@ -477,14 +477,19 @@ async def _execute_case_runs(
     case_trace: Trace | None = None
     if capture_traces and tracing is not None:
         if grouping_mode == "span" and case_trace_id:
-            # Span mode: one case trace, filtered per repeat.
-            case_trace = await asyncio.to_thread(
-                _fetch_trace,
-                tracing.experiment_id,
-                tracing.run_id,
-                case_trace_id,
-                timeout_s=tracing.trace_fetch_timeout_s,
-                poll_interval_s=tracing.trace_fetch_poll_interval_s,
+            # Span mode: one case trace, filtered per repeat. ``await_trace`` is a
+            # synchronous polling call, so it is offloaded to a worker thread
+            # (via anyio, portable across asyncio and trio) rather than blocking
+            # the event loop.
+            case_trace = await anyio.to_thread.run_sync(
+                functools.partial(
+                    _fetch_trace,
+                    tracing.experiment_id,
+                    tracing.run_id,
+                    case_trace_id,
+                    timeout_s=tracing.trace_fetch_timeout_s,
+                    poll_interval_s=tracing.trace_fetch_poll_interval_s,
+                )
             )
             if case_trace is not None:
                 for tr in task_runs:
@@ -496,20 +501,24 @@ async def _execute_case_runs(
             # fetches are independent, so they run concurrently — worst case
             # is one timeout, not one per repeat.
             pending = [tr for tr in task_runs if tr.trace_id]
-            traces = await asyncio.gather(
-                *(
-                    asyncio.to_thread(
+            fetched: list[Trace | None] = [None] * len(pending)
+
+            async def _fetch_into(idx: int, tid: str) -> None:
+                fetched[idx] = await anyio.to_thread.run_sync(
+                    functools.partial(
                         _fetch_trace,
                         tracing.experiment_id,
                         tracing.run_id,
-                        tr.trace_id,
+                        tid,
                         timeout_s=tracing.trace_fetch_timeout_s,
                         poll_interval_s=tracing.trace_fetch_poll_interval_s,
                     )
-                    for tr in pending
                 )
-            )
-            for tr, trace in zip(pending, traces):
+
+            async with anyio.create_task_group() as tg:
+                for i, tr in enumerate(pending):
+                    tg.start_soon(_fetch_into, i, tr.trace_id)
+            for tr, trace in zip(pending, fetched):
                 tr.trace = trace
 
     return CaseRunOutput(

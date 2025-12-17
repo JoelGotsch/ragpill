@@ -11,7 +11,7 @@ Each evaluator for each of the Test-[Case](https://ai.pydantic.dev/evals/core-co
 
 ### Repeated Runs
 
-Because LLM outputs are stochastic, ragpill supports running each test case multiple times and aggregating results. Configure `repeat` (number of runs) and `threshold` (minimum pass fraction) per-case or globally via `MLFlowSettings`. This gives statistical confidence that your agent's behavior is reliable, not just lucky on a single run.
+Because LLM outputs are stochastic, ragpill supports running each test case multiple times and aggregating results. Configure `repeat` (number of runs) and `threshold` (minimum pass fraction) per-case or globally via `TrackingSettings`. This gives statistical confidence that your agent's behavior is reliable, not just lucky on a single run.
 
 See the [Repeated Runs Guide](repeated-runs.md) for details.
 

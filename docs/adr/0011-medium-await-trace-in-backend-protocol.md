@@ -31,11 +31,11 @@ Both the span-mode `_fetch_trace` and the session-mode `get_trace` loop route
 through it. The previous single-trace (`traces[0]`) fallback is removed
 entirely.
 
-The poll budget is configurable rather than hard-coded: `MLFlowSettings`
+The poll budget is configurable rather than hard-coded: `TrackingSettings`
 exposes `ragpill_trace_fetch_timeout_s` (default `10.0`) and
 `ragpill_trace_fetch_poll_interval_s` (default `0.5`), bound to env vars
-`MLFLOW_RAGPILL_TRACE_FETCH_TIMEOUT_S` and
-`MLFLOW_RAGPILL_TRACE_FETCH_POLL_INTERVAL_S`, threaded through
+`RAGPILL_TRACE_FETCH_TIMEOUT_S` and
+`RAGPILL_TRACE_FETCH_POLL_INTERVAL_S`, threaded through
 `_TracingContext` to the fetch sites.
 
 ## Alternatives considered
@@ -65,6 +65,6 @@ exposes `ragpill_trace_fetch_timeout_s` (default `10.0`) and
 ## References
 - `TraceQueryBackend` protocol; MLflow adapter `await_trace`
 - `execution._fetch_trace` (span mode) and session-mode `get_trace` loop
-- `MLFlowSettings.ragpill_trace_fetch_timeout_s` /
+- `TrackingSettings.ragpill_trace_fetch_timeout_s` /
   `ragpill_trace_fetch_poll_interval_s`; `_TracingContext`
 - Chat session 2026-06-19

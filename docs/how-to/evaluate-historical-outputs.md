@@ -73,10 +73,10 @@ When you're ready to persist to MLflow, pass `upload_traces=True` so the
 offline-captured trace data also lives on the server.
 
 ```python
-from ragpill import upload_to_mlflow
-from ragpill.settings import MLFlowSettings
+from ragpill import upload_results
+from ragpill.settings import TrackingSettings
 
-upload_to_mlflow(eval_output, MLFlowSettings(), upload_traces=True)
+upload_results(eval_output, TrackingSettings(), upload_traces=True)
 ```
 
 ## Try different evaluators against the same run
@@ -102,4 +102,4 @@ print("V2 summary:", eval_v2.summary["passed"].mean())
   model and other use cases.
 - [Execution API](../api/execution.md) — `execute_dataset`, `DatasetRunOutput`.
 - [Evaluation API](../api/evaluation.md) — `evaluate_results`.
-- [Upload API](../api/upload.md) — `upload_to_mlflow`.
+- [Upload API](../api/upload.md) — `upload_results`.

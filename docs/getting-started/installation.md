@@ -5,13 +5,32 @@
 - Python 3.11 or higher
 - [uv](https://github.com/astral-sh/uv) package manager (recommended)
 
+## Choosing a tracking backend (extras)
+
+Since 0.5.0 the tracking backend is an **optional extra** — a bare
+`pip install ragpill` ships no backend, and the first call that needs one raises
+with an actionable message. Pick one:
+
+```bash
+pip install "ragpill[mlflow]"     # default backend (local or server)
+pip install "ragpill[langfuse]"   # Langfuse (co-installable with mlflow)
+pip install "ragpill[phoenix]"    # Arize Phoenix
+```
+
+!!! warning "Phoenix and MLflow are not co-installable"
+    `ragpill[phoenix]` pulls a newer OpenTelemetry than `ragpill[mlflow]` pins,
+    so the two extras cannot live in the same environment. Install one per env.
+    Langfuse coexists with either. To select a non-default backend at runtime,
+    call `ragpill.configure_backend(...)` (see the
+    [Backends reference](../api/backends.md)).
+
 ## Installing with uv
 
 The recommended way to install ragpill is using the `uv` package manager:
 
 ```bash
-# Add to your project
-uv add ragpill
+# Add to your project, with a backend extra
+uv add "ragpill[mlflow]"
 ```
 
 Or if you're installing from source:
@@ -34,9 +53,9 @@ See [contributing](../development/contributing.md#development-setup)
 To verify your installation, run:
 
 ```python
-import importlib
-import ragpill
-print(importlib.metadata.version("ragpill"))
+from importlib.metadata import version
+
+print(version("ragpill"))
 ```
 
 Or try creating a simple dataset:

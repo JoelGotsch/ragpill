@@ -18,25 +18,27 @@ For more details on the csv structure, see [csv-adapter](../guide/csv-adapter.md
 
 ### 2. Prepare env variables
 
-We recommend a `.env` file which is automatically detected by pydantic-settings. 
+Settings are read from the environment (and from a `.env` file in the working
+directory, which the settings classes load automatically).
 
-You need those environment variables for mlflow:
+Tracking settings use the `RAGPILL_` prefix. All are optional — when
+`RAGPILL_TRACKING_URI` is unset, a zero-server run uses a private temp store:
 
 ```
-EVAL_MLFLOW_
+RAGPILL_TRACKING_URI=http://localhost:5000   # optional; omit for zero-server
+RAGPILL_EXPERIMENT_NAME=my_project_evaluation # optional
 ```
 
-If you are using LLMJudge. you need at least the API_KEY:
+If you use the LLM judge, set at least the API key (base URL and model name are
+optional and fall back to the OpenAI defaults / `OPENAI_API_KEY`):
 
 ```
 RAGPILL_LLMJUDGE_API_KEY=<your-api-key>
-RAGPILL_LLMJUDGE_BASE_URL=<optional>
+RAGPILL_LLMJUDGE_BASE_URL=<optional, defaults to the OpenAI base URL>
 RAGPILL_LLMJUDGE_MODEL_NAME=<optional, defaults to 'gpt-4o'>
 ```
 
-
-
-### 2. Load the TestSet
+### 3. Load the TestSet
 
 ```python
 from pathlib import Path
@@ -54,42 +56,41 @@ dataset = load_testset(
 print(f"✅ Created dataset with {len(dataset.cases)} test cases")
 ```
 
-**Note:** For LLMJudge to work, set these environment variables:
-- `RAGPILL_LLMJUDGE_API_KEY`
-- `RAGPILL_LLMJUDGE_BASE_URL` 
-- `RAGPILL_LLMJUDGE_MODEL_NAME`
+### 4. Run Evaluation (zero-server)
 
-**Note:** For mlflow tracking to work, you can either pass the 
-
-### 3. Run Evaluation
+The quickest path needs no tracking server: `execute_dataset` captures to a
+private temp store and `evaluate_results` scores the outputs. Both are async, so
+wrap the call in `asyncio.run(...)` from a script.
 
 ```python
+import asyncio
+
+from ragpill import execute_dataset, evaluate_results
+
+
 # Define your agent or function to test
 async def my_agent(question: str) -> str:
-    # Your agent logic here
-    # For this example, we'll use a simple mock
+    # Your agent logic here; a mock for this example.
     return "Paris"
 
-# Run evaluation
-from ragpill import evaluate_testset_with_mlflow
-from ragpill.settings import MLFlowSettings
 
-results = await evaluate_testset_with_mlflow(
-    testset=dataset,
-    task=my_agent,
-    mlflow_settings=MLFlowSettings(),
-)
+async def main():
+    run = await execute_dataset(dataset, task=my_agent)  # zero-server temp store
+    results = await evaluate_results(run, dataset)
+    print("\n📊 Evaluation Results:")
+    print(results.summary)
 
-# Print results
-print(f"\n📊 Evaluation Results:")
-print(results.summary)
+
+asyncio.run(main())
 ```
 
-!!! tip "Three independent layers"
-    `evaluate_testset_with_mlflow` is a convenience that chains three layers
-    — execute, evaluate, upload. See the
-    [Layered Architecture Guide](../guide/layered-architecture.md) to use each
-    layer independently (e.g., run once + evaluate many, CI without a server).
+!!! tip "Persisting to a tracking server"
+    To log results to MLflow (or Langfuse / Phoenix), set `RAGPILL_TRACKING_URI`
+    (or pass `settings=TrackingSettings(tracking_uri=...)`) and use the one-call
+    `evaluate_testset(testset=dataset, task=my_agent)`, which chains
+    execute → evaluate → upload. It requires a tracking URI; the zero-server path
+    above is `execute_dataset` + `evaluate_results` used directly. See the
+    [Layered Architecture Guide](../guide/layered-architecture.md).
 
 
 ## Repeated Runs
@@ -97,7 +98,7 @@ print(results.summary)
 LLM outputs are non-deterministic. Run each test case multiple times for statistical confidence:
 
 ```python
-from ragpill import Case, Dataset, evaluate_testset_with_mlflow
+from ragpill import Case, Dataset, execute_dataset, evaluate_results
 from ragpill.base import TestCaseMetadata
 from ragpill.evaluators import RegexInOutputEvaluator
 
@@ -108,11 +109,12 @@ case = Case(
 )
 testset = Dataset(cases=[case])
 
-result = await evaluate_testset_with_mlflow(testset=testset, task=my_agent)
+run = await execute_dataset(testset, task=my_agent)
+result = await evaluate_results(run, testset)
 print(result.summary)  # One row per case: passed, pass_rate, threshold
 ```
 
-See the [Repeated Runs Guide](../guide/repeated-runs.md) for details on `task_factory`, threshold semantics, and MLflow integration.
+See the [Repeated Runs Guide](../guide/repeated-runs.md) for details on `task_factory`, threshold semantics, and server integration.
 
 ## CSV Format Guide
 

@@ -28,10 +28,10 @@ the trace tree for a single case.
 ## Triage: debugging a failing evaluation
 
 ```python
-result = await evaluate_testset_with_mlflow(
+result = await evaluate_testset(
     testset=testset,
     task=my_agent,
-    mlflow_settings=MLFlowSettings(),
+    settings=TrackingSettings(),
 )
 
 # Drop into a chat tool of your choice:

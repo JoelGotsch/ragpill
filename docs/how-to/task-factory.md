@@ -32,7 +32,7 @@ Use `task_factory` to create a fresh task instance for each run:
 def create_agent():
     return MyAgent()  # Fresh instance with empty history
 
-result = await evaluate_testset_with_mlflow(
+result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,  # Called once per run
 )
@@ -62,7 +62,7 @@ def create_agent():
 
     return task
 
-result = await evaluate_testset_with_mlflow(
+result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,
 )
@@ -105,8 +105,8 @@ def create_agent():
 
 ```python
 # Raises ValueError: "Provide either 'task' or 'task_factory', not both."
-await evaluate_testset_with_mlflow(testset, task=fn, task_factory=factory)
+await evaluate_testset(testset, task=fn, task_factory=factory)
 
 # Raises ValueError: "Provide either 'task' or 'task_factory'."
-await evaluate_testset_with_mlflow(testset)
+await evaluate_testset(testset)
 ```

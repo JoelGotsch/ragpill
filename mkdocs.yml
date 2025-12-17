@@ -1,5 +1,5 @@
 site_name: ragpill Documentation
-site_description: Opinionated, customizable wrappers around mlflow, pydantic-ai and other frameworks' evaluation and llm-testing implementations
+site_description: Granular, expert-driven evaluation of LLM and RAG applications, with pluggable tracking backends (MLflow, Langfuse, Arize Phoenix)
 site_author: Joel Gotsch
 site_url: https://joelgotsch.github.io/ragpill/
 
@@ -114,6 +114,8 @@ nav:
     - Reporting: api/report.md
     - Environment Settings: api/environment.md
     - Utils: api/utils.md
+  - Architecture Decisions:
+    - Index: adr/index.md
   - Development:
     - Contributing: development/contributing.md
     - Roadmap: development/roadmap.md
