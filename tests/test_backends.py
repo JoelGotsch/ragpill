@@ -240,7 +240,7 @@ def test_delete_traces_noop_on_empty(mlflow_mock):
 
 def test_span_kind_enum_has_minimum_values():
     """SpanKind must cover the kinds the existing renderer/evaluators use."""
-    expected = {"AGENT", "CHAT_MODEL", "LLM", "RERANKER", "RETRIEVER", "TOOL", "UNKNOWN"}
+    expected = {"AGENT", "CHAT_MODEL", "LLM", "RERANKER", "RETRIEVER", "TASK", "TOOL", "UNKNOWN"}
     assert {k.value for k in SpanKind} == expected
 
 
