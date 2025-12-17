@@ -6,7 +6,7 @@ with ``mlflow.search_traces``. Async export defers the write to a
 background queue, so the search races and returns ``[]``. Forcing
 synchronous export keeps unit tests deterministic; the
 ``mlflow-integration`` CI job exercises the async path against a real
-tracking server. See ADR-0010 — pending write-up; tracked in
+tracking server. See ADR-2004 — pending write-up; tracked in
 plans/adr-system.md.
 """
 

@@ -49,9 +49,21 @@ Recent concrete examples that illustrate the gap:
 
 ### Location
 
-`docs/adr/NNNN-kebab-title.md`. Numbered sequentially, never renumbered
-(superseded ADRs link forward to the one that replaces them, but keep
-their original number).
+`docs/adr/NNNN-kebab-title.md`. The leading digit encodes impact tier;
+the remaining three digits are a sequence within that tier:
+
+- `0xxx` — **Large**: `0001`, `0002`, …
+- `1xxx` — **Medium**: `1001`, `1002`, …
+- `2xxx` — **Small**: `2001`, `2002`, …
+
+Numbers are never reused. Superseded ADRs link forward to the one that
+replaces them but keep their original number. If a decision's impact
+tier changes after the fact, write a new ADR in the new tier rather
+than renumbering — the old number stays, marked Superseded.
+
+This makes the impact visible at a glance from the file listing and
+from any `# See ADR-NNNN` reference in code: `ADR-0001` is obviously
+load-bearing; `ADR-2007` is obviously a local convention.
 
 ### Template
 
@@ -109,13 +121,11 @@ decision than an under-documented big one.
 1. Decide directory: `docs/adr/` (under mkdocs nav) vs. top-level `adrs/`.
    Recommend `docs/adr/` so they ship with the public docs site.
 2. Add `docs/adr/template.md`.
-3. **Backfill ADRs in repo timeline order**, oldest decisions first, so
-   ADR numbers loosely follow the history of the codebase. Start with
-   the earliest still-load-bearing decisions (see backlog below — top
-   of the table = ADR-0001). Today's async-logging decision is
-   intentionally near the *bottom* of the queue, not the top —
-   `tests/conftest.py` will be updated to reference its assigned ADR
-   number once written.
+3. **Backfill ADRs in repo timeline order within each impact tier**, so
+   sequence numbers within a band loosely follow the history of the
+   codebase. Cross-band, write Large ADRs first (they unblock other
+   references), then Medium, then Small. `tests/conftest.py` will be
+   updated to reference ADR-2001 once written.
 4. **Search all prior Claude Code chat transcripts** for decisions that
    should be backfilled as ADRs. Transcripts are JSONL files at
    `~/.claude/projects/-Users-joelgotsch-Desktop-joel-backup-ragpill/*.jsonl`
@@ -147,9 +157,6 @@ decision than an under-documented big one.
 
 ## Open questions
 
-- Numbering: pure sequence (`0001`, `0002`, …) or topic-prefixed
-  (`testing-0001`)? Recommend pure sequence — keeps it simple, the title
-  carries the topic.
 - Do we need a "Superseded" state, or just point-in-time records? ADR
   community convention is to keep superseded ADRs and link forward.
   Adopt that.
@@ -159,32 +166,44 @@ decision than an under-documented big one.
 
 ## Initial backlog (to be expanded from chat search)
 
-Ordered by repo timeline — top of the table is the oldest still-load-bearing
-decision and should become ADR-0001. Today's async-logging decision sits
-near the bottom on purpose.
+Grouped by impact tier; within each tier, ordered by repo timeline
+(oldest first). The leading digit reflects the tier per the numbering
+scheme above.
 
-| Order | Tier | Title | Source / timeline anchor |
-|---|---|---|---|
-| ADR-0001 | Large | MLflow as the canonical tracing/eval backend (pre-existing assumption; Langfuse added later as alternative, not replacement) | Project inception; reaffirmed in `designs/langfuse-integration.md` §1 |
-| ADR-0002 | Large | Three-layer architecture: execute / evaluate / upload (replaced monolithic `evaluate_testset`) | Commit `c66ca6b` "split execution + evaluation + upload into three layers" (PR #6) |
-| ADR-0003 | Medium | Pluggable OTel trace ingestion vs. hard-coded MLflow exporter | `designs/otel-trace-ingestion.md`, commit `ac06809` |
-| ADR-0004 | Medium | LLM-judge trace suppression at OTel exporter layer, not via `mlflow.tracing.disable()` (global singleton + concurrency unsafe) | `plans/suppress-llm-judge-traces.md` "Problem statement" |
-| ADR-0005 | Medium | `EvaluationOutput.to_json` uses `pd.to_json(orient="table")` not `orient="split"` to preserve dtypes | `plans/llm-readable-outputs-and-mcp.md` "Deviations" (Phase A, 2026-05-05) |
-| ADR-0006 | Small | `RunResult.error` is coerced to `RuntimeError` on JSON roundtrip (exceptions don't survive JSON) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
-| ADR-0007 | Small | Trace subtree filter keeps `RETRIEVER, TOOL, LLM, RERANKER, CHAT_MODEL, AGENT` (expanded from design's four) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
-| ADR-0008 | Small | `model_params` not surfaced in triage header (lives on upload layer, not stored on `EvaluationOutput`) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
-| ADR-0009 | Medium | Phase B (MCP server): directory-only, no live MLflow lookup | `plans/llm-readable-outputs-and-mcp.md` |
-| ADR-0010 | Small | Disable async MLflow trace logging in unit tests; cover async path in `mlflow-integration` job only | This chat, `tests/conftest.py` (2026-05-13) |
+### Large (0xxx)
+
+| Number | Title | Source / timeline anchor |
+|---|---|---|
+| ADR-0001 | MLflow as the canonical tracing/eval backend (pre-existing assumption; Langfuse added later as alternative, not replacement) | Project inception; reaffirmed in `designs/langfuse-integration.md` §1 |
+| ADR-0002 | Three-layer architecture: execute / evaluate / upload (replaced monolithic `evaluate_testset`) | Commit `c66ca6b` "split execution + evaluation + upload into three layers" (PR #6) |
+
+### Medium (1xxx)
+
+| Number | Title | Source / timeline anchor |
+|---|---|---|
+| ADR-1001 | Pluggable OTel trace ingestion vs. hard-coded MLflow exporter | `designs/otel-trace-ingestion.md`, commit `ac06809` |
+| ADR-1002 | LLM-judge trace suppression at OTel exporter layer, not via `mlflow.tracing.disable()` (global singleton + concurrency unsafe) | `plans/suppress-llm-judge-traces.md` "Problem statement" (2026-04-27) |
+| ADR-1003 | Phase B (MCP server): directory-only, no live MLflow lookup | `plans/llm-readable-outputs-and-mcp.md` |
+| ADR-1004 | `EvaluationOutput.to_json` uses `pd.to_json(orient="table")` not `orient="split"` to preserve dtypes | `plans/llm-readable-outputs-and-mcp.md` "Deviations" (Phase A, 2026-05-05) |
+
+### Small (2xxx)
+
+| Number | Title | Source / timeline anchor |
+|---|---|---|
+| ADR-2001 | `RunResult.error` is coerced to `RuntimeError` on JSON roundtrip (exceptions don't survive JSON) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
+| ADR-2002 | Trace subtree filter keeps `RETRIEVER, TOOL, LLM, RERANKER, CHAT_MODEL, AGENT` (expanded from design's four) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
+| ADR-2003 | `model_params` not surfaced in triage header (lives on upload layer, not stored on `EvaluationOutput`) | `plans/llm-readable-outputs-and-mcp.md` (Phase A) |
+| ADR-2004 | Disable async MLflow trace logging in unit tests; cover async path in `mlflow-integration` job only | This chat, `tests/conftest.py` (2026-05-13) |
 
 The chat transcript search (Task 4) will likely 2–4x this list. Insert
-new entries into the table in timeline order; renumber only the
+new entries into the matching band in timeline order; renumber only the
 unwritten ones (never renumber an ADR that has already been written).
 
 ## Success criteria
 
-- ADR-0001 through ADR-0004 (the Large/Medium foundational decisions)
-  written; this plan moves to "Accepted".
-- ADR-0010 written and `tests/conftest.py` updated to reference it.
+- ADR-0001, ADR-0002, ADR-1001, ADR-1002 (the foundational Large + first
+  two Medium decisions) written; this plan moves to "Accepted".
+- ADR-2004 written and `tests/conftest.py` updated to reference it.
 - Next non-trivial change (e.g. Phase B MCP server, Langfuse integration)
   ships with at least one ADR.
 - A new contributor can read a `# See ADR-NNNN` comment in code and find
