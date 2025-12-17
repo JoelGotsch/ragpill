@@ -19,12 +19,12 @@ Two modes:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pandas as pd
 
 from ragpill.backends import Assessment, get_backend
+from ragpill.llm_judge import JUDGE_PROMPT_VERSION, judge_prompt_hash
 from ragpill.settings import MLFlowSettings
 from ragpill.types import CaseResult, EvaluationOutput
 
@@ -116,11 +116,10 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
         for rr in cr.run_results:
             run_trace_id = rr.trace_id or trace_id
             for eval_name, eval_result in rr.assertions.items():
-                source_type = "LLM_JUDGE" if "LLMJudge" in eval_result.source.name else "CODE"
                 assessment = Assessment(
                     name=f"run-{rr.run_index}_{eval_name}",
                     value=eval_result.value,
-                    source_type=source_type,
+                    source_type=eval_result.source.source_type,
                     source_id=eval_result.source.name,
                     rationale=str(eval_result.reason),
                 )
@@ -221,9 +220,18 @@ def upload_to_mlflow(
     dataset_run = evaluation.dataset_run
     run_id: str | None = dataset_run.run_id if (dataset_run and dataset_run.run_id) else None
 
+    # Record which judge prompts produced these scores, so a ragpill upgrade
+    # that edits a judge system prompt (and thus shifts every score) is visible
+    # on the run rather than silent. Only when the run actually used a judge.
+    params: dict[str, str] = dict(model_params or {})
+    runs: Any = evaluation.runs
+    if "source_type" in runs.columns and bool((runs["source_type"] == "LLM_JUDGE").any()):
+        params.setdefault("ragpill_judge_prompt_version", str(JUDGE_PROMPT_VERSION))
+        params.setdefault("ragpill_judge_prompt_hash", judge_prompt_hash())
+
     previous_uri, active_run_id = _reattach_run(settings, run_id)
     try:
-        _log_table_and_metrics(evaluation, model_params)
+        _log_table_and_metrics(evaluation, params or None)
         _log_assessments_and_tags(evaluation.case_results)
         if upload_traces:
             _log_traces_as_artifact(evaluation)
@@ -264,7 +272,3 @@ def upload_dataset_run_json(path: str) -> EvaluationOutput:
         case_results=[],
         dataset_run=dataset_run,
     )
-
-
-# Make json import non-unused when we want it for future expansion.
-_ = json

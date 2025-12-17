@@ -98,13 +98,25 @@ def _span_to_dict(span: Span) -> dict[str, Any]:
     }
 
 
+def _span_kind_from_value(value: Any) -> SpanKind:
+    """Coerce a stored kind string to :class:`SpanKind`, unknown -> ``UNKNOWN``.
+
+    Honors the module's additive-schema promise: a run JSON written by a newer
+    ragpill that added a span kind stays readable here instead of raising.
+    """
+    try:
+        return SpanKind(value)
+    except ValueError:
+        return SpanKind.UNKNOWN
+
+
 def _span_from_dict(d: dict[str, Any]) -> Span:
     return Span(
         span_id=d["span_id"],
         parent_id=d.get("parent_id"),
         trace_id=d.get("trace_id", ""),
         name=d.get("name", ""),
-        kind=SpanKind(d.get("kind", SpanKind.UNKNOWN.value)),
+        kind=_span_kind_from_value(d.get("kind", SpanKind.UNKNOWN.value)),
         start_time_ns=d.get("start_time_ns", 0),
         end_time_ns=d.get("end_time_ns", 0),
         status=d.get("status", "UNSET"),

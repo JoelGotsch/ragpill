@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from ragpill.base import BaseEvaluator, EvaluatorMetadata, TestCaseMetadata
+from ragpill.base import BaseEvaluator, EvaluatorMetadata, TestCaseMetadata, default_input_to_key
 from ragpill.eval_types import Case, Dataset, EvaluationReason, EvaluatorContext
 from ragpill.evaluation import evaluate_results
 from ragpill.evaluators import RegexInOutputEvaluator
@@ -31,7 +31,9 @@ def _make_case_run(task_runs: list[TaskRunOutput], inputs: str = "hello") -> Cas
         inputs=inputs,
         expected_output=None,
         metadata={"attributes": {}, "tags": [], "expected": None, "repeat": None, "threshold": None},
-        base_input_key="k",
+        # A real DatasetRunOutput always keys the case by the input hash;
+        # evaluate_results now verifies that alignment, so mirror it here.
+        base_input_key=default_input_to_key(inputs),
         trace=None,
         trace_id="",
         task_runs=task_runs,
@@ -70,7 +72,7 @@ async def test_evaluate_results_single_run_passing_evaluator():
 @pytest.mark.anyio
 async def test_evaluate_results_failing_evaluator():
     ev = RegexInOutputEvaluator(pattern="goodbye", expected=True, tags=set())
-    case = _make_case("hi", [ev])
+    case = _make_case("hello", [ev])
     case_run = _make_case_run([_make_run("hello")])
     dataset_run = DatasetRunOutput(cases=[case_run])
     testset = Dataset[str, str, TestCaseMetadata](cases=[case])
@@ -83,7 +85,7 @@ async def test_evaluate_results_failing_evaluator():
 @pytest.mark.anyio
 async def test_evaluate_results_task_error_fails_all_evaluators():
     ev = RegexInOutputEvaluator(pattern="hello", expected=True, tags=set())
-    case = _make_case("hi", [ev])
+    case = _make_case("hello", [ev])
     case_run = _make_case_run([_make_run("", error="RuntimeError: boom")])
     dataset_run = DatasetRunOutput(cases=[case_run])
     testset = Dataset[str, str, TestCaseMetadata](cases=[case])
@@ -109,7 +111,7 @@ class _BrokenEvaluator(BaseEvaluator):
 @pytest.mark.anyio
 async def test_evaluator_exception_captured_in_failures():
     ev = _BrokenEvaluator(expected=True, tags=set())
-    case = _make_case("hi", [ev])
+    case = _make_case("hello", [ev])
     case_run = _make_case_run([_make_run("hello")])
     dataset_run = DatasetRunOutput(cases=[case_run])
     testset = Dataset[str, str, TestCaseMetadata](cases=[case])
@@ -128,7 +130,7 @@ async def test_evaluator_exception_captured_in_failures():
 @pytest.mark.anyio
 async def test_evaluate_results_aggregates_multiple_runs():
     ev = RegexInOutputEvaluator(pattern="hello", expected=True, tags=set())
-    case = _make_case("hi", [ev])
+    case = _make_case("hello", [ev])
     case_run = _make_case_run(
         [
             _make_run("hello", run_index=0),
@@ -183,7 +185,7 @@ def test_span_base_evaluator_get_trace_raises_when_trace_missing():
 @pytest.mark.anyio
 async def test_evaluate_results_passes_through_dataset_run():
     ev = RegexInOutputEvaluator(pattern="hello", expected=True, tags=set())
-    case = _make_case("hi", [ev])
+    case = _make_case("hello", [ev])
     case_run = _make_case_run([_make_run("hello")])
     dataset_run = DatasetRunOutput(cases=[case_run])
     testset = Dataset[str, str, TestCaseMetadata](cases=[case])

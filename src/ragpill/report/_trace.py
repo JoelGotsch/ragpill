@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
     r"(?i)api[_-]?key",
     r"(?i)authorization",
+    r"(?i)bearer",
+    r"(?i)secret",
+    r"(?i)password",
+    r"(?i)passwd",
+    r"(?i)set-cookie",
+    r"(?i)access[_-]?token",
+    r"(?i)refresh[_-]?token",
 )
 """Regex patterns matched against attribute keys / dict keys when ``redact=True``.
 

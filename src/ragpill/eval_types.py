@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import MISSING, dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
+    from ragpill.base import BaseEvaluator
     from ragpill.trace import Trace
 
 
@@ -38,10 +39,14 @@ class EvaluatorSource:
         name: Identifier of the evaluator that produced the result
             (typically the class name).
         arguments: Arbitrary metadata describing the evaluator instance.
+        source_type: ``"CODE"`` or ``"LLM_JUDGE"`` — declared by the evaluator
+            class (:attr:`ragpill.base.BaseEvaluator.source_type`) rather than
+            inferred from the class name.
     """
 
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    source_type: Literal["CODE", "LLM_JUDGE"] = "CODE"
 
 
 @dataclass
@@ -111,7 +116,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     name: str | None = None
     metadata: MetadataT | None = None
     expected_output: OutputT | None = None
-    evaluators: list[Any] = field(default_factory=list)
+    evaluators: list[BaseEvaluator] = field(default_factory=list)
 
 
 @dataclass
@@ -124,7 +129,7 @@ class Dataset(Generic[InputsT, OutputT, MetadataT]):
     """
 
     cases: list[Case[InputsT, OutputT, MetadataT]] = field(default_factory=list)
-    evaluators: list[Any] = field(default_factory=list)
+    evaluators: list[BaseEvaluator] = field(default_factory=list)
 
 
 def _build_serialization_arguments(instance: Any) -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]

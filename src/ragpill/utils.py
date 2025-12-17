@@ -11,7 +11,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_settings import BaseSettings
 
-from ragpill.base import BaseEvaluator, CaseMetadataT
+from ragpill.base import CaseMetadataT
 from ragpill.eval_types import Dataset
 
 
@@ -432,15 +432,9 @@ def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, An
 
 
 def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Ensure that global evaluator metadata is marked correctly."""
-    # for case in dataset.cases:
-    #     for evaluator in case.evaluators:
-    #         if isinstance(evaluator, Evaluator) and hasattr(evaluator, "metadata") and evaluator.metadata is not None:
-    #             if evaluator.metadata.is_global_evaluator is None:
-    #                 evaluator.metadata.is_global_evaluator = False
+    """Mark every dataset-level (global) evaluator as global."""
     for evaluator in dataset.evaluators:
-        if isinstance(evaluator, BaseEvaluator):
-            evaluator.is_global = True
+        evaluator.is_global = True
 
 
 def _get_pydantic_ai_llm_model(  # pyright: ignore[reportUnusedFunction]

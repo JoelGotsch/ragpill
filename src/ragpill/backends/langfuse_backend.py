@@ -30,7 +30,7 @@ from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
-from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, poll_for_trace
+from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
 from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
 from ragpill.trace.model import Span as RagpillSpan, SpanKind as IngestSpanKind, Trace as RagpillTrace
 
@@ -189,8 +189,14 @@ class LangfuseBackend(SyntheticRunMixin, NoopResultsMixin):
         client = self._get_client()
         try:
             native = client.api.trace.get(trace_id)
-        except Exception:
-            return None
+        except Exception as exc:
+            # 404 / NotFound is a legitimate "poll again" miss; anything else
+            # (auth, connection, 5xx) is a real error that must surface instead
+            # of masquerading as an in-flight trace.
+            if is_http_not_found(exc):
+                return None
+            logger.warning("LangfuseBackend.get_trace failed for %s: %s", trace_id, exc)
+            raise
         return _trace_from_langfuse(native)
 
     def await_trace(
@@ -220,7 +226,9 @@ class LangfuseBackend(SyntheticRunMixin, NoopResultsMixin):
         for tid in trace_ids:
             try:
                 client.api.trace.delete(tid)
-            except Exception:
+            except Exception as exc:
+                # Don't abort the batch on one failure, but don't lose it either.
+                logger.warning("LangfuseBackend.delete_traces: failed to delete %s: %s", tid, exc)
                 continue
 
     def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:

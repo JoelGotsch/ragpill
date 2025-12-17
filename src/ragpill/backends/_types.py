@@ -78,8 +78,8 @@ class Assessment:
 
     name: str
     value: bool | int | float | str
-    source_type: str
-    """``"LLM_JUDGE"`` or ``"CODE"`` — matches the existing convention in upload.py."""
+    source_type: Literal["CODE", "LLM_JUDGE"]
+    """Declared by the evaluator class via ``BaseEvaluator.source_type``."""
 
     source_id: str
     rationale: str | None = None

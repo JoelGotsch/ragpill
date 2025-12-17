@@ -31,6 +31,24 @@ from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, S
 # shared upload layer.
 _METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
 
+
+def _is_not_found(exc: Any) -> bool:
+    """True when an ``MlflowException`` signals a missing/not-yet-exported trace.
+
+    Checks the error code and HTTP status defensively — mlflow surfaces
+    "does not exist" via ``RESOURCE_DOES_NOT_EXIST`` and, over REST, a 404.
+    """
+    if getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST":
+        return True
+    getter = getattr(exc, "get_http_status_code", None)
+    if callable(getter):
+        try:
+            return getter() == 404
+        except Exception:
+            return False
+    return False
+
+
 _SPAN_KIND_TO_MLFLOW: dict[SpanKind, str] = {
     SpanKind.AGENT: SpanType.AGENT,
     SpanKind.CHAT_MODEL: SpanType.CHAT_MODEL,
@@ -175,12 +193,20 @@ class MLflowBackend:
         # Returns the vendor-neutral ragpill.trace.Trace (converted here), not the
         # raw mlflow.entities.Trace — every backend converts its own native trace
         # so the execution layer stays backend-agnostic. See ADR-0017.
+        from mlflow.exceptions import MlflowException
+
         from ragpill.trace import from_mlflow_trace
 
         try:
             native = self._client().get_trace(trace_id)
-        except Exception:
-            return None
+        except MlflowException as e:
+            # A not-yet-exported or unknown trace is a legitimate miss — the
+            # polling loop retries. Anything else (auth, connection, server
+            # error) must surface so it isn't mistaken for an in-flight trace
+            # and silently burned as a poll timeout.
+            if _is_not_found(e):
+                return None
+            raise
         # mlflow's stub types this non-Optional, but a not-yet-exported trace can
         # come back falsy at runtime — keep the guard.
         if not native:

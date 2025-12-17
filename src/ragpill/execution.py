@@ -29,6 +29,7 @@ import os
 import shutil
 import tempfile
 import time
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -160,7 +161,7 @@ class DatasetRunOutput:
                 f.write(run_output.to_json())
             ```
         """
-        return json.dumps(_dataset_run_to_dict(self))
+        return json.dumps(_dataset_run_to_dict(self), default=_json_fallback)
 
     @classmethod
     def from_json(cls, s: str) -> DatasetRunOutput:
@@ -207,6 +208,23 @@ class DatasetRunOutput:
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
+
+
+def _json_fallback(obj: Any) -> str:
+    """``json.dumps`` ``default`` hook for non-serializable task outputs.
+
+    Task outputs are ``Any``; a RAG pipeline commonly returns a pydantic model,
+    dataclass, or datetime. Rather than crash the "save run to disk" workflow
+    *after* the expensive execution completed, coerce with ``str()`` and warn —
+    the value survives for human inspection but won't round-trip to its
+    original type.
+    """
+    warnings.warn(
+        f"DatasetRunOutput.to_json: value of type {type(obj).__name__!r} is not "
+        "JSON-serializable; stored as str(). It will not round-trip to the original type.",
+        stacklevel=2,
+    )
+    return str(obj)
 
 
 def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
@@ -511,9 +529,15 @@ async def _execute_single_run(
     error_str: str | None = None
 
     async def _call() -> Any:
-        if inspect.iscoroutinefunction(fresh_task):
-            return await fresh_task(case.inputs)
-        return fresh_task(case.inputs)
+        # ``iscoroutinefunction`` is False for a callable *instance* whose
+        # ``__call__`` is async — the exact shape ``task_factory`` exists for
+        # ("stateful tasks" are naturally class instances). Call first, then
+        # await if the result is awaitable, so async ``__call__`` tasks don't
+        # leak an un-awaited coroutine as the output.
+        result = fresh_task(case.inputs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     if capture_traces:
         try:
@@ -524,18 +548,24 @@ async def _execute_single_run(
                 run_span.set_attribute("input_key", input_key)
                 run_span.set_inputs(case.inputs)
                 t0 = time.perf_counter()
-                output = await _call()
-                duration = time.perf_counter() - t0
+                try:
+                    output = await _call()
+                finally:
+                    # Record duration even when the task raises, so a failed run
+                    # reports its real latency (instant crash vs slow timeout)
+                    # instead of a misleading 0.0.
+                    duration = time.perf_counter() - t0
                 run_span.set_outputs(output)
         except Exception as e:
             error_str = f"{type(e).__name__}: {e}"
     else:
+        t0 = time.perf_counter()
         try:
-            t0 = time.perf_counter()
             output = await _call()
-            duration = time.perf_counter() - t0
         except Exception as e:
             error_str = f"{type(e).__name__}: {e}"
+        finally:
+            duration = time.perf_counter() - t0
 
     return TaskRunOutput(
         run_index=run_index,

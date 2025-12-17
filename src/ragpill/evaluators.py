@@ -48,6 +48,8 @@ class LLMJudge(BaseEvaluator):
 
     """
 
+    source_type = "LLM_JUDGE"
+
     rubric: str
     model: models.Model = field(repr=False, default_factory=_get_default_judge_llm)
     include_input: bool = field(default=False)
@@ -422,15 +424,17 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
         """
         try:
             check_dict: Any = json.loads(check)
-            assert isinstance(check_dict, dict) and "pattern" in check_dict and "key" in check_dict, (
-                f"Check must be a JSON object with 'pattern' and 'key'. Got: {check}"
-            )
-            pattern: str = str(check_dict["pattern"])  # pyright: ignore[reportUnknownArgumentType]
-            metadata_key: str = str(check_dict["key"])  # pyright: ignore[reportUnknownArgumentType]
         except json.JSONDecodeError:
             raise ValueError(
                 f"RegexInDocumentMetadataEvaluator requires 'check' to be a JSON string with 'pattern' and 'key'. But got: {check}"
             )
+        # Validate CSV user input with an explicit exception (not ``assert``,
+        # which vanishes under ``python -O`` and raises the wrong type — and
+        # which the ``except json.JSONDecodeError`` above would not catch).
+        if not (isinstance(check_dict, dict) and "pattern" in check_dict and "key" in check_dict):
+            raise ValueError(f"Check must be a JSON object with 'pattern' and 'key'. Got: {check}")
+        pattern: str = str(check_dict["pattern"])  # pyright: ignore[reportUnknownArgumentType]
+        metadata_key: str = str(check_dict["key"])  # pyright: ignore[reportUnknownArgumentType]
         pattern = _normalize_text(pattern)
         evaluation_function = _regex_in_doc_metadata(metadata_key, pattern)
         return cls(

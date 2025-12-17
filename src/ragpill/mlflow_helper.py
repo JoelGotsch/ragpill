@@ -11,19 +11,16 @@ refactor, it delegates to:
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from ragpill.base import CaseMetadataT
 from ragpill.eval_types import Dataset
 from ragpill.evaluation import evaluate_results
-from ragpill.execution import execute_dataset
+from ragpill.execution import TaskType, execute_dataset
 from ragpill.settings import MLFlowSettings
 from ragpill.types import EvaluationOutput
 from ragpill.upload import upload_to_mlflow
-
-TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
-
 
 __all__ = ["evaluate_testset_with_mlflow"]
 

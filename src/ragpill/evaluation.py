@@ -26,6 +26,7 @@ from ragpill.base import (
     CaseMetadataT,
     EvaluatorMetadata,
     TestCaseMetadata,
+    default_input_to_key,
     merge_metadata,
     resolve_repeat,
 )
@@ -107,6 +108,34 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
 # ---------------------------------------------------------------------------
 
 
+def _assign_unique_names(evaluators: list[BaseEvaluator]) -> list[str]:
+    """Assign a stable assertion name to each evaluator, aligned by index.
+
+    Duplicate class names get ``_2``, ``_3`` suffixes in evaluator order. The
+    names are computed from the *full* evaluator list up front — independent of
+    which evaluators raise at run time — so a judge that rate-limits on one run
+    can't shift another judge's identity across runs (which would make
+    cross-run aggregation blend distinct rubrics). Counting is by exact class
+    name, so ``Regex`` and ``RegexInOutputEvaluator`` never collide.
+    """
+    seen: dict[str, int] = {}
+    names: list[str] = []
+    for ev in evaluators:
+        base = ev.get_serialization_name()
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        names.append(base if count == 0 else f"{base}_{count + 1}")
+    return names
+
+
+def _source_for(evaluator: BaseEvaluator) -> EvaluatorSource:
+    return EvaluatorSource(
+        name=evaluator.get_serialization_name(),
+        arguments={"evaluation_name": str(evaluator.evaluation_name)},
+        source_type=evaluator.source_type,
+    )
+
+
 async def _evaluate_single_run(
     case: Case[Any, Any, Any],
     task_run: TaskRunOutput,
@@ -114,22 +143,17 @@ async def _evaluate_single_run(
     evaluators: list[BaseEvaluator],
 ) -> RunResult:
     """Run every evaluator against one :class:`TaskRunOutput`."""
+    eval_names = _assign_unique_names(evaluators)
+
     # Task error short-circuits all evaluators to failure.
     if task_run.error is not None:
         assertions: dict[str, EvaluationResult] = {}
-        for ev in evaluators:
-            ev_name = ev.get_serialization_name()
-            if ev_name in assertions:
-                n = sum(1 for k in assertions if k.startswith(ev_name))
-                ev_name = f"{ev_name}_{n + 1}"
-            assertions[ev_name] = EvaluationResult(
-                name=ev_name,
+        for evaluator, eval_name in zip(evaluators, eval_names):
+            assertions[eval_name] = EvaluationResult(
+                name=eval_name,
                 value=False,
                 reason=f"Task execution failed: {task_run.error}",
-                source=EvaluatorSource(
-                    name="CODE",
-                    arguments={"evaluation_name": str(ev.evaluation_name)},
-                ),
+                source=_source_for(evaluator),
             )
         return RunResult(
             run_index=task_run.run_index,
@@ -160,21 +184,14 @@ async def _evaluate_single_run(
     assertions = {}
     evaluator_failures: list[EvaluatorFailureInfo] = []
 
-    for evaluator in evaluators:
-        eval_name = evaluator.get_serialization_name()
+    for evaluator, eval_name in zip(evaluators, eval_names):
         try:
             result = await evaluator.evaluate(ctx)
-            if eval_name in assertions:
-                n = sum(1 for k in assertions if k.startswith(eval_name))
-                eval_name = f"{eval_name}_{n + 1}"
             assertions[eval_name] = EvaluationResult(
                 name=eval_name,
                 value=result.value,
                 reason=result.reason,
-                source=EvaluatorSource(
-                    name=evaluator.get_serialization_name(),
-                    arguments={"evaluation_name": str(evaluator.evaluation_name)},
-                ),
+                source=_source_for(evaluator),
             )
         except Exception as e:
             evaluator_failures.append(
@@ -246,7 +263,7 @@ def _create_runs_dataframe(
             for eval_name, eval_result in rr.assertions.items():
                 eval_metadata_map = _get_eval_metadata_for_case(cr, eval_result, metadata_by_eval_id)
                 merged_metadata = merge_metadata(cr.metadata, eval_metadata_map)
-                source_type = "LLM_JUDGE" if "LLMJudge" in eval_result.source.name else "CODE"
+                source_type = eval_result.source.source_type
                 rows.append(
                     {
                         "inputs": str(cr.inputs),
@@ -371,19 +388,34 @@ async def evaluate_results(
     if len(dataset_run.cases) != len(testset.cases):
         raise ValueError(f"dataset_run has {len(dataset_run.cases)} cases but testset has {len(testset.cases)}")
 
+    # Guard against silent misalignment: the disconnected workflow (execute →
+    # save JSON → later evaluate against a re-loaded CSV) pairs runs to cases by
+    # index. A reordered or edited testset would otherwise judge each output
+    # against the wrong case's evaluators/expected/rubric. Both sides carry the
+    # input hash, so verify identity per case before trusting the zip.
+    mismatches: list[str] = []
+    for idx, (case_run, case) in enumerate(zip(dataset_run.cases, testset.cases)):
+        expected_key = default_input_to_key(case.inputs)
+        if case_run.base_input_key != expected_key:
+            mismatches.append(
+                f"  index {idx}: run captured inputs keyed {case_run.base_input_key!r} "
+                f"(case {case_run.case_name!r}) but testset case {case.name or str(case.inputs)!r} "
+                f"hashes to {expected_key!r}"
+            )
+    if mismatches:
+        raise ValueError(
+            "dataset_run cases do not align with testset cases by input identity — the "
+            "testset was likely reordered or edited since the run was captured. "
+            "Re-run execute_dataset against this testset, or restore the original testset.\n" + "\n".join(mismatches)
+        )
+
     case_results: list[CaseResult] = []
     # Evaluator metadata by evaluation_name uuid, so the runs DataFrame can
     # merge each evaluator's own tags/attributes into its rows.
     metadata_by_eval_id: dict[str, EvaluatorMetadata] = {}
     for case_run, case in zip(dataset_run.cases, testset.cases):
         # Resolve evaluators: case-level + dataset-level.
-        evaluators: list[BaseEvaluator] = []
-        for ev in case.evaluators:
-            assert isinstance(ev, BaseEvaluator)
-            evaluators.append(ev)
-        for ev in testset.evaluators:
-            assert isinstance(ev, BaseEvaluator)
-            evaluators.append(ev)
+        evaluators: list[BaseEvaluator] = [*case.evaluators, *testset.evaluators]
         metadata_by_eval_id.update({str(ev.evaluation_name): ev.metadata for ev in evaluators})
 
         case_metadata: TestCaseMetadata | None = case.metadata if isinstance(case.metadata, TestCaseMetadata) else None

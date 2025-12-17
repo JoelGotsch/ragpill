@@ -4,6 +4,74 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/). This project is
 pre-1.0, so minor versions may carry breaking changes.
 
+## [Unreleased]
+
+Phase 1 of the review follow-up: correctness blockers that could produce a
+silent wrong answer, plus small mechanical hardening. No public API renames yet
+(those land in a later phase).
+
+### Fixed
+
+- **`evaluate_results` now verifies case identity, not just count.** Runs were
+  paired to testset cases by index with only a length check, so a reordered or
+  edited testset silently judged every output against the wrong case's
+  evaluators/expected/rubric. It now compares each case's input hash
+  (`base_input_key`) and raises with the mismatched indices.
+- **Tasks with an async `__call__` are awaited.** `execute_dataset` used
+  `inspect.iscoroutinefunction`, which is `False` for a callable instance whose
+  `__call__` is async (the documented `task_factory` "stateful task" shape) — the
+  output was an un-awaited coroutine graded by its repr. It now awaits any
+  awaitable result.
+- **CSV encoding fallback fixed.** `latin-1` (which decodes any byte sequence)
+  was tried before `cp1252`/`utf-8`, so cp1252 files silently mojibaked and the
+  later encodings were dead code; the fallback also retried IO errors and
+  mislabeled a missing file as an encoding failure. `latin-1` is now the final
+  catch-all, only `UnicodeDecodeError` is retried, and IO errors propagate.
+- **Backend read paths distinguish "not found" from real errors.** MLflow /
+  Langfuse / Phoenix `get_trace` swallowed *all* exceptions as `None`, so an
+  auth/connection/5xx fault looked like an in-flight trace and burned the whole
+  poll budget before surfacing a misleading "trace not populated". Not-found now
+  returns `None`; transport/auth/server errors are logged and raised so polling
+  aborts. A failed export flush on `end_run` is warned instead of silently
+  dropping spans.
+- **LLM judge is hardened against prompt injection.** Untrusted task output /
+  inputs are escaped so they can't forge their own `</Output><Rubric>…` sections
+  to steer the verdict, and each judge system prompt now states that tagged
+  content is untrusted data. A `JUDGE_PROMPT_VERSION` + prompt hash are logged as
+  run params (when a judge ran) so a prompt edit that shifts scores is auditable.
+- **Stable evaluator assertion names.** Duplicate-name suffixes (`LLMJudge_2`)
+  are assigned once from the full evaluator list before any evaluator runs, so a
+  judge that raises on one run no longer shifts another judge's identity across
+  runs (which blended distinct rubrics in cross-run aggregation). Suffix counting
+  is by exact class name, fixing an over-count when one name prefixed another.
+- **Failed task runs record their real duration** instead of `0.0`.
+- **`DatasetRunOutput.to_json` no longer crashes on non-JSON-serializable task
+  outputs** — they are coerced with `str()` and a warning rather than raising
+  after the expensive run completed.
+- **Unknown span kinds deserialize to `UNKNOWN`** instead of raising, honoring
+  the additive-schema promise of the run-JSON format.
+- `default_input_to_key` uses `usedforsecurity=False` (works under FIPS Python).
+
+### Changed
+
+- **Evaluator provenance is declared, not guessed.** `BaseEvaluator.source_type`
+  (`"CODE"` / `"LLM_JUDGE"`, overridden by `LLMJudge`) replaces string-matching
+  `"LLMJudge"` in the class name to classify assessments; carried on
+  `EvaluatorSource` and typed on `Assessment.source_type`.
+- `Case.evaluators` / `Dataset.evaluators` are typed `list[BaseEvaluator]`
+  (was `list[Any]`), removing the runtime isinstance asserts.
+- `load_testset`'s `evaluator_classes` default is `None` (copied internally);
+  `default_evaluator_classes` is now read-only (`MappingProxyType`) so in-place
+  mutation can't leak across calls.
+- User-facing validation (`BaseEvaluator.evaluate`, CSV `from_csv_line`) raises
+  `TypeError`/`ValueError` instead of `assert` (which vanishes under `python -O`).
+- Default secret-redaction patterns extended (bearer tokens, secret, password,
+  set-cookie, access/refresh tokens).
+
+### Removed
+
+- `csv/questions_answers.py` (an empty vaporware stub).
+
 ## [0.5.0] - 2026-06-19
 
 The 0.4.x → 0.5.0 release: MLflow becomes an optional backend behind a small

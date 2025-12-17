@@ -9,6 +9,7 @@ a new adapter only writes the code that actually differs per backend.
 
 from __future__ import annotations
 
+import logging
 import time
 import warnings
 from collections.abc import Callable, Mapping
@@ -20,6 +21,26 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from ragpill.trace import Trace as NeutralTrace
+
+logger = logging.getLogger("ragpill.backends")
+
+
+def is_http_not_found(exc: BaseException) -> bool:
+    """Best-effort 404/not-found detection across httpx-based SDK clients.
+
+    Remote backends (Langfuse, Phoenix) wrap httpx; a genuinely missing trace
+    surfaces as a 404 (or a ``NotFoundError``-named exception), which is a
+    legitimate "poll again" miss. Any other error (auth, connection, 5xx) is a
+    real failure that read paths should surface rather than mistake for an
+    in-flight trace.
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    if status == 404:
+        return True
+    return type(exc).__name__ in {"NotFoundError", "NotFound"}
 
 
 def poll_for_trace(
@@ -123,7 +144,9 @@ class SyntheticRunMixin:
         try:
             self._flush()
         except Exception:
-            pass
+            # A failed flush at run end means spans were dropped — surface it
+            # instead of silently losing data on the async-export backends.
+            logger.warning("%s: flush on end_run failed; some spans may be lost.", type(self).__name__, exc_info=True)
 
     def is_run_active(self) -> bool:
         return self._run_active

@@ -153,7 +153,12 @@ class TraceQueryBackend(Protocol):
 
         The adapter converts its native trace before returning, so callers
         (evaluators, the execution layer) never see backend-specific shapes.
-        ``None`` when not found.
+
+        Returns ``None`` only for a genuine not-found / not-yet-exported trace.
+        Transport, auth, and server errors must be raised, not swallowed — the
+        polling loop treats a raised error as a hard failure and aborts, rather
+        than mistaking an outage for an in-flight trace and burning the whole
+        fetch budget.
         """
         ...
 

@@ -4,7 +4,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,9 @@ def default_input_to_key(input: Any) -> str:
     Returns:
         A hex-encoded MD5 digest of the stringified input.
     """
-    return hashlib.md5(str(input).encode()).hexdigest()
+    # usedforsecurity=False so this keeps working under FIPS-mode Python — the
+    # hash namespaces trace data, it is not a security primitive.
+    return hashlib.md5(str(input).encode(), usedforsecurity=False).hexdigest()
 
 
 class TestCaseMetadata(BaseModel):
@@ -151,7 +153,8 @@ class BaseEvaluator:
             the value is inherited from the case's TestCaseMetadata.expected at evaluation
             time. If neither evaluator nor case metadata sets it, defaults to True.
             For non-global evaluators, an explicit evaluator value takes precedence over
-            case metadata. For global evaluators, case metadata takes precedence.        attributes: Dictionary for additional metadata (populated from extra CSV columns)
+            case metadata. For global evaluators, case metadata takes precedence.
+        attributes: Dictionary for additional metadata (populated from extra CSV columns)
         tags: List of tags for organization and filtering
         is_global: Whether this evaluator applies to all test cases
 
@@ -163,6 +166,11 @@ class BaseEvaluator:
         [`ragpill.csv.testset.load_testset`][ragpill.csv.testset.load_testset]:
             Create datasets from CSV files
     """
+
+    # Provenance tag carried onto every result this evaluator produces, instead
+    # of inferring "is this a judge?" by string-matching the class name. LLM
+    # evaluators override this to "LLM_JUDGE".
+    source_type: ClassVar[Literal["CODE", "LLM_JUDGE"]] = "CODE"
 
     evaluation_name: uuid.UUID = field(default_factory=uuid.uuid4)
     expected: bool | None = field(default=None)
@@ -328,11 +336,18 @@ class BaseEvaluator:
         # handle common logic for expected:
         eval_result = await self.run(ctx)
 
-        # if eval_result.value is None:
-        #     return eval_result
-        assert isinstance(eval_result.value, bool), "Evaluator must return a boolean value."
-        assert isinstance(ctx.metadata, TestCaseMetadata), "Expected TestCaseMetadata from context."
-        merged_metadata = merge_metadata(case_metadata=ctx.metadata, evaluator_metadata=self.metadata)
+        # Validate with an explicit exception rather than ``assert`` — asserts
+        # vanish under ``python -O`` and raise the wrong type meanwhile. The
+        # expected-polarity comparison below is only meaningful for a bool.
+        if not isinstance(eval_result.value, bool):
+            raise TypeError(
+                f"{type(self).__name__}.run() must return a boolean EvaluationReason.value; "
+                f"got {type(eval_result.value).__name__}."
+            )
+        # A case constructed without metadata should evaluate with defaults, not
+        # make every evaluator fail. Fall back to an empty TestCaseMetadata.
+        case_metadata = ctx.metadata if isinstance(ctx.metadata, TestCaseMetadata) else TestCaseMetadata()
+        merged_metadata = merge_metadata(case_metadata=case_metadata, evaluator_metadata=self.metadata)
         eval_result.value = eval_result.value == merged_metadata.expected
         return eval_result
 

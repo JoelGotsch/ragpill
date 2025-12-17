@@ -26,7 +26,7 @@ from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
-from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, poll_for_trace
+from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
 from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
 
 if TYPE_CHECKING:
@@ -218,8 +218,15 @@ class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
         _require_phoenix()
         try:
             df = self._client().spans.get_spans_dataframe(project_identifier=self._project_name)
-        except Exception:
-            return None
+        except Exception as exc:
+            # A not-yet-ingested trace surfaces as an empty DataFrame (handled by
+            # _trace_from_spans_dataframe returning None), not an exception — so
+            # any exception here is a real transport/server error. Surface it
+            # rather than let the poll loop burn its whole budget on a hard fault.
+            if is_http_not_found(exc):
+                return None
+            logger.warning("PhoenixBackend.get_trace failed for %s: %s", trace_id, exc)
+            raise
         return _trace_from_spans_dataframe(df, trace_id)
 
     def await_trace(
@@ -261,7 +268,7 @@ class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
         root_span_id = self._root_span_id(trace_id)
         if root_span_id is None:
             return
-        annotator = "LLM" if assessment.source_type.upper().startswith("LLM") else "CODE"
+        annotator = "LLM" if assessment.source_type == "LLM_JUDGE" else "CODE"
         score = float(assessment.value) if isinstance(assessment.value, (bool, int, float)) else None
         label = assessment.value if isinstance(assessment.value, str) else None
         self._client().spans.add_span_annotation(

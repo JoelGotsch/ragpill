@@ -2,7 +2,9 @@
 
 import csv
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from ragpill.base import BaseEvaluator, TestCaseMetadata
@@ -26,18 +28,24 @@ def _read_csv_with_encoding(csv_path: str | Path) -> list[dict[str, str]]:
     Returns:
         List of row dictionaries
     """
-    encodings = ["utf-8-sig", "latin-1", "cp1252", "utf-8"]
+    # ``latin-1`` decodes any byte sequence, so it must come last as the
+    # infallible catch-all — otherwise the more specific encodings are dead
+    # code and genuine cp1252 files silently mojibake. Only encoding errors are
+    # retried; IO errors (missing file, permissions) propagate untouched rather
+    # than being mislabeled as an encoding failure.
+    encodings = ["utf-8-sig", "utf-8", "cp1252", "latin-1"]
 
     for encoding in encodings:
         try:
             with open(csv_path, encoding=encoding) as f:
                 reader = csv.DictReader(f)
                 return list(reader)
-        except Exception as e:
+        except UnicodeDecodeError as e:
             if encoding == encodings[-1]:
                 raise RuntimeError(f"Could not read CSV file with any supported encoding: {csv_path}") from e
             continue
 
+    # Unreachable: latin-1 either decodes or raises non-UnicodeDecodeError.
     raise RuntimeError(f"Could not read CSV file with any supported encoding: {csv_path}")
 
 
@@ -265,23 +273,25 @@ def _create_case_from_rows(
     )
 
 
-# Default evaluator classes can be extended as more evaluators are implemented
-default_evaluator_classes: dict[str, type[BaseEvaluator]] = {
-    "LLMJudge": LLMJudge,
-    "RegexInSourcesEvaluator": RegexInSourcesEvaluator,
-    "RegexInDocumentMetadata": RegexInDocumentMetadataEvaluator,
-    "LiteralQuoteEvaluator": LiteralQuoteEvaluator,
-    "HasQuotesEvaluator": HasQuotesEvaluator,
-    "RegexInOutputEvaluator": RegexInOutputEvaluator,
-    # Add other default evaluator classes here as they are implemented:
-    # 'REGEX': RegexEvaluator,
-    # 'CountSentences': CountSentencesEvaluator,
-}
+# Default evaluator classes, extendable per call: pass
+# ``default_evaluator_classes | {'MyEval': MyEvaluator}``. Read-only so a caller
+# that mutates it in place can't poison every later ``load_testset`` in the
+# process.
+default_evaluator_classes: Mapping[str, type[BaseEvaluator]] = MappingProxyType(
+    {
+        "LLMJudge": LLMJudge,
+        "RegexInSourcesEvaluator": RegexInSourcesEvaluator,
+        "RegexInDocumentMetadata": RegexInDocumentMetadataEvaluator,
+        "LiteralQuoteEvaluator": LiteralQuoteEvaluator,
+        "HasQuotesEvaluator": HasQuotesEvaluator,
+        "RegexInOutputEvaluator": RegexInOutputEvaluator,
+    }
+)
 
 
 def load_testset(
     csv_path: str | Path,
-    evaluator_classes: dict[str, type[BaseEvaluator]] = default_evaluator_classes,
+    evaluator_classes: Mapping[str, type[BaseEvaluator]] | None = None,
     skip_unknown_evaluators: bool = False,
     question_column: str = "Question",
     test_type_column: str = "test_type",
@@ -368,6 +378,13 @@ def load_testset(
         [`ragpill.csv.testset.default_evaluator_classes`][ragpill.csv.testset.default_evaluator_classes]:
             Dict of built-in evaluators
     """
+    # Resolve to a private mutable copy: None -> the built-in defaults. Copying
+    # means downstream in-place edits never touch the shared default mapping.
+    resolved_classes: dict[str, type[BaseEvaluator]] = dict(
+        evaluator_classes if evaluator_classes is not None else default_evaluator_classes
+    )
+    evaluator_classes = resolved_classes
+
     # Read CSV
     rows = _read_csv_with_encoding(csv_path)
 
