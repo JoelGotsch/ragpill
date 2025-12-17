@@ -19,7 +19,24 @@ vendor-neutral model.
 - **Backend read methods return the neutral trace.** `Backend.get_trace` /
   `await_trace` now return a `ragpill.trace.Trace` (each backend converts its
   own native trace internally), so the execution layer is backend-agnostic.
-  `search_traces` / `delete_traces` stay native. See ADR-0017.
+  See ADR-0017.
+- **Judge-trace cleanup moved behind the protocol.** `search_traces` (which
+  leaked backend-native trace objects into the upload layer) is replaced by
+  `Backend.delete_judge_traces(experiment_id, run_id)`; each backend owns how
+  its store surfaces the `ragpill_is_judge_trace` marker.
+- **Span handles have an explicit contract.** `start_span` yields a
+  `backends.SpanHandle` (`span_id`, `trace_id`, `set_attribute/inputs/outputs`);
+  the MLflow-flavoured `request_id` alias is gone.
+- **`DatasetRunOutput` fields renamed** `mlflow_run_id`/`mlflow_experiment_id`
+  → `run_id`/`experiment_id` (dataclass and v2 run-JSON keys) — the ids are
+  backend-neutral now.
+- **Metric-name sanitisation moved into `MLflowBackend.log_metric`** — the
+  upload layer passes raw names; each backend applies its own naming rules.
+- **Evaluator-level tags/attributes now reach the runs DataFrame.** The
+  documented case↔evaluator metadata union-merge previously silently dropped
+  the evaluator side; per-tag accuracy now sees evaluator tags too.
+- **`RegexInOutputEvaluator` normalises the pattern on every construction
+  path** (previously only `from_csv_line`), matching its documented contract.
 
 ### Added (backends)
 
@@ -77,6 +94,33 @@ vendor-neutral model.
 
 ### Fixed
 
+- **Session-mode assessments and trace tags are uploaded again.** With the
+  default MLflow backend's session grouping there is no case-level trace, so
+  every `log_assessment`/`set_trace_tag` was silently skipped; per-run
+  assessments now target each repeat's own trace (`RunResult.trace_id`), with
+  aggregates and tags fanned out to the per-run traces.
+- **Remote backends no longer receive the temp SQLite URI.** With no tracking
+  URI, Langfuse/Phoenix used the MLflow-specific `sqlite:///` temp path as
+  their endpoint; a `supports_local_file_store` capability now gates the temp
+  store, and remote backends fall back to their env-derived destination.
+- **Source evaluators read the neutral `Span.documents` field** (with the
+  legacy `page_content` outputs parse as fallback), so Phoenix/OpenInference
+  retriever documents are found.
+- **Evaluator isolation restored.** When a run's span is missing from the
+  trace, `SpanBaseEvaluator.get_trace` returns an empty span set instead of
+  the full case trace (which silently scored other repeats' spans).
+- **Langfuse/Phoenix `await_trace` no longer returns partial traces** — they
+  poll until the span set is stable across two consecutive polls.
+- **Phoenix backend lazily configures its tracer from env defaults** instead
+  of crashing with `AttributeError` when spans open before `set_destination`.
+- **Langfuse root spans keep `parent_id=None`** (a `str(None)` bug rendered
+  whole traces empty).
+- **GenAI adapter routes `gen_ai.assistant.message` prompt-history events to
+  `messages_in`** (only `gen_ai.choice` is the completion).
+- **MLflow adapter maps `TASK`/`GUARDRAIL` span types** instead of degrading
+  ragpill's own run spans to `UNKNOWN`.
+- **Trace fetches no longer block the event loop** — synchronous polling runs
+  in a worker thread and session-mode repeats are fetched concurrently.
 - **Span-based evaluators no longer silently dropped by a trace-export race.**
   Trace fetching now polls the backend until the trace is exported
   (`Backend.await_trace`), instead of reading immediately after the span
