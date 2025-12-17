@@ -12,6 +12,39 @@ robustness, backend data fidelity, a documentation golden-path sprint, and
 contributor-facing test/governance work. Backwards compatibility is a non-goal
 pre-1.0, so the renames below have no deprecated aliases.
 
+### Fixed (review round 2)
+
+- **Honest failure attribution completed end-to-end.** `await_trace` /
+  `poll_for_trace` return `(trace, stable)`; a per-run `trace_status`
+  (`ok`/`incomplete`/`unavailable`) threads to a schema-v3 run JSON and into the
+  evaluator context, so a partial/in-flight trace is an infra error, not a false
+  "not found". The execution layer catches backend fetch errors (a transient 5xx
+  no longer destroys the whole run), and error-state runs are excluded from every
+  pass-rate denominator (`AggregatedResult.error_counts` surfaces the outage), so
+  the case and per-evaluator dashboards agree.
+- **`task_timeout_s` now works for synchronous tasks** (thread offload with
+  `abandon_on_cancel=True`; the abandoned-thread caveat is documented).
+- **The input-identity guard no longer hard-fails valid saved runs** whose
+  inputs lack a stable `str()`/`repr` — it skips the check with a warning.
+- **`to_unix_nano` returns `int | None`** (`None` for `NaT`/`NaN`); span times are
+  `int | None` and the report shows "duration unknown" — no more `int64`-min
+  negative durations from in-flight Phoenix rows.
+- **`upload_results` raises when no tracking URI resolves** (was silently
+  `./mlruns`) and logs which source won the precedence.
+- **Quote parser: sibling nested quotes are no longer corrupted** (subquotes are
+  spliced last-to-first); `LiteralQuoteEvaluator` is picklable (dropped the
+  placeholder-lambda `__init__`; `get_documents` moved up to `SpanBaseEvaluator`).
+- **`max_concurrency` parallelizes per-evaluator** (judges within a run overlap);
+  the untested sequential branch was removed.
+- **Concurrent traced `execute_dataset` calls are serialized** by a per-event-loop
+  lock; the backend registry is guarded by a lock; `supports_local_file_store` is
+  a declared `ClassVar[bool]`.
+- Phoenix reads filter by `trace_id` server-side when the client supports it;
+  MLflow's not-found detection folded into the shared `is_http_not_found`;
+  `ragpill.backends` gained `__dir__`; `DatasetRunOutput` gained public
+  `to_dict`/`from_dict` (removing a cross-module private import); doc snippets
+  fixed for the `tracking_uri=None` default.
+
 ### Contributor experience
 
 - Added a **parametrized backend-contract test suite**
