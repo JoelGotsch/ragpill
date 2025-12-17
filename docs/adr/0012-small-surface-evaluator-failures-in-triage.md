@@ -1,9 +1,17 @@
 # ADR-0012: Surface evaluator failures in triage without changing `all_passed`
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0018](./0018-medium-conservative-gateable-metrics.md)
 **Date:** 2026-06-19
 **Impact:** Small
-**Related:** ADR-0011
+**Related:** ADR-0011, ADR-0018
+
+> **Superseded 2026-07-07.** This ADR predates Phase 2's infra/verdict split
+> (`trace_status`, `is_error_state`); once "the trace never arrived" became a
+> first-class error state, freezing `all_passed` and counting error runs as
+> 0-pass attempts stopped being coherent — see ADR-0018 for the replacement
+> semantics (conservative gateable metrics, evaluated-only diagnostics with
+> coverage). The triage-visibility decision below (ERROR lines; failures are
+> never invisible) remains in force.
 
 ## Context
 Evaluators that raised landed in `RunResult.evaluator_failures`, but the

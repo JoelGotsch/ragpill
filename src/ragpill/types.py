@@ -65,16 +65,16 @@ class RunResult:
     def all_passed(self) -> bool:
         """True if the task succeeded and every assertion passed.
 
-        A run with only evaluator failures (no assertions, no task error) is an
-        error state, not a pass — "no data" must never read green. Runs where
-        *some* evaluators produced verdicts and others failed are judged on the
-        verdicts they did produce (the failures are surfaced separately in the
-        triage report and the per-evaluator error counts).
+        An error-state run (see :attr:`is_error_state`) is not a pass — "no
+        data" must never read green (ADR-0018). Runs where *some* evaluators
+        produced verdicts and others failed are judged on the verdicts they did
+        produce (the failures are surfaced separately in the triage report and
+        the per-evaluator error counts).
         """
         if self.error is not None:
             return False
         if not self.assertions:
-            return not self.evaluator_failures
+            return not self.is_error_state
         return all(r.value is True for r in self.assertions.values())
 
 
@@ -82,18 +82,35 @@ class RunResult:
 class AggregatedResult:
     """Aggregated pass/fail verdict across multiple runs of the same test case.
 
+    Metric semantics follow ADR-0018: numbers a pipeline can gate on are
+    conservative (infra failures only ever push them down), evaluated-only
+    numbers are diagnostic and always travel with their coverage counts.
+
     Attributes:
-        passed: Whether ``pass_rate >= threshold``.
-        pass_rate: Fraction of runs where ``all_passed`` was True (0.0 to 1.0).
-        threshold: The minimum pass_rate required to pass.
+        passed: The gate: ``pass_rate >= threshold`` AND no infra-degraded
+            runs. An infra failure can only ever block a promotion, never
+            improve the reported result.
+        pass_rate: **Conservative lower bound** — passing runs divided by
+            *all* runs, error-state (infra-degraded) runs counted as
+            non-passes. Safe to gate on.
+        pass_rate_evaluated: **Diagnostic** — passing runs divided by runs
+            that could actually be evaluated. Answers "how good is the agent
+            on the runs we could score"; never use it for gating without
+            checking ``runs_infra_error``.
+        runs_evaluated: Number of runs that produced verdicts (denominator of
+            ``pass_rate_evaluated``).
+        runs_infra_error: Number of error-state runs (trace unavailable etc.)
+            excluded from ``pass_rate_evaluated`` and counted as non-passes in
+            ``pass_rate``.
+        threshold: The minimum ``pass_rate`` required to pass.
         summary: Human-readable summary string (e.g. "2/3 runs passed").
-        per_evaluator_pass_rates: Per-evaluator pass rates across runs. The
-            denominator for each evaluator is the number of runs in which it
-            produced a verdict — runs where it errored (e.g. trace unavailable)
-            are excluded, never counted as failures.
-        error_counts: Per-evaluator count of runs in which the evaluator errored
-            (could not produce a verdict). Surfaces an outage instead of hiding
-            or diluting it.
+        per_evaluator_pass_rates: Per-evaluator pass rates across runs
+            (diagnostic, evaluated-only). The denominator for each evaluator
+            is the number of runs in which it produced a verdict; read it
+            together with ``error_counts``.
+        error_counts: Per-evaluator count of runs in which the evaluator
+            errored (could not produce a verdict). Surfaces an outage instead
+            of hiding or diluting it.
     """
 
     passed: bool
@@ -102,6 +119,9 @@ class AggregatedResult:
     summary: str
     per_evaluator_pass_rates: dict[str, float]
     error_counts: dict[str, int] = field(default_factory=dict)
+    pass_rate_evaluated: float = 0.0
+    runs_evaluated: int = 0
+    runs_infra_error: int = 0
 
 
 @dataclass
@@ -159,6 +179,8 @@ class EvaluationOutput:
                     "case_name": cr.case_name,
                     "passed": cr.aggregated.passed,
                     "pass_rate": cr.aggregated.pass_rate,
+                    "pass_rate_evaluated": cr.aggregated.pass_rate_evaluated,
+                    "runs_infra_error": cr.aggregated.runs_infra_error,
                     "threshold": cr.aggregated.threshold,
                     "summary": cr.aggregated.summary,
                 }

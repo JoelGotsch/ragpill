@@ -132,7 +132,7 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
                     backend.log_assessment(run_trace_id, assessment)
 
         if repeat > 1:
-            for eval_name, eval_pass_rate in cr.aggregated.per_evaluator_pass_rates.items():
+            for eval_name in cr.aggregated.per_evaluator_pass_rates:
                 produced = sum(1 for r in cr.run_results if eval_name in r.assertions)
                 errored = cr.aggregated.error_counts.get(eval_name, 0)
                 if produced == 0:
@@ -149,14 +149,18 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
                     for tid in case_level_ids:
                         backend.log_assessment(tid, error_assessment)
                     continue
-                agg_passed = eval_pass_rate >= cr.aggregated.threshold
                 passed_n = sum(
                     1 for r in cr.run_results if eval_name in r.assertions and r.assertions[eval_name].value is True
                 )
-                errored_note = f", {errored} errored/excluded" if errored else ""
+                # ADR-0018: uploaded aggregate verdicts are gateable, so they
+                # are conservative — errored runs count against the rate and
+                # any error blocks the verdict.
+                rate_conservative = passed_n / (produced + errored)
+                agg_passed = rate_conservative >= cr.aggregated.threshold and errored == 0
+                errored_note = f", {errored} errored (counted as non-passes)" if errored else ""
                 rationale = (
-                    f"Aggregate: {passed_n}/{produced} evaluated runs passed "
-                    f"(threshold={cr.aggregated.threshold}{errored_note})"
+                    f"Aggregate: {passed_n}/{produced + errored} runs passed "
+                    f"(evaluated-only: {passed_n}/{produced}; threshold={cr.aggregated.threshold}{errored_note})"
                 )
                 agg_assessment = Assessment(
                     name=f"agg_{eval_name}",

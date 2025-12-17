@@ -73,13 +73,19 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
     Returns:
         :class:`AggregatedResult` with pass/fail, pass_rate, and per-evaluator rates.
     """
-    # Error-state runs (could not be evaluated — only infra failures) are
-    # excluded from the case denominator: an outage neither passes nor fails.
+    # ADR-0018: the headline pass_rate is a conservative lower bound — every
+    # run counts in the denominator and an error-state (infra-degraded) run
+    # counts as a non-pass, so infra trouble can only push the number down.
+    # pass_rate_evaluated is the diagnostic companion over scoreable runs.
     evaluable = [r for r in run_results if not r.is_error_state]
-    total = len(evaluable)
+    total_runs = len(run_results)
+    runs_infra_error = total_runs - len(evaluable)
     passed_count = sum(1 for r in evaluable if r.all_passed)
-    pass_rate = passed_count / total if total > 0 else 0.0
-    passed = pass_rate >= threshold
+    pass_rate = passed_count / total_runs if total_runs > 0 else 0.0
+    pass_rate_evaluated = passed_count / len(evaluable) if evaluable else 0.0
+    # The gate fails on any infra-degraded run: an outage can block a
+    # promotion, never improve one.
+    passed = pass_rate >= threshold and runs_infra_error == 0
 
     # Every evaluator seen either as a verdict or as a failure.
     evaluator_names: set[str] = set()
@@ -98,11 +104,14 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
         eval_passed = sum(1 for r in produced if r.assertions[eval_name].value is True)
         per_evaluator_pass_rates[eval_name] = eval_passed / len(produced) if produced else 0.0
 
-    error_note = ""
-    if error_counts:
-        error_note = f" (excluded {sum(error_counts.values())} errored evaluator run(s))"
+    infra_note = ""
+    if runs_infra_error:
+        infra_note = (
+            f"; {runs_infra_error} run(s) infra-degraded"
+            f" (pass_rate_evaluated={pass_rate_evaluated:.2f} over {len(evaluable)} evaluated)"
+        )
     if passed:
-        summary = f"{passed_count}/{total} runs passed (threshold={threshold}){error_note}"
+        summary = f"{passed_count}/{total_runs} runs passed (threshold={threshold}){infra_note}"
     else:
         failed_details: list[str] = []
         for r in evaluable:
@@ -114,8 +123,10 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
                         f"{name}: {res.reason}" for name, res in r.assertions.items() if res.value is not True
                     ]
                     failed_details.append(f"run-{r.run_index}: {'; '.join(failed_evals)}")
+        if runs_infra_error and pass_rate_evaluated >= threshold:
+            failed_details.append("insufficient evaluated coverage (infra-degraded runs block the verdict)")
         summary = (
-            f"{passed_count}/{total} runs passed (threshold={threshold}){error_note}. "
+            f"{passed_count}/{total_runs} runs passed (threshold={threshold}){infra_note}. "
             f"Failed: {'; '.join(failed_details)}"
         )
 
@@ -126,6 +137,9 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
         summary=summary,
         per_evaluator_pass_rates=per_evaluator_pass_rates,
         error_counts=error_counts,
+        pass_rate_evaluated=pass_rate_evaluated,
+        runs_evaluated=len(evaluable),
+        runs_infra_error=runs_infra_error,
     )
 
 
@@ -207,13 +221,15 @@ class _RunSlot:
     task_run: TaskRunOutput
     eval_names: list[str]
     assertions: dict[str, EvaluationResult] = field(default_factory=dict)
-    failures: list[EvaluatorFailureInfo] = field(default_factory=list)
+    failures: dict[str, EvaluatorFailureInfo] = field(default_factory=dict)
     error: Exception | None = None
 
     def to_run_result(self) -> RunResult:
-        # Rebuild assertions in the evaluators' declared order so output is
-        # deterministic regardless of the order concurrent workers finished in.
+        # Rebuild assertions AND failures in the evaluators' declared order so
+        # output is deterministic regardless of the order concurrent workers
+        # finished in.
         ordered = {name: self.assertions[name] for name in self.eval_names if name in self.assertions}
+        ordered_failures = [self.failures[name] for name in self.eval_names if name in self.failures]
         return RunResult(
             run_index=self.task_run.run_index,
             input_key=self.task_run.input_key,
@@ -222,7 +238,7 @@ class _RunSlot:
             output=None if self.error is not None else self.task_run.output,
             duration=self.task_run.duration,
             assertions=ordered,
-            evaluator_failures=self.failures,
+            evaluator_failures=ordered_failures,
             error=self.error,
         )
 
@@ -338,9 +354,19 @@ def _create_cases_dataframe(case_results: list[CaseResult]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for cr in case_results:
         assert isinstance(cr.metadata, TestCaseMetadata)
-        for eval_name, pass_rate in cr.aggregated.per_evaluator_pass_rates.items():
+        for eval_name, rate_evaluated in cr.aggregated.per_evaluator_pass_rates.items():
             durations = [rr.duration for rr in cr.run_results]
             avg_duration = sum(durations) / len(durations) if durations else 0.0
+            errored = cr.aggregated.error_counts.get(eval_name, 0)
+            produced = sum(1 for rr in cr.run_results if eval_name in rr.assertions)
+            passed_n = sum(
+                1 for rr in cr.run_results if rr.assertions.get(eval_name) and rr.assertions[eval_name].value is True
+            )
+            # ADR-0018: "pass_rate" is the conservative, gateable number
+            # (errored runs count against); the evaluated-only rate is
+            # diagnostic and carries its coverage in the adjacent columns.
+            attempts = produced + errored
+            rate_conservative = passed_n / attempts if attempts else 0.0
             rows.append(
                 {
                     "case_id": cr.base_input_key,
@@ -349,8 +375,11 @@ def _create_cases_dataframe(case_results: list[CaseResult]) -> pd.DataFrame:
                     "threshold": cr.aggregated.threshold,
                     "inputs": str(cr.inputs),
                     "evaluator_name": eval_name,
-                    "pass_rate": pass_rate,
-                    "passed": pass_rate >= cr.aggregated.threshold,
+                    "pass_rate": rate_conservative,
+                    "pass_rate_evaluated": rate_evaluated,
+                    "runs_evaluated": produced,
+                    "runs_errored": errored,
+                    "passed": rate_conservative >= cr.aggregated.threshold and errored == 0,
                     "aggregated_reason": cr.aggregated.summary,
                     "expected": True,
                     "attributes": _ta.dump_json(cr.metadata.attributes),
@@ -502,7 +531,7 @@ async def evaluate_results(
         if result is not None:
             slot.assertions[eval_name] = result
         if failure is not None:
-            slot.failures.append(failure)
+            slot.failures[eval_name] = failure
 
     async with anyio.create_task_group() as tg:
         for slot, evaluator, eval_name, ctx in jobs:

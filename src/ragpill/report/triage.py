@@ -273,6 +273,15 @@ def _render_failing_case(
     lines.append(f"### Case `{cr.base_input_key}`: {title}")
     lines.append("")
     lines.append(f"- Pass rate: {pass_count}/{total} runs")
+    if cr.aggregated.runs_infra_error:
+        # ADR-0018: the headline rate above is conservative (infra-degraded
+        # runs count as non-passes); show the diagnostic companion so the
+        # reader can tell an agent problem from an infra problem.
+        lines.append(
+            f"- Infra-degraded runs: {cr.aggregated.runs_infra_error} "
+            f"(evaluated-only pass rate: {cr.aggregated.pass_rate_evaluated:.2f} "
+            f"over {cr.aggregated.runs_evaluated} runs)"
+        )
     lines.append(f"- Inputs: {render_value(cr.inputs)}")
     expected = _expected_output_for(cr, case_run)
     if expected is not None:
@@ -283,9 +292,9 @@ def _render_failing_case(
         lines.append(f"- Summary: {cr.aggregated.summary}")
         return "\n".join(lines)
 
-    # ``all_passed`` ignores evaluator_failures by design (pass/fail semantics
-    # unchanged), so include runs that errored an evaluator even when their
-    # assertions passed — otherwise a silently-dropped evaluator is invisible.
+    # ``all_passed`` is False for error-state runs (ADR-0018) but a run whose
+    # assertions passed can still carry evaluator failures — include those too,
+    # otherwise a silently-dropped evaluator is invisible.
     failing_runs = [rr for rr in cr.run_results if not rr.all_passed or rr.evaluator_failures]
     for rr in failing_runs:
         lines.append("")
@@ -376,7 +385,8 @@ def _render_passing_section(passing: list[CaseResult]) -> str:
         passed = sum(1 for rr in cr.run_results if rr.all_passed)
         total = len(cr.run_results)
         title = render_value(cr.case_name, max_chars=200)
-        lines.append(f"- `{cr.base_input_key}`: {title} — {passed}/{total} runs passed")
+        infra = f" ({cr.aggregated.runs_infra_error} infra-degraded)" if cr.aggregated.runs_infra_error else ""
+        lines.append(f"- `{cr.base_input_key}`: {title} — {passed}/{total} runs passed{infra}")
     return "\n".join(lines)
 
 

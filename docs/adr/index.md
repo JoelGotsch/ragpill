@@ -37,9 +37,10 @@ start at ADR-0011.
 | Number | Date | Impact | Title | Status |
 |---|---|---|---|---|
 | [ADR-0011](./0011-medium-await-trace-in-backend-protocol.md) | 2026-06-19 | Medium | Trace-readiness polling lives in the backend protocol (`await_trace`); configurable poll budget | Accepted |
-| [ADR-0012](./0012-small-surface-evaluator-failures-in-triage.md) | 2026-06-19 | Small | Surface evaluator failures in triage without changing `all_passed` | Accepted |
+| [ADR-0012](./0012-small-surface-evaluator-failures-in-triage.md) | 2026-06-19 | Small | Surface evaluator failures in triage without changing `all_passed` | Superseded by ADR-0018 |
 | [ADR-0013](./0013-large-otel-adapter-option-c-from-otel.md) | 2026-06-19 | Large | OTel dialect-adapter interface — Option C (loader → normalised OTLP-JSON → `from_otel`) | Accepted |
 | [ADR-0014](./0014-large-clean-break-vendor-neutral-trace-model.md) | 2026-06-19 | Large | Clean break to the vendor-neutral trace model (no feature flag) | Accepted |
 | [ADR-0015](./0015-small-duck-typed-to-mlflow-trace-compat-shim.md) | 2026-06-19 | Small | Duck-typed `to_mlflow_trace` compat shim, convenience-only | Superseded by ADR-0016 |
 | [ADR-0016](./0016-small-remove-to-mlflow-trace-compat-shim.md) | 2026-06-19 | Small | Remove the `to_mlflow_trace` compat shim | Accepted |
 | [ADR-0017](./0017-medium-await-trace-returns-neutral-trace.md) | 2026-06-19 | Medium | `get_trace` / `await_trace` return the neutral trace, not native | Accepted |
+| [ADR-0018](./0018-medium-conservative-gateable-metrics.md) | 2026-07-07 | Medium | Gateable metrics are conservative; infra failures fail closed | Accepted |

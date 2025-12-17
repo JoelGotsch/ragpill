@@ -76,6 +76,42 @@ async def test_max_concurrency_produces_identical_results():
     assert len(seq.runs) == len(conc.runs)
 
 
+@pytest.mark.anyio
+async def test_evaluator_failure_order_is_declaration_order_under_concurrency():
+    # Two failing evaluators with inverted latencies: completion order is
+    # slow-then-fast at concurrency 1 but fast-then-slow at 4. The recorded
+    # failure order must be declaration order either way (round-3 R8).
+    from dataclasses import dataclass
+
+    from ragpill.base import BaseEvaluator
+
+    @dataclass(kw_only=True)
+    class SlowFail(BaseEvaluator):
+        async def run(self, ctx):
+            await anyio.sleep(0.1)
+            raise RuntimeError("boom")
+
+    @dataclass(kw_only=True)
+    class FastFail(BaseEvaluator):
+        async def run(self, ctx):
+            raise RuntimeError("boom")
+
+    cases = [
+        Case(
+            inputs="a",
+            metadata=TestCaseMetadata(),
+            evaluators=[SlowFail(tags=set()), FastFail(tags=set())],
+        )
+    ]
+    testset = Dataset[str, str, TestCaseMetadata](cases=cases)
+    run = DatasetRunOutput(cases=[_case_run("a", ["out"])])
+
+    for concurrency in (1, 4):
+        result = await evaluate_results(run, testset, max_concurrency=concurrency)
+        names = [f.name for f in result.case_results[0].run_results[0].evaluator_failures]
+        assert names == ["SlowFail", "FastFail"], f"max_concurrency={concurrency}: {names}"
+
+
 def test_llm_judge_has_optional_timeout_field():
     import dataclasses
 

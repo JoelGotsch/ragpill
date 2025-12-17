@@ -2,7 +2,7 @@
 
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.evaluation import _aggregate_runs
-from ragpill.types import RunResult
+from ragpill.types import EvaluatorFailureInfo, RunResult
 
 
 def _make_assertion(name: str, value: bool, reason: str = "") -> EvaluationResult:
@@ -186,3 +186,56 @@ def test_summary_failed_includes_details():
     assert "1/3" in result.summary
     assert "Failed" in result.summary
     assert "run-1" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# ADR-0018: conservative gateable metrics, fail-closed on infra errors
+# ---------------------------------------------------------------------------
+
+
+def _make_error_state_run(index: int) -> RunResult:
+    """A run that could not be evaluated at all (e.g. trace unavailable)."""
+    return RunResult(
+        run_index=index,
+        input_key=f"k_{index}",
+        run_span_id=f"s{index}",
+        output="out",
+        duration=1.0,
+        assertions={},
+        evaluator_failures=[EvaluatorFailureInfo(name="eval1", error_message="trace unavailable", error_stacktrace="")],
+    )
+
+
+def test_infra_errors_push_conservative_pass_rate_down():
+    # The review scenario: 8 infra-errored runs + 2 passes must not read as 1.0.
+    runs = [_make_error_state_run(i) for i in range(8)] + [_make_run(8, True), _make_run(9, True)]
+    result = _aggregate_runs(runs, threshold=0.9)
+    assert abs(result.pass_rate - 0.2) < 0.01  # conservative: 2/10
+    assert result.pass_rate_evaluated == 1.0  # diagnostic: 2/2
+    assert result.runs_evaluated == 2
+    assert result.runs_infra_error == 8
+    assert result.passed is False
+
+
+def test_any_infra_error_blocks_gate_even_above_threshold():
+    runs = [_make_run(0, True), _make_run(1, True), _make_error_state_run(2)]
+    result = _aggregate_runs(runs, threshold=0.5)
+    assert abs(result.pass_rate - 2 / 3) < 0.01  # above threshold...
+    assert result.passed is False  # ...but the coverage gate fails closed
+    assert "insufficient evaluated coverage" in result.summary
+
+
+def test_no_infra_errors_rates_agree():
+    runs = [_make_run(0, True), _make_run(1, False)]
+    result = _aggregate_runs(runs, threshold=0.5)
+    assert result.pass_rate == result.pass_rate_evaluated == 0.5
+    assert result.runs_infra_error == 0
+    assert result.passed is True
+
+
+def test_all_infra_errors_fail_closed():
+    runs = [_make_error_state_run(i) for i in range(3)]
+    result = _aggregate_runs(runs, threshold=0.0)
+    assert result.pass_rate == 0.0
+    assert result.runs_evaluated == 0
+    assert result.passed is False  # even threshold=0.0 cannot pass with zero coverage
