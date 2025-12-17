@@ -11,7 +11,6 @@ import pandas as pd
 import pytest
 from conftest import make_span as _span
 
-from ragpill.backends import RunHandle, configure_backend, reset_backend
 from ragpill.backends._common import to_unix_nano  # pyright: ignore[reportPrivateUsage]
 from ragpill.base import TestCaseMetadata, default_input_to_key
 from ragpill.eval_types import Case, Dataset, EvaluatorContext
@@ -252,77 +251,37 @@ def test_literal_quote_evaluator_is_picklable():
 # ---------------------------------------------------------------------------
 
 
-class _DepthTrackingBackend:
-    """Records the max number of traced runs active at once. With the capture
-    lock, two concurrent execute_dataset calls must never overlap (depth <= 1)."""
-
-    supports_local_file_store = False
-    _active = 0
-    _max = 0
-
-    def get_tracking_uri(self):
-        return None
-
-    def set_tracking_uri(self, uri):
-        pass
-
-    def set_destination(self, uri, experiment_name):
-        type(self)._active += 1
-        type(self)._max = max(type(self)._max, type(self)._active)
-
-    def autolog_pydantic_ai(self):
-        pass
-
-    def start_run(self, run_id=None, description=None):
-        return RunHandle(run_id="r", experiment_id="e")
-
-    def end_run(self):
-        type(self)._active -= 1
-
-    def is_run_active(self):
-        return True
-
-    from contextlib import contextmanager
-
-    @contextmanager
-    def start_span(self, name, span_type, attributes=None):
-        yield _FakeSpan()
-
-    @contextmanager
-    def start_case_grouping(self, case_id, name, inputs=None, attributes=None):
-        from ragpill.backends._types import CaseGroupingHandle
-
-        yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
-
-    def await_trace(self, trace_id, *, run_id=None, experiment_id=None, timeout_s=10.0, poll_interval_s=0.5):
-        return None, False
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
-async def test_concurrent_traced_runs_are_serialized(anyio_backend):
+async def test_concurrent_traced_runs_are_serialized(anyio_backend, make_fake_backend):
+    # Records the max number of traced runs active at once. With the tracking
+    # lock, two concurrent execute_dataset calls must never overlap (depth <= 1).
     import anyio
 
-    _DepthTrackingBackend._active = 0
-    _DepthTrackingBackend._max = 0
-    configure_backend(_DepthTrackingBackend)
-    try:
+    depth = {"active": 0, "max": 0}
 
-        async def one(q):
-            async def task(_):
-                await anyio.sleep(0.02)  # give the other run a chance to overlap
-                return "x"
+    def _enter(uri, experiment_name):
+        depth["active"] += 1
+        depth["max"] = max(depth["max"], depth["active"])
 
-            ds = Dataset(cases=[Case(inputs=q, metadata=TestCaseMetadata())])
-            await execute_dataset(ds, task=task, capture_traces=True, tracking_uri=f"http://{q}")
+    def _leave():
+        depth["active"] -= 1
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(one, "a")
-            tg.start_soon(one, "b")
-    finally:
-        reset_backend()
+    make_fake_backend(on_set_destination=_enter, on_end_run=_leave)
 
-    assert _DepthTrackingBackend._max == 1  # never two traced runs active at once
+    async def one(q):
+        async def task(_):
+            await anyio.sleep(0.02)  # give the other run a chance to overlap
+            return "x"
+
+        ds = Dataset(cases=[Case(inputs=q, metadata=TestCaseMetadata())])
+        await execute_dataset(ds, task=task, capture_traces=True, tracking_uri=f"http://{q}")
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(one, "a")
+        tg.start_soon(one, "b")
+
+    assert depth["max"] == 1  # never two traced runs active at once
 
 
 # ---------------------------------------------------------------------------

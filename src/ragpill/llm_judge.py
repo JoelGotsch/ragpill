@@ -131,6 +131,11 @@ _judge_input_output_agent: Agent[None, GradingOutput] = Agent(
 
 
 def _stringify(value: Any) -> str:
+    # Deliberately NOT ragpill._text.to_text: judge payloads are often pydantic
+    # models, and pydantic-core's to_json serializes them faithfully (field
+    # serializers, aliases) where json.dumps(default=str) would collapse them
+    # to their repr. The repr fallback keeps unserializable objects readable
+    # inside the prompt rather than raising mid-judgment.
     if isinstance(value, str):
         return value
     try:

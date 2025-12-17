@@ -3,15 +3,40 @@
 Split out of ``utils.py`` so the quote-parsing and normalization machinery lives
 in one cohesive, stdlib-only module. The public functions
 (:func:`normalize_text`, :func:`normalize_for_quote_comparison`,
-:func:`extract_markdown_quotes`) are consumed by the evaluators; the rest are
-internal helpers.
+:func:`extract_markdown_quotes`, :func:`to_text`) are consumed by the
+evaluators, backends, and report layer; the rest are internal helpers.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
+
+
+def to_text(value: object) -> str:
+    """Best-effort single string form of an arbitrary value.
+
+    The one canonical value→text helper (strings pass through; everything
+    else is JSON with sorted keys, ``str`` fallback for non-serializable
+    members, and non-ASCII preserved). Backends use it for span I/O
+    attributes and the report layer builds :func:`render_value` on it, so
+    the same value reads identically in traces and reports.
+
+    Args:
+        value: Any value.
+
+    Returns:
+        The string itself, its JSON encoding, or ``str(value)`` when the
+        value cannot be JSON-encoded at all.
+    """
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _clean_quote_text(text: str, quote_char: str | None = None) -> tuple[str, str | None]:

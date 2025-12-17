@@ -26,6 +26,7 @@ from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from ragpill._text import to_text
 from ragpill.backends._common import (
     NoopResultsMixin,
     RemoteQueryMixin,
@@ -33,7 +34,6 @@ from ragpill.backends._common import (
     is_http_not_found,
     logger,
     require_extra,
-    to_text,
     to_unix_nano,
 )
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle

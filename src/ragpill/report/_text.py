@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
+
+from ragpill._text import to_text
 
 
 def truncate(s: str, max_chars: int) -> str:
@@ -32,19 +33,12 @@ def truncate(s: str, max_chars: int) -> str:
 def render_value(v: Any, max_chars: int = 300) -> str:
     """Stringify an arbitrary value into a single line, then clip to ``max_chars``.
 
-    Strings are returned with surrounding whitespace collapsed; everything
-    else is JSON-encoded with sorted keys (falling back to ``str()`` for
-    non-serializable types). The result has no embedded newlines.
+    The value→text conversion is [`to_text`][ragpill._text.to_text] (the same
+    helper the backends use for span attributes, so traces and reports show
+    identical text); this wrapper adds the display concerns — whitespace
+    collapsed to a single line and truncation to ``max_chars``.
     """
-    if isinstance(v, str):
-        text = " ".join(v.split())
-    else:
-        try:
-            text = json.dumps(v, sort_keys=True, default=str, ensure_ascii=False)
-        except (TypeError, ValueError):
-            text = str(v)
-        text = " ".join(text.split())
-    return truncate(text, max_chars)
+    return truncate(" ".join(to_text(v).split()), max_chars)
 
 
 def indent(s: str, levels: int) -> str:

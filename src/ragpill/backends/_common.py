@@ -45,19 +45,6 @@ def require_extra(import_name: str, install_hint: str) -> None:
         raise RuntimeError(install_hint) from exc
 
 
-def to_text(value: object) -> str:
-    """Best-effort string form of a value (str as-is; else JSON with ``str``
-    fallback). Shared span-I/O stringify for the remote adapters."""
-    import json
-
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, default=str)
-    except (TypeError, ValueError):
-        return str(value)
-
-
 def to_unix_nano(val: object) -> int | None:
     """Coerce a timestamp to Unix nanoseconds, or ``None`` when absent/unknown.
 
