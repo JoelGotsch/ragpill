@@ -28,10 +28,12 @@ the trace tree for a single case.
 ## Triage: debugging a failing evaluation
 
 ```python
+from ragpill.settings import TrackingSettings
+
 result = await evaluate_testset(
     testset=testset,
     task=my_agent,
-    settings=TrackingSettings(),
+    settings=TrackingSettings(tracking_uri="http://localhost:5000"),  # or set RAGPILL_TRACKING_URI
 )
 
 # Drop into a chat tool of your choice:

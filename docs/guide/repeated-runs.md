@@ -23,7 +23,7 @@ testset = Dataset(cases=[case])
 result = await evaluate_testset(
     testset=testset,
     task=my_agent,
-    settings=TrackingSettings(),
+    settings=TrackingSettings(tracking_uri="http://localhost:5000"),  # or set RAGPILL_TRACKING_URI
 )
 
 # Three views of the data:
@@ -65,6 +65,7 @@ def create_agent():
 result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,
+    settings=TrackingSettings(tracking_uri="http://localhost:5000"),  # or set RAGPILL_TRACKING_URI
 )
 ```
 

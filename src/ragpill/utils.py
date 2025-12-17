@@ -31,7 +31,7 @@ def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, An
 
     Example:
         ```python
-        from ragpill import merge_settings
+        from ragpill.utils import merge_settings
 
         params = merge_settings([
             (settings, "mlflow"),

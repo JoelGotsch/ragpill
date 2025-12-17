@@ -35,6 +35,7 @@ def create_agent():
 result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,  # Called once per run
+    settings=TrackingSettings(tracking_uri="http://localhost:5000"),  # or set RAGPILL_TRACKING_URI
 )
 
 # With task_factory and repeat=3:
@@ -49,6 +50,7 @@ A common pattern with `pydantic-ai` agents that use `message_history`:
 
 ```python
 from pydantic_ai import Agent
+from ragpill.settings import TrackingSettings
 
 def create_agent():
     agent = Agent(
@@ -65,6 +67,7 @@ def create_agent():
 result = await evaluate_testset(
     testset=testset,
     task_factory=create_agent,
+    settings=TrackingSettings(tracking_uri="http://localhost:5000"),  # or set RAGPILL_TRACKING_URI
 )
 ```
 
