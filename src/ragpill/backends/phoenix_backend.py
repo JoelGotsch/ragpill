@@ -209,10 +209,27 @@ class PhoenixBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
             self._client_cache = Client(base_url=self._endpoint) if self._endpoint else Client()
         return self._client_cache
 
+    def _spans_dataframe_for_trace(self, trace_id: str) -> Any:
+        """Fetch only this trace's spans server-side when the client supports it.
+
+        Filtering by ``trace_id`` server-side avoids downloading every span in
+        the project on each poll (twice per trace for stability, per repeat). If
+        the installed phoenix-client version doesn't expose the query API, fall
+        back to the full-project fetch (still correct, just heavier).
+        """
+        client = self._client()
+        try:
+            from phoenix.client.types.spans import SpanQuery
+
+            query = SpanQuery().where(f"trace_id == '{trace_id}'")
+            return client.spans.get_spans_dataframe(query, project_identifier=self._project_name)
+        except (ImportError, TypeError, AttributeError):
+            return client.spans.get_spans_dataframe(project_identifier=self._project_name)
+
     def get_trace(self, trace_id: str) -> NeutralTrace | None:
         _require_phoenix()
         try:
-            df = self._client().spans.get_spans_dataframe(project_identifier=self._project_name)
+            df = self._spans_dataframe_for_trace(trace_id)
         except Exception as exc:
             # A not-yet-ingested trace surfaces as an empty DataFrame (handled by
             # _trace_from_spans_dataframe returning None), not an exception — so

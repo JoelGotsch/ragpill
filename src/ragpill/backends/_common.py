@@ -90,13 +90,17 @@ def to_unix_nano(val: object) -> int | None:
 
 
 def is_http_not_found(exc: BaseException) -> bool:
-    """Best-effort 404/not-found detection across httpx-based SDK clients.
+    """Best-effort "resource does not exist" detection across backend SDKs.
 
-    Remote backends (Langfuse, Phoenix) wrap httpx; a genuinely missing trace
-    surfaces as a 404 (or a ``NotFoundError``-named exception), which is a
-    legitimate "poll again" miss. Any other error (auth, connection, 5xx) is a
-    real failure that read paths should surface rather than mistake for an
-    in-flight trace.
+    A genuinely missing trace is a legitimate "poll again" miss; any other error
+    (auth, connection, 5xx) is a real failure that read paths must surface rather
+    than mistake for an in-flight trace. Covers the shapes ragpill's backends
+    raise:
+
+    - httpx-based clients (Langfuse, Phoenix): ``response.status_code`` /
+      ``status_code`` of 404, or a ``NotFoundError``-named exception.
+    - MLflow ``MlflowException``: ``error_code == "RESOURCE_DOES_NOT_EXIST"`` or
+      ``get_http_status_code() == 404``.
     """
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
@@ -104,6 +108,15 @@ def is_http_not_found(exc: BaseException) -> bool:
         status = getattr(exc, "status_code", None)
     if status == 404:
         return True
+    if getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST":
+        return True
+    getter = getattr(exc, "get_http_status_code", None)
+    if callable(getter):
+        try:
+            if getter() == 404:
+                return True
+        except Exception:
+            pass
     return type(exc).__name__ in {"NotFoundError", "NotFound"}
 
 

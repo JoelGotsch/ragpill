@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from ragpill.trace import Trace as NeutralTrace
 
-from ragpill.backends._common import RemoteQueryMixin, logger
+from ragpill.backends._common import RemoteQueryMixin, is_http_not_found, logger
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 # MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
@@ -35,23 +35,6 @@ _METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
 # Upper bound for judge-trace search. mlflow.search_traces auto-paginates up to
 # this, so it removes the old silent 1000-trace cap without truly unbounded reads.
 _JUDGE_TRACE_SEARCH_LIMIT = 1_000_000
-
-
-def _is_not_found(exc: Any) -> bool:
-    """True when an ``MlflowException`` signals a missing/not-yet-exported trace.
-
-    Checks the error code and HTTP status defensively — mlflow surfaces
-    "does not exist" via ``RESOURCE_DOES_NOT_EXIST`` and, over REST, a 404.
-    """
-    if getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST":
-        return True
-    getter = getattr(exc, "get_http_status_code", None)
-    if callable(getter):
-        try:
-            return getter() == 404
-        except Exception:
-            return False
-    return False
 
 
 _SPAN_KIND_TO_MLFLOW: dict[CaptureSpanKind, str] = {
@@ -211,7 +194,7 @@ class MLflowBackend(RemoteQueryMixin):
             # polling loop retries. Anything else (auth, connection, server
             # error) must surface so it isn't mistaken for an in-flight trace
             # and silently burned as a poll timeout.
-            if _is_not_found(e):
+            if is_http_not_found(e):
                 return None
             raise
         # mlflow's stub types this non-Optional, but a not-yet-exported trace can
@@ -234,6 +217,13 @@ class MLflowBackend(RemoteQueryMixin):
         # ``mlflow.search_traces`` auto-paginates internally up to ``max_results``,
         # so a large cap avoids the old silent 1000-trace truncation on big runs
         # (cases x repeats x judges easily exceeds 1000).
+        #
+        # TODO(perf, review F15): this still downloads full span payloads for
+        # every trace in the run to check one root-span attribute. A server-side
+        # ``filter_string`` on a judge *trace tag* would return only the
+        # deletions, but requires tagging the trace at judge-creation time (a
+        # protocol/judge change) and can only be validated against a live server
+        # — deferred. The correctness fix (no silent 1000-cap) is above.
         traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
             return_type="list", run_id=run_id, locations=[experiment_id], max_results=_JUDGE_TRACE_SEARCH_LIMIT
         )
@@ -288,7 +278,7 @@ class MLflowBackend(RemoteQueryMixin):
         try:
             run: Any = self._client().get_run(run_id)
         except MlflowException as e:
-            if _is_not_found(e):
+            if is_http_not_found(e):
                 return None
             raise
         tags: dict[str, str] = dict(run.data.tags or {})
@@ -302,7 +292,7 @@ class MLflowBackend(RemoteQueryMixin):
         try:
             existing = {str(f.path) for f in client.list_artifacts(run_id)}
         except MlflowException as e:
-            if _is_not_found(e):
+            if is_http_not_found(e):
                 return
             raise
         if artifact_path not in existing:
