@@ -419,3 +419,46 @@ async def test_max_concurrency_overlaps_evaluators_within_a_run(anyio_backend):
     # 4 evaluators * 0.1s each: overlapped they finish in ~0.1s, not ~0.4s.
     assert elapsed < 0.3
     assert len(out.case_results[0].run_results[0].assertions) == 4
+
+
+# ---------------------------------------------------------------------------
+# F15 — judge-trace cleanup filters server-side by a real trace tag
+# (validated against a local sqlite MLflow store — no server, no LLM needed)
+# ---------------------------------------------------------------------------
+
+
+def test_delete_judge_traces_against_real_sqlite_store(tmp_path):
+    import mlflow
+
+    from ragpill.backends import CaptureSpanKind
+    from ragpill.backends._common import JUDGE_TRACE_TAG  # pyright: ignore[reportPrivateUsage]
+    from ragpill.backends.mlflow_backend import MLflowBackend
+
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path}/mlflow.db")
+    backend = MLflowBackend()
+    backend.set_destination(None, "f15_e2e")
+    handle = backend.start_run()
+    try:
+        # A judge span carries the marker -> promoted to a trace tag.
+        with backend.start_span("llm-judge", CaptureSpanKind.LLM, attributes={JUDGE_TRACE_TAG: True}) as s:
+            s.set_outputs({"pass": True})
+        # A plain task span -> no tag.
+        with backend.start_span("task", CaptureSpanKind.TASK) as s:
+            s.set_inputs({"q": "hi"})
+    finally:
+        backend.end_run()
+
+    exp_id = backend.resolve_experiment_id("f15_e2e")
+
+    def _names(traces):
+        return {t.info.tags.get("mlflow.traceName", "") for t in traces}
+
+    before = mlflow.search_traces(locations=[exp_id], run_id=handle.run_id, return_type="list")
+    assert _names(before) == {"llm-judge", "task"}  # both captured under the run
+
+    # The server-side tag filter returns only the judge trace; deleting it must
+    # leave the task trace untouched.
+    backend.delete_judge_traces(exp_id, handle.run_id)
+
+    after = mlflow.search_traces(locations=[exp_id], run_id=handle.run_id, return_type="list")
+    assert _names(after) == {"task"}  # judge trace deleted, task trace kept

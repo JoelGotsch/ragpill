@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from ragpill._text import extract_markdown_quotes, normalize_for_quote_comparison, normalize_text
 from ragpill.backends import CaptureSpanKind, get_backend
+from ragpill.backends._common import JUDGE_TRACE_TAG
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
@@ -133,10 +134,12 @@ class LLMJudge(BaseEvaluator):
         # integrations create child spans rather than competing root traces. Without this,
         # the two integrations race to INSERT a root trace with the same request_id, which
         # causes a UNIQUE constraint violation in MLflow's SQLite backend.
-        # The "ragpill_is_judge_trace" attribute lets _delete_llm_judge_traces identify
-        # and remove these traces after evaluation.
-        with get_backend().start_span(name="llm-judge-evaluation", span_type=CaptureSpanKind.LLM) as span:
-            span.set_attribute("ragpill_is_judge_trace", True)
+        # Pass the judge marker at open time so the MLflow adapter can promote it
+        # to a trace tag (for server-side judge-trace cleanup) while other backends
+        # still see it as a span attribute.
+        with get_backend().start_span(
+            name="llm-judge-evaluation", span_type=CaptureSpanKind.LLM, attributes={JUDGE_TRACE_TAG: True}
+        ) as span:
 
             async def _judge() -> Any:
                 if self.include_input:

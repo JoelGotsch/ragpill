@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from ragpill.trace import Trace as NeutralTrace
 
-from ragpill.backends._common import RemoteQueryMixin, is_http_not_found, logger
+from ragpill.backends._common import JUDGE_TRACE_TAG, RemoteQueryMixin, is_http_not_found, logger
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 # MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
@@ -129,6 +129,11 @@ class MLflowBackend(RemoteQueryMixin):
                 if span_attributes:
                     for key, value in span_attributes.items():
                         span.set_attribute(key, value)
+                # Promote the judge marker to a *trace tag* so cleanup can filter
+                # server-side (``tags.ragpill_is_judge_trace = 'true'``) instead
+                # of downloading every task trace's payload to inspect a root span.
+                if span_attributes and span_attributes.get(JUDGE_TRACE_TAG):
+                    mlflow.update_current_trace(tags={JUDGE_TRACE_TAG: "true"})
                 # When inside a case-grouping context, tag this span's trace
                 # with the MLflow session id (so the Sessions UI groups repeats
                 # of the same case as turns) plus the case-level metadata,
@@ -209,29 +214,19 @@ class MLflowBackend(RemoteQueryMixin):
         self._client().delete_traces(experiment_id=experiment_id, trace_ids=trace_ids)
 
     def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:
-        # Walk the run's native traces and delete those whose root span carries
-        # the ``ragpill_is_judge_trace`` attribute. Native introspection
-        # (``trace.data._get_root_span`` is not public API) is confined here —
-        # only this adapter knows MLflow's trace shape.
-        #
-        # ``mlflow.search_traces`` auto-paginates internally up to ``max_results``,
-        # so a large cap avoids the old silent 1000-trace truncation on big runs
-        # (cases x repeats x judges easily exceeds 1000).
-        #
-        # TODO(perf, review F15): this still downloads full span payloads for
-        # every trace in the run to check one root-span attribute. A server-side
-        # ``filter_string`` on a judge *trace tag* would return only the
-        # deletions, but requires tagging the trace at judge-creation time (a
-        # protocol/judge change) and can only be validated against a live server
-        # — deferred. The correctness fix (no silent 1000-cap) is above.
+        # Judge spans promote the ``ragpill_is_judge_trace`` marker to a trace
+        # tag (see start_span), so we filter server-side and get back *only* the
+        # judge traces — no downloading of every task trace's span payload to
+        # inspect a root span. ``mlflow.search_traces`` auto-paginates internally
+        # up to ``max_results`` (a large cap avoids the old silent 1000 cap).
         traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
-            return_type="list", run_id=run_id, locations=[experiment_id], max_results=_JUDGE_TRACE_SEARCH_LIMIT
+            return_type="list",
+            run_id=run_id,
+            locations=[experiment_id],
+            filter_string=f"tags.{JUDGE_TRACE_TAG} = 'true'",
+            max_results=_JUDGE_TRACE_SEARCH_LIMIT,
         )
-        judge_trace_ids: list[str] = []
-        for trace in traces:
-            root = trace.data._get_root_span()
-            if root and root.attributes.get("ragpill_is_judge_trace"):
-                judge_trace_ids.append(trace.info.trace_id)
+        judge_trace_ids: list[str] = [trace.info.trace_id for trace in traces]
         if judge_trace_ids:
             logger.info("Deleting %d judge trace(s) from run %s.", len(judge_trace_ids), run_id)
         self.delete_traces(experiment_id=experiment_id, trace_ids=judge_trace_ids)

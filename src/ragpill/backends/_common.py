@@ -24,6 +24,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("ragpill.backends")
 
+# Marker set on the LLM-judge span (and, on MLflow, promoted to a trace tag) so
+# the judge traces created during evaluation can be found and deleted afterwards
+# without scanning every task trace's payload. Shared so the judge, the MLflow
+# adapter's trace-tag promotion, and its judge-trace cleanup all agree.
+JUDGE_TRACE_TAG = "ragpill_is_judge_trace"
+
 
 def require_extra(import_name: str, install_hint: str) -> None:
     """Import-probe an optional SDK, raising ``install_hint`` if it's missing.

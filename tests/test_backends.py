@@ -157,16 +157,13 @@ def test_autolog_pydantic_ai_calls_mlflow(mlflow_mock):
     mlflow_mock.pydantic_ai.autolog.assert_called_once_with()
 
 
-def test_delete_judge_traces_deletes_only_marked_traces(mlflow_mock):
-    """Walks the run's native traces and deletes those whose root span carries
-    the ragpill_is_judge_trace attribute — and only those."""
+def test_delete_judge_traces_filters_server_side(mlflow_mock):
+    """Filters judge traces server-side by the ``ragpill_is_judge_trace`` tag —
+    the search returns only judge traces, so all of them are deleted (no
+    client-side root-span walk / full-payload download)."""
     judge = MagicMock()
-    judge.data._get_root_span.return_value.attributes = {"ragpill_is_judge_trace": True}
     judge.info.trace_id = "judge-1"
-    task = MagicMock()
-    task.data._get_root_span.return_value.attributes = {}
-    task.info.trace_id = "task-1"
-    mlflow_mock.search_traces.return_value = [judge, task]
+    mlflow_mock.search_traces.return_value = [judge]
 
     backend = MLflowBackend()
     with patch.object(backend, "delete_traces") as dt:
@@ -174,6 +171,7 @@ def test_delete_judge_traces_deletes_only_marked_traces(mlflow_mock):
     _args, kwargs = mlflow_mock.search_traces.call_args
     assert kwargs.get("run_id") == "run-1"
     assert kwargs.get("locations") == ["exp-1"]
+    assert kwargs.get("filter_string") == "tags.ragpill_is_judge_trace = 'true'"
     dt.assert_called_once_with(experiment_id="exp-1", trace_ids=["judge-1"])
 
 
