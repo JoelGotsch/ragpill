@@ -66,6 +66,34 @@ def _require_phoenix() -> None:
     require_extra("phoenix.otel", _INSTALL_HINT)
 
 
+# The phoenix client defaults to limit=1000, which silently truncates larger
+# projects; pass an explicit, generous limit on every spans fetch instead.
+_SPANS_FETCH_LIMIT = 100_000
+
+_UNPROBED = object()  # sentinel: SpanQuery capability not yet probed
+_span_query_cls: Any = _UNPROBED
+
+
+def _span_query_class() -> Any:
+    """Return the phoenix ``SpanQuery`` class, or ``None`` when the installed
+    client predates the query API.
+
+    Probed once per process (failed imports are negative-cached so old clients
+    don't pay a full ``sys.path`` scan on every poll). Only ``ImportError``
+    means "old client" — anything else from the SDK must propagate to the
+    caller rather than silently downgrade to the unfiltered fetch.
+    """
+    global _span_query_cls
+    if _span_query_cls is _UNPROBED:
+        try:
+            from phoenix.client.types.spans import SpanQuery
+        except ImportError:
+            _span_query_cls = None
+        else:
+            _span_query_cls = SpanQuery
+    return _span_query_cls
+
+
 class _SpanHandle:
     """Wraps an OTel span to satisfy the ``SpanHandle`` protocol, mapping
     I/O onto OpenInference attribute keys."""
@@ -218,13 +246,20 @@ class PhoenixBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
         back to the full-project fetch (still correct, just heavier).
         """
         client = self._client()
-        try:
-            from phoenix.client.types.spans import SpanQuery
-
-            query = SpanQuery().where(f"trace_id == '{trace_id}'")
-            return client.spans.get_spans_dataframe(query, project_identifier=self._project_name)
-        except (ImportError, TypeError, AttributeError):
-            return client.spans.get_spans_dataframe(project_identifier=self._project_name)
+        span_query_cls = _span_query_class()
+        if span_query_cls is not None:
+            # Unguarded on purpose: a real TypeError/AttributeError from the
+            # SDK must surface, not be re-classified as "old client".
+            query = span_query_cls().where(f"trace_id == '{trace_id}'")
+            return client.spans.get_spans_dataframe(
+                query=query,
+                project_identifier=self._project_name,
+                limit=_SPANS_FETCH_LIMIT,
+            )
+        return client.spans.get_spans_dataframe(
+            project_identifier=self._project_name,
+            limit=_SPANS_FETCH_LIMIT,
+        )
 
     def get_trace(self, trace_id: str) -> NeutralTrace | None:
         _require_phoenix()
@@ -290,7 +325,11 @@ class PhoenixBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
         if cached is not None:
             return cached
         try:
-            df = self._client().spans.get_spans_dataframe(project_identifier=self._project_name, root_spans_only=True)
+            df = self._client().spans.get_spans_dataframe(
+                project_identifier=self._project_name,
+                root_spans_only=True,
+                limit=_SPANS_FETCH_LIMIT,
+            )
         except Exception:
             return None
         rows = _rows_for_trace(df, trace_id)

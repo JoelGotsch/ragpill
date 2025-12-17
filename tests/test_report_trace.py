@@ -16,7 +16,7 @@ import pytest
 from mlflow.entities import SpanType, Trace
 
 from ragpill.report._trace import REDACTED, render_spans
-from ragpill.trace import Trace as RagpillTrace, from_mlflow_trace
+from ragpill.trace import Span as RagpillSpan, SpanKind, Trace as RagpillTrace, from_mlflow_trace
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +63,24 @@ def _simple_trace() -> RagpillTrace:
 
 def test_render_spans_returns_empty_for_none_trace():
     assert render_spans(None) == ""
+
+
+def test_render_spans_says_duration_unknown_for_missing_end_time():
+    """A span with ``end_time_ns=None`` (unknown timing) must render
+    'duration unknown', never a fabricated 0ms."""
+    span = RagpillSpan(
+        span_id="s1",
+        parent_id=None,
+        trace_id="t1",
+        name="inflight",
+        kind=SpanKind.RETRIEVER,
+        start_time_ns=1_700_000_000_000_000_000,
+        end_time_ns=None,
+    )
+    out = render_spans(RagpillTrace(trace_id="t1", spans=[span]))
+    assert "inflight" in out
+    assert "duration unknown" in out
+    assert "0ms" not in out
 
 
 def test_render_spans_renders_full_tree_by_default():

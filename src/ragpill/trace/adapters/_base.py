@@ -17,8 +17,8 @@ The normalised span dict has these keys (the loader guarantees them):
       "parent_span_id": str | None,
       "name": str,
       "kind": str | None,                 # OTel SpanKind, *not* the LLM kind
-      "start_time_unix_nano": int,
-      "end_time_unix_nano": int,
+      "start_time_unix_nano": int | None,
+      "end_time_unix_nano": int | None,
       "attributes": dict[str, Any],       # decoded values (not JSON strings)
       "events": list[dict[str, Any]],
       "status": {"code": str, "message": str | None},
@@ -71,13 +71,18 @@ def common_span_fields(span: dict[str, Any], *, dialect: str) -> dict[str, Any]:
     documents, usage, attributes) on top.
     """
     status: dict[str, Any] = span.get("status") or {}
+    # ``None`` means the backend could not provide a real timestamp (e.g. a
+    # Phoenix NaT end_time on an in-flight span). Preserve it — coercing to 0
+    # would fabricate a 1970 timestamp and an absurd duration downstream.
+    start = span.get("start_time_unix_nano")
+    end = span.get("end_time_unix_nano")
     return {
         "span_id": str(span.get("span_id", "")),
         "parent_id": span.get("parent_span_id"),
         "trace_id": str(span.get("trace_id", "")),
         "name": str(span.get("name", "")),
-        "start_time_ns": int(span.get("start_time_unix_nano") or 0),
-        "end_time_ns": int(span.get("end_time_unix_nano") or 0),
+        "start_time_ns": int(start) if start is not None else None,
+        "end_time_ns": int(end) if end is not None else None,
         "status": str(status.get("code", "UNSET")),
         "status_message": status.get("message"),
         "events": list(span.get("events") or []),

@@ -15,11 +15,11 @@ import warnings
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 from ragpill.backends._types import RunHandle
 
 if TYPE_CHECKING:
-    import pandas as pd
-
     from ragpill.trace import Trace as NeutralTrace
 
 logger = logging.getLogger("ragpill.backends")
@@ -69,17 +69,12 @@ def to_unix_nano(val: object) -> int | None:
     timestamp would yield an absurd negative duration. ``None`` signals "unknown"
     so ordering and duration rendering degrade gracefully.
     """
-    if val is None:
-        return None
     # NaT / NaN: pandas scalar missing-value. Guard before reading ``.value``
     # (pd.NaT.value is int64-min, which must NOT be treated as a real timestamp).
-    try:
-        import pandas as pd
-
-        if bool(pd.isna(val)):  # pyright: ignore[reportUnknownMemberType]
-            return None
-    except (TypeError, ValueError):
-        pass  # not a pandas-recognized scalar; fall through
+    # An array-like input raises here (bool of an array) — loudly, by design:
+    # this helper is for scalars only.
+    if val is None or bool(pd.isna(val)):  # pyright: ignore[reportUnknownMemberType]
+        return None
     # pandas Timestamp: .value is integer nanoseconds since the epoch.
     value = getattr(val, "value", None)
     if isinstance(value, int):

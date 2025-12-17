@@ -132,14 +132,18 @@ def _normalize_otlp_span(raw: dict[str, Any]) -> dict[str, Any]:
         for ev in raw.get("events", [])
     ]
     raw_status: dict[str, Any] = raw.get("status") or {}
+    # OTLP-JSON encodes nano timestamps as strings; a missing/empty value means
+    # the exporter had no real timestamp — keep it None rather than fabricate 0.
+    start = raw.get("startTimeUnixNano")
+    end = raw.get("endTimeUnixNano")
     return {
         "trace_id": raw.get("traceId", ""),
         "span_id": raw.get("spanId", ""),
         "parent_span_id": raw.get("parentSpanId") or None,
         "name": raw.get("name", ""),
         "kind": raw.get("kind"),
-        "start_time_unix_nano": int(raw.get("startTimeUnixNano") or 0),
-        "end_time_unix_nano": int(raw.get("endTimeUnixNano") or 0),
+        "start_time_unix_nano": int(start) if start else None,
+        "end_time_unix_nano": int(end) if end else None,
         "attributes": attributes,
         "events": events,
         "status": {"code": raw_status.get("code", "UNSET"), "message": raw_status.get("message")},
