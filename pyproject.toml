@@ -60,6 +60,12 @@ build_docs = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+# The quote-extraction regression tests use carefully-crafted literal strings
+# (mixed single/double quotes, embedded backticks, markdown links) to lock the
+# extractor's verbatim-preservation contract. Both ruff lint and format would
+# otherwise rewrite those strings to the project quote-style and break the
+# tests. Excluding the file leaves it untouched by both passes.
+extend-exclude = ["tests/test_quote_extraction.py"]
 
 [tool.ruff.lint]
 extend-select = ["RUF", "C90", "UP", "I"]
