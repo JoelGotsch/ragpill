@@ -5,15 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import TYPE_CHECKING, Any
+from typing import Annotated, Any
 
 import pandas as pd
+from pydantic import PlainSerializer, PlainValidator, TypeAdapter
 
 from ragpill.base import TestCaseMetadata
-from ragpill.eval_types import EvaluationResult, EvaluatorSource
-
-if TYPE_CHECKING:
-    from ragpill.execution import DatasetRunOutput
+from ragpill.eval_types import EvaluationResult
+from ragpill.execution import DatasetRunOutput
 
 
 @dataclass
@@ -51,7 +50,7 @@ class RunResult:
     duration: float
     assertions: dict[str, EvaluationResult]
     evaluator_failures: list[EvaluatorFailureInfo] = field(default_factory=list)
-    error: Exception | None = None
+    error: ErrorField = None
     trace_id: str = ""
 
     @property
@@ -144,10 +143,10 @@ class EvaluationOutput:
         case_results: List of CaseResult objects.
     """
 
-    runs: pd.DataFrame
-    cases: pd.DataFrame
+    runs: DataFrameField
+    cases: DataFrameField
     case_results: list[CaseResult]
-    dataset_run: DatasetRunOutput | None = None
+    dataset_run: DatasetRunField = None
 
     @property
     def summary(self) -> pd.DataFrame:
@@ -267,15 +266,20 @@ class EvaluationOutput:
     def to_json(self) -> str:
         """Serialize this :class:`EvaluationOutput` to a JSON string.
 
-        DataFrames are encoded via ``pandas.to_json(orient="split")`` and
-        traces via ``Trace.to_json()``. ``from_json`` is the inverse.
+        DataFrames are encoded via ``pandas.to_json`` and nested traces via the
+        neutral trace model; the whole tree is walked by a pydantic
+        ``TypeAdapter`` so the encoding can't drift from the dataclass fields.
+        ``from_json`` is the inverse.
         """
-        return json.dumps(_evaluation_output_to_dict(self))
+        # ``mode="json"`` so nested pydantic ``TestCaseMetadata`` (which carries a
+        # ``set`` of tags) canonicalizes to JSON-native types — matching the prior
+        # ``model_dump(mode="json")`` behavior.
+        return json.dumps(_EVALUATION_OUTPUT_ADAPTER.dump_python(self, mode="json"))
 
     @classmethod
     def from_json(cls, s: str) -> EvaluationOutput:
         """Deserialize an :class:`EvaluationOutput` produced by :meth:`to_json`."""
-        return _evaluation_output_from_dict(json.loads(s))
+        return _EVALUATION_OUTPUT_ADAPTER.validate_python(json.loads(s))
 
 
 # ---------------------------------------------------------------------------
@@ -298,143 +302,63 @@ def _df_from_json(s: str) -> pd.DataFrame:
     return pd.read_json(StringIO(s), orient="split")
 
 
-def _evaluator_source_to_dict(src: EvaluatorSource) -> dict[str, Any]:
-    return {"name": src.name, "arguments": src.arguments, "source_type": src.source_type}
+# --- Field serde for the types pydantic can't round-trip on its own ---------
+#
+# A ``TypeAdapter`` walks the ``EvaluationOutput`` tree and handles every plain
+# field (and nested pydantic ``TestCaseMetadata``) automatically, so the leaf
+# to/from-dict helpers are gone (round-2 F11 — no more field drift). Only three
+# field shapes need explicit conversion, expressed as reusable ``Annotated``
+# aliases so the fields keep their real static types.
 
 
-def _evaluator_source_from_dict(d: dict[str, Any]) -> EvaluatorSource:
-    return EvaluatorSource(
-        name=d["name"],
-        arguments=dict(d.get("arguments", {})),
-        source_type=d.get("source_type", "CODE"),
-    )
+def _df_from_payload(value: Any) -> pd.DataFrame:
+    return value if isinstance(value, pd.DataFrame) else _df_from_json(value)
 
 
-def _evaluation_result_to_dict(er: EvaluationResult) -> dict[str, Any]:
-    return {
-        "name": er.name,
-        "value": er.value,
-        "reason": er.reason,
-        "source": _evaluator_source_to_dict(er.source),
-    }
+def _error_to_payload(error: Exception | None) -> str | None:
+    # Exceptions don't survive JSON; persist the string representation.
+    return None if error is None else f"{type(error).__name__}: {error}"
 
 
-def _evaluation_result_from_dict(d: dict[str, Any]) -> EvaluationResult:
-    return EvaluationResult(
-        name=d["name"],
-        value=d["value"],
-        reason=d.get("reason"),
-        source=_evaluator_source_from_dict(d["source"]),
-    )
+def _error_from_payload(value: Any) -> Exception | None:
+    if value is None or isinstance(value, Exception):
+        return value
+    return RuntimeError(value)
 
 
-def _evaluator_failure_to_dict(ef: EvaluatorFailureInfo) -> dict[str, Any]:
-    return {"name": ef.name, "error_message": ef.error_message, "error_stacktrace": ef.error_stacktrace}
+def _dataset_run_to_payload(run: DatasetRunOutput | None) -> dict[str, Any] | None:
+    return run.to_dict() if run is not None else None
 
 
-def _evaluator_failure_from_dict(d: dict[str, Any]) -> EvaluatorFailureInfo:
-    return EvaluatorFailureInfo(
-        name=d["name"],
-        error_message=d["error_message"],
-        error_stacktrace=d["error_stacktrace"],
-    )
+def _dataset_run_from_payload(value: Any) -> DatasetRunOutput | None:
+    if value is None or isinstance(value, DatasetRunOutput):
+        return value
+    return DatasetRunOutput.from_dict(value)
 
 
-def _run_result_to_dict(rr: RunResult) -> dict[str, Any]:
-    return {
-        "run_index": rr.run_index,
-        "input_key": rr.input_key,
-        "run_span_id": rr.run_span_id,
-        "trace_id": rr.trace_id,
-        "output": rr.output,
-        "duration": rr.duration,
-        "assertions": {k: _evaluation_result_to_dict(v) for k, v in rr.assertions.items()},
-        "evaluator_failures": [_evaluator_failure_to_dict(ef) for ef in rr.evaluator_failures],
-        # Exceptions don't survive JSON; persist the string representation.
-        "error": None if rr.error is None else f"{type(rr.error).__name__}: {rr.error}",
-    }
+# A DataFrame that serializes through ``pandas.to_json`` (dtype-preserving
+# ``orient="table"``, ``orient="split"`` for the empty frame). The validator
+# precedes the serializer and the serializer declares ``return_type`` because
+# pandas' C-level ``DataFrame`` is not pydantic-introspectable — without both,
+# pydantic silently drops the serializer for such types.
+DataFrameField = Annotated[
+    pd.DataFrame,
+    PlainValidator(_df_from_payload),
+    PlainSerializer(_df_to_json, return_type=str, when_used="always"),
+]
+# A task exception, stored as ``"Type: message"``; restored as a RuntimeError
+# carrying that string (the original type/traceback cannot be reconstructed).
+ErrorField = Annotated[
+    Exception | None,
+    PlainValidator(_error_from_payload),
+    PlainSerializer(_error_to_payload, return_type=str, when_used="always"),
+]
+# A nested run output, delegated to its own schema-versioned ``to_dict`` /
+# ``from_dict`` rather than re-walked by this adapter.
+DatasetRunField = Annotated[
+    DatasetRunOutput | None,
+    PlainSerializer(_dataset_run_to_payload),
+    PlainValidator(_dataset_run_from_payload),
+]
 
-
-def _run_result_from_dict(d: dict[str, Any]) -> RunResult:
-    error_str = d.get("error")
-    error: Exception | None = None
-    if error_str is not None:
-        error = RuntimeError(error_str)
-    return RunResult(
-        run_index=d["run_index"],
-        input_key=d["input_key"],
-        run_span_id=d.get("run_span_id", ""),
-        trace_id=d.get("trace_id", ""),
-        output=d.get("output"),
-        duration=d.get("duration", 0.0),
-        assertions={k: _evaluation_result_from_dict(v) for k, v in d.get("assertions", {}).items()},
-        evaluator_failures=[_evaluator_failure_from_dict(ef) for ef in d.get("evaluator_failures", [])],
-        error=error,
-    )
-
-
-def _aggregated_to_dict(ar: AggregatedResult) -> dict[str, Any]:
-    return {
-        "passed": ar.passed,
-        "pass_rate": ar.pass_rate,
-        "threshold": ar.threshold,
-        "summary": ar.summary,
-        "per_evaluator_pass_rates": ar.per_evaluator_pass_rates,
-    }
-
-
-def _aggregated_from_dict(d: dict[str, Any]) -> AggregatedResult:
-    return AggregatedResult(
-        passed=d["passed"],
-        pass_rate=d["pass_rate"],
-        threshold=d["threshold"],
-        summary=d["summary"],
-        per_evaluator_pass_rates=dict(d.get("per_evaluator_pass_rates", {})),
-    )
-
-
-def _case_result_to_dict(cr: CaseResult) -> dict[str, Any]:
-    metadata_dict = cr.metadata.model_dump(mode="json")
-    return {
-        "case_name": cr.case_name,
-        "inputs": cr.inputs,
-        "metadata": metadata_dict,
-        "base_input_key": cr.base_input_key,
-        "trace_id": cr.trace_id,
-        "run_results": [_run_result_to_dict(rr) for rr in cr.run_results],
-        "aggregated": _aggregated_to_dict(cr.aggregated),
-    }
-
-
-def _case_result_from_dict(d: dict[str, Any]) -> CaseResult:
-    metadata = TestCaseMetadata.model_validate(d.get("metadata") or {})
-    return CaseResult(
-        case_name=d["case_name"],
-        inputs=d.get("inputs"),
-        metadata=metadata,
-        base_input_key=d["base_input_key"],
-        trace_id=d.get("trace_id", ""),
-        run_results=[_run_result_from_dict(rr) for rr in d.get("run_results", [])],
-        aggregated=_aggregated_from_dict(d["aggregated"]),
-    )
-
-
-def _evaluation_output_to_dict(eo: EvaluationOutput) -> dict[str, Any]:
-    return {
-        "runs": _df_to_json(eo.runs),
-        "cases": _df_to_json(eo.cases),
-        "case_results": [_case_result_to_dict(cr) for cr in eo.case_results],
-        "dataset_run": eo.dataset_run.to_dict() if eo.dataset_run is not None else None,
-    }
-
-
-def _evaluation_output_from_dict(d: dict[str, Any]) -> EvaluationOutput:
-    from ragpill.execution import DatasetRunOutput
-
-    dataset_run_dict = d.get("dataset_run")
-    return EvaluationOutput(
-        runs=_df_from_json(d["runs"]),
-        cases=_df_from_json(d["cases"]),
-        case_results=[_case_result_from_dict(cr) for cr in d.get("case_results", [])],
-        dataset_run=DatasetRunOutput.from_dict(dataset_run_dict) if dataset_run_dict is not None else None,
-    )
+_EVALUATION_OUTPUT_ADAPTER: TypeAdapter[EvaluationOutput] = TypeAdapter(EvaluationOutput)

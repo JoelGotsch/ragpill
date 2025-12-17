@@ -33,10 +33,11 @@ import time
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 import anyio.to_thread
+from pydantic import PlainSerializer, PlainValidator, TypeAdapter
 
 from ragpill.backends import CaptureSpanKind, get_backend
 from ragpill.base import (
@@ -47,10 +48,7 @@ from ragpill.base import (
 )
 from ragpill.eval_types import Case, Dataset
 from ragpill.settings import TrackingSettings
-from ragpill.trace import filter_to_subtree, trace_from_dict, trace_to_dict
-
-if TYPE_CHECKING:
-    from ragpill.trace import Trace
+from ragpill.trace import Trace, filter_to_subtree, trace_from_dict, trace_to_dict
 
 logger = logging.getLogger("ragpill.execution")
 
@@ -113,6 +111,28 @@ TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
 # ---------------------------------------------------------------------------
 
 
+def _trace_to_payload(trace: Trace | None) -> dict[str, Any] | None:
+    return trace_to_dict(trace) if trace is not None else None
+
+
+def _trace_from_payload(value: Any) -> Trace | None:
+    if value is None or isinstance(value, Trace):
+        return value
+    return trace_from_dict(value)
+
+
+# A ``ragpill.trace.Trace`` field that serializes through the neutral trace
+# model (``trace_to_dict`` / ``trace_from_dict``) instead of pydantic's own
+# introspection — the trace model has its own versioned serde. ``Annotated`` so
+# the field keeps its ``Trace | None`` static type; the (de)serialization is
+# only consulted by the ``TypeAdapter`` below.
+TraceField = Annotated[
+    Trace | None,
+    PlainSerializer(_trace_to_payload),
+    PlainValidator(_trace_from_payload),
+]
+
+
 @dataclass
 class TaskRunOutput:
     """Output of a single task execution (one run of one case).
@@ -144,7 +164,7 @@ class TaskRunOutput:
     input_key: str
     output: Any
     duration: float
-    trace: Trace | None = None
+    trace: TraceField = None
     run_span_id: str = ""
     trace_id: str = ""
     error: str | None = None
@@ -176,7 +196,7 @@ class CaseRunOutput:
     expected_output: Any
     metadata: dict[str, Any]
     base_input_key: str
-    trace: Trace | None
+    trace: TraceField
     trace_id: str
     task_runs: list[TaskRunOutput]
 
@@ -221,12 +241,17 @@ class DatasetRunOutput:
         return json.dumps(self.to_dict(), default=_json_fallback)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a JSON-safe ``dict`` (the building block of :meth:`to_json`).
+        """Serialize to a ``dict`` (the building block of :meth:`to_json`).
 
         Public so other layers (e.g. ``EvaluationOutput`` serialization) can nest
-        a run without reaching for a private helper.
+        a run without reaching for a private helper. Trace fields are converted to
+        their neutral-model payloads; ``Any`` outputs are left as Python objects
+        (the ``str()`` fallback for non-JSON-serializable values is applied by
+        :meth:`to_json`'s ``json.dumps`` call, matching the prior behavior).
         """
-        return _dataset_run_to_dict(self)
+        payload = _DATASET_RUN_ADAPTER.dump_python(self, mode="python")
+        payload["schema_version"] = _RUN_JSON_SCHEMA_VERSION
+        return payload
 
     @classmethod
     def from_json(cls, s: str) -> DatasetRunOutput:
@@ -250,7 +275,16 @@ class DatasetRunOutput:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DatasetRunOutput:
         """Inverse of :meth:`to_dict`."""
-        return _dataset_run_from_dict(d)
+        version = d.get("schema_version", 1)
+        if version != _RUN_JSON_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported run-JSON schema_version {version!r}; this build reads "
+                f"v{_RUN_JSON_SCHEMA_VERSION}. Older files are not migrated (the trace model "
+                "changed in 0.5.0; v3 adds per-run trace_status — see CHANGELOG / ADR-0014). "
+                "Re-run the evaluation to produce a current file."
+            )
+        payload = {k: v for k, v in d.items() if k != "schema_version"}
+        return _DATASET_RUN_ADAPTER.validate_python(payload)
 
     def to_llm_text(
         self,
@@ -297,89 +331,14 @@ def _json_fallback(obj: Any) -> str:
     return str(obj)
 
 
-def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
-    return {
-        "run_index": tr.run_index,
-        "input_key": tr.input_key,
-        "output": tr.output,
-        "duration": tr.duration,
-        "trace": trace_to_dict(tr.trace) if tr.trace is not None else None,
-        "run_span_id": tr.run_span_id,
-        "trace_id": tr.trace_id,
-        "error": tr.error,
-        "trace_status": tr.trace_status,
-    }
-
-
-def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
-    trace_payload = d.get("trace")
-    trace = trace_from_dict(trace_payload) if trace_payload else None
-    return TaskRunOutput(
-        run_index=d["run_index"],
-        input_key=d["input_key"],
-        output=d.get("output"),
-        duration=d.get("duration", 0.0),
-        trace=trace,
-        run_span_id=d.get("run_span_id", ""),
-        trace_id=d.get("trace_id", ""),
-        error=d.get("error"),
-        trace_status=d.get("trace_status", "ok"),
-    )
-
-
-def _case_run_to_dict(cr: CaseRunOutput) -> dict[str, Any]:
-    return {
-        "case_name": cr.case_name,
-        "inputs": cr.inputs,
-        "expected_output": cr.expected_output,
-        "metadata": cr.metadata,
-        "base_input_key": cr.base_input_key,
-        "trace": trace_to_dict(cr.trace) if cr.trace is not None else None,
-        "trace_id": cr.trace_id,
-        "task_runs": [_task_run_to_dict(tr) for tr in cr.task_runs],
-    }
-
-
-def _case_run_from_dict(d: dict[str, Any]) -> CaseRunOutput:
-    trace_payload = d.get("trace")
-    trace = trace_from_dict(trace_payload) if trace_payload else None
-    return CaseRunOutput(
-        case_name=d["case_name"],
-        inputs=d.get("inputs"),
-        expected_output=d.get("expected_output"),
-        metadata=d.get("metadata", {}),
-        base_input_key=d["base_input_key"],
-        trace=trace,
-        trace_id=d.get("trace_id", ""),
-        task_runs=[_task_run_from_dict(tr) for tr in d.get("task_runs", [])],
-    )
-
-
-def _dataset_run_to_dict(dr: DatasetRunOutput) -> dict[str, Any]:
-    return {
-        "schema_version": _RUN_JSON_SCHEMA_VERSION,
-        "cases": [_case_run_to_dict(c) for c in dr.cases],
-        "tracking_uri": dr.tracking_uri,
-        "run_id": dr.run_id,
-        "experiment_id": dr.experiment_id,
-    }
-
-
-def _dataset_run_from_dict(d: dict[str, Any]) -> DatasetRunOutput:
-    version = d.get("schema_version", 1)
-    if version != _RUN_JSON_SCHEMA_VERSION:
-        raise ValueError(
-            f"Unsupported run-JSON schema_version {version!r}; this build reads "
-            f"v{_RUN_JSON_SCHEMA_VERSION}. Older files are not migrated (the trace model "
-            "changed in 0.5.0; v3 adds per-run trace_status — see CHANGELOG / ADR-0014). "
-            "Re-run the evaluation to produce a current file."
-        )
-    return DatasetRunOutput(
-        cases=[_case_run_from_dict(c) for c in d.get("cases", [])],
-        tracking_uri=d.get("tracking_uri", ""),
-        run_id=d.get("run_id", ""),
-        experiment_id=d.get("experiment_id", ""),
-    )
+# One adapter walks the whole ``DatasetRunOutput`` tree. Plain fields are
+# handled by pydantic; ``Trace`` fields go through the ``TraceField`` serde
+# annotation. Serialization can no longer drift out of sync with the dataclass
+# fields (the round-2 F11 motivation for retiring the hand-rolled to/from-dict
+# helpers). The ``schema_version`` envelope is added/checked by
+# ``to_dict``/``from_dict``; ``Any`` outputs keep their ``str()`` fallback via
+# ``to_json``'s ``json.dumps`` call.
+_DATASET_RUN_ADAPTER: TypeAdapter[DatasetRunOutput] = TypeAdapter(DatasetRunOutput)
 
 
 # ---------------------------------------------------------------------------
