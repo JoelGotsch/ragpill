@@ -83,8 +83,13 @@ class TraceCaptureBackend(Protocol):
 class TraceQueryBackend(Protocol):
     """Read side of the tracing store, used by evaluate/upload layers."""
 
-    def search_traces(self, run_id: str, max_results: int = 1000) -> list[Trace]:
-        """List traces belonging to a run."""
+    def search_traces(
+        self,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        max_results: int = 1000,
+    ) -> list[Trace]:
+        """List traces, optionally filtered by run and/or experiment."""
         ...
 
     def get_trace(self, trace_id: str) -> Trace | None:

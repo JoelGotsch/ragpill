@@ -1,7 +1,9 @@
-"""Upload layer: persist an ``EvaluationOutput`` to an MLflow server.
+"""Upload layer: persist an ``EvaluationOutput`` to a tracking backend.
 
 This layer is synchronous and isolated from task execution and evaluation. It
-assumes the MLflow server is reachable via the URI in ``MLFlowSettings``.
+talks to whichever tracking backend is configured via
+:func:`ragpill.backends.get_backend` — MLflow by default; Langfuse / Arize
+Phoenix when the corresponding adapter is registered.
 
 Two modes:
 
@@ -11,7 +13,7 @@ Two modes:
   assessments, tags).
 - ``upload_traces=True``: When a :class:`~ragpill.execution.DatasetRunOutput`
   was captured offline (local temp backend + JSON round-trip), we additionally
-  serialize captured traces as an MLflow artifact so the full payload lives on
+  serialize captured traces as a backend artifact so the full payload lives on
   the server.
 """
 
@@ -21,10 +23,9 @@ import json
 import re
 from typing import Any
 
-import mlflow
 import pandas as pd
-from mlflow.entities import AssessmentSource, Experiment, Feedback, Trace
 
+from ragpill.backends import Assessment, get_backend
 from ragpill.settings import MLFlowSettings
 from ragpill.types import CaseResult, EvaluationOutput
 
@@ -33,45 +34,45 @@ from ragpill.types import CaseResult, EvaluationOutput
 # ---------------------------------------------------------------------------
 
 
-def _reattach_run(settings: MLFlowSettings, run_id: str | None) -> str | None:
-    """Reattach to an existing MLflow run (from execute_dataset) or start a new one.
+def _reattach_run(settings: MLFlowSettings, run_id: str | None) -> tuple[str | None, str]:
+    """Reattach to an existing run (from execute_dataset) or start a new one.
 
     Args:
-        settings: MLflow configuration.
+        settings: Tracking configuration.
         run_id: Optional existing run id. When provided, the active run is
             re-opened; otherwise a new run is started.
 
     Returns:
-        The previous tracking URI, so the caller can restore it.
+        ``(previous_tracking_uri, active_run_id)``. The previous URI lets the
+        caller restore the tracking destination; the active run id is needed
+        for trace-level operations such as judge-trace cleanup.
     """
-    previous_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(settings.ragpill_tracking_uri)
-    mlflow.set_experiment(settings.ragpill_experiment_name)  # pyright: ignore[reportUnknownMemberType]
+    backend = get_backend()
+    previous_uri = backend.get_tracking_uri()
+    backend.set_destination(settings.ragpill_tracking_uri, settings.ragpill_experiment_name)
     if run_id:
-        mlflow.start_run(run_id=run_id)
+        handle = backend.start_run(run_id=run_id)
     else:
-        mlflow.start_run(description=settings.ragpill_run_description)
-    return previous_uri
+        handle = backend.start_run(description=settings.ragpill_run_description)
+    return previous_uri, handle.run_id
 
 
-def _delete_llm_judge_traces(settings: MLFlowSettings, experiment_id: str, run_id: str) -> None:
-    """Remove LLM-judge evaluation-only traces from the MLflow UI.
+def _delete_llm_judge_traces(experiment_id: str, run_id: str) -> None:
+    """Remove LLM-judge evaluation-only traces from the tracking UI.
 
     Called at the end of upload so the tracing UI only shows task traces.
+    Walks the run's traces and deletes any whose root span carries the
+    ``ragpill_is_judge_trace`` attribute (set by :class:`LLMJudge`).
     """
-    from mlflow import MlflowClient
-
-    client = MlflowClient(tracking_uri=settings.ragpill_tracking_uri)
-    traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
-        locations=[experiment_id], run_id=run_id, return_type="list"
-    )
-    delete_traces: list[str] = []
+    backend = get_backend()
+    traces = backend.search_traces(run_id=run_id, experiment_id=experiment_id)
+    delete_trace_ids: list[str] = []
     for trace in traces:
-        root = trace.data._get_root_span()  # pyright: ignore[reportPrivateUsage]
+        root = trace.data._get_root_span()
         if root and root.attributes.get("ragpill_is_judge_trace"):
-            delete_traces.append(trace.info.trace_id)
-    if delete_traces:
-        client.delete_traces(experiment_id=experiment_id, trace_ids=delete_traces)
+            delete_trace_ids.append(trace.info.trace_id)
+    if delete_trace_ids:
+        backend.delete_traces(experiment_id=experiment_id, trace_ids=delete_trace_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -89,18 +90,20 @@ def _slug(name: str) -> str:
 
 def _log_accuracy_metrics(prefix: str, scores: dict[str, float]) -> None:
     """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``."""
+    backend = get_backend()
     for name, value in scores.items():
-        mlflow.log_metric(f"{prefix}_{_slug(name)}", value)
+        backend.log_metric(f"{prefix}_{_slug(name)}", value)
 
 
 def _log_table_and_metrics(
     evaluation: EvaluationOutput,
     model_params: dict[str, str] | None,
 ) -> None:
-    """Log the runs DataFrame as an MLflow table plus overall + per-tag + per-attribute accuracy."""
-    mlflow.log_table(evaluation.runs, "evaluation_results.json")
+    """Log the runs DataFrame as a tracking-backend table plus overall + per-tag + per-attribute accuracy."""
+    backend = get_backend()
+    backend.log_table(evaluation.runs, "evaluation_results.json")
     if model_params:
-        mlflow.log_params(model_params)
+        backend.log_params(model_params)
     if evaluation.runs.empty:
         return
 
@@ -108,7 +111,7 @@ def _log_table_and_metrics(
     df_valid = eval_df[eval_df["evaluator_result"].notna()]
     if len(df_valid) > 0:
         overall_accuracy: float = float(df_valid["evaluator_result"].mean())
-        mlflow.log_metric("overall_accuracy", overall_accuracy)
+        backend.log_metric("overall_accuracy", overall_accuracy)
     _log_accuracy_metrics("accuracy_tag", evaluation.per_tag_accuracy())
     for attr_key, value_map in evaluation.per_attribute_accuracy_all().items():
         _log_accuracy_metrics(f"accuracy_attr_{_slug(attr_key)}", value_map)
@@ -116,6 +119,7 @@ def _log_table_and_metrics(
 
 def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
     """Log per-run + aggregate assessments and trace tags derived from metadata."""
+    backend = get_backend()
     for cr in case_results:
         trace_id = cr.trace_id
         repeat = len(cr.run_results)
@@ -123,18 +127,15 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
         for rr in cr.run_results:
             for eval_name, eval_result in rr.assertions.items():
                 source_type = "LLM_JUDGE" if "LLMJudge" in eval_result.source.name else "CODE"
-                assessment_name = f"run-{rr.run_index}_{eval_name}"
-                feedback = Feedback(
-                    name=assessment_name,
+                assessment = Assessment(
+                    name=f"run-{rr.run_index}_{eval_name}",
                     value=eval_result.value,
-                    source=AssessmentSource(
-                        source_type=source_type,
-                        source_id=eval_result.source.name,
-                    ),
+                    source_type=source_type,
+                    source_id=eval_result.source.name,
                     rationale=str(eval_result.reason),
                 )
                 if trace_id:
-                    mlflow.log_assessment(trace_id=trace_id, assessment=feedback)
+                    backend.log_assessment(trace_id, assessment)
 
         if repeat > 1 and trace_id:
             for eval_name, eval_pass_rate in cr.aggregated.per_evaluator_pass_rates.items():
@@ -144,19 +145,20 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
                     f"{sum(1 for r in cr.run_results if eval_name in r.assertions and r.assertions[eval_name].value is True)}"
                     f"/{repeat} runs passed (threshold={cr.aggregated.threshold})"
                 )
-                agg_feedback = Feedback(
+                agg_assessment = Assessment(
                     name=f"agg_{eval_name}",
                     value=agg_passed,
-                    source=AssessmentSource(source_type="CODE", source_id="ragpill_aggregation"),
+                    source_type="CODE",
+                    source_id="ragpill_aggregation",
                     rationale=rationale,
                 )
-                mlflow.log_assessment(trace_id=trace_id, assessment=agg_feedback)
+                backend.log_assessment(trace_id, agg_assessment)
 
         if trace_id:
             for key, value in cr.metadata.attributes.items():
-                mlflow.set_trace_tag(trace_id, key, str(value))
+                backend.set_trace_tag(trace_id, key, str(value))
             for tag in cr.metadata.tags:
-                mlflow.set_trace_tag(trace_id, f"tag_{tag}", "true")
+                backend.set_trace_tag(trace_id, f"tag_{tag}", "true")
 
 
 def _log_traces_as_artifact(evaluation: EvaluationOutput) -> None:
@@ -172,7 +174,7 @@ def _log_traces_as_artifact(evaluation: EvaluationOutput) -> None:
         path = os.path.join(tmp_dir, "dataset_run.json")
         with open(path, "w") as f:
             f.write(payload)
-        mlflow.log_artifact(path, artifact_path="ragpill_traces")
+        get_backend().log_artifact(path, artifact_path="ragpill_traces")
     finally:
         import shutil
 
@@ -181,10 +183,7 @@ def _log_traces_as_artifact(evaluation: EvaluationOutput) -> None:
 
 def _resolve_experiment_id(settings: MLFlowSettings) -> str:
     """Return the experiment id for the configured experiment name."""
-    experiment: Experiment | None = mlflow.get_experiment_by_name(settings.ragpill_experiment_name)
-    if experiment is None:
-        raise RuntimeError(f"Experiment '{settings.ragpill_experiment_name}' not found on server.")
-    return str(experiment.experiment_id)  # pyright: ignore[reportUnknownArgumentType]
+    return get_backend().resolve_experiment_id(settings.ragpill_experiment_name)
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +222,11 @@ def upload_to_mlflow(
         [`evaluate_results`][ragpill.evaluation.evaluate_results]: Phase 2.
     """
     settings = mlflow_settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
+    backend = get_backend()
     dataset_run = evaluation.dataset_run
     run_id: str | None = dataset_run.mlflow_run_id if (dataset_run and dataset_run.mlflow_run_id) else None
 
-    previous_uri = _reattach_run(settings, run_id)
+    previous_uri, active_run_id = _reattach_run(settings, run_id)
     try:
         _log_table_and_metrics(evaluation, model_params)
         _log_assessments_and_tags(evaluation.case_results)
@@ -235,14 +235,13 @@ def upload_to_mlflow(
 
         # Strip LLM-judge traces created during evaluation (they only clutter the UI).
         experiment_id = _resolve_experiment_id(settings)
-        active = mlflow.active_run()
-        if active is not None:
-            _delete_llm_judge_traces(settings, experiment_id, str(active.info.run_id))  # pyright: ignore[reportUnknownArgumentType]
+        if backend.is_run_active():
+            _delete_llm_judge_traces(experiment_id, active_run_id)
     finally:
-        if mlflow.active_run() is not None:
-            mlflow.end_run()
+        if backend.is_run_active():
+            backend.end_run()
         if previous_uri is not None:
-            mlflow.set_tracking_uri(previous_uri)
+            backend.set_tracking_uri(previous_uri)
 
 
 def upload_dataset_run_json(path: str) -> EvaluationOutput:
