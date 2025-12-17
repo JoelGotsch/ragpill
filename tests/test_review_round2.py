@@ -280,3 +280,15 @@ def test_incomplete_trace_status_raises_before_scoring():
     )
     with pytest.raises(TraceUnavailableError):
         ev.get_trace(ctx)
+
+
+def test_literal_quote_evaluator_is_picklable():
+    """Round-2 F12/M11: the old placeholder lambda made it unpicklable."""
+    import pickle
+
+    from ragpill.evaluators import LiteralQuoteEvaluator
+
+    ev = LiteralQuoteEvaluator(expected=True, tags={"q"})
+    restored = pickle.loads(pickle.dumps(ev))
+    assert isinstance(restored, LiteralQuoteEvaluator)
+    assert restored.expected is True

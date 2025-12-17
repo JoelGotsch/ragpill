@@ -97,3 +97,27 @@ def test_extract_preserves_markdown_link_text():
     assert "(https://test.org)" in quote
     # No spurious ``.*`` injected from the bracketed text.
     assert ".*" not in quote
+
+
+def test_sibling_subquote_after_multiline_nested_is_not_corrupted():
+    """Regression (round-2 F4): a sibling nested subquote following a multiline
+    nested one must not have its indices shifted by the earlier splice."""
+    output = "\n".join(
+        [
+            "> outer start",
+            ">> first nested line1",
+            ">> first nested line2",
+            "> middle text",
+            ">> second nested",
+            "> outer end",
+        ]
+    )
+    quotes = extract_markdown_quotes(output)
+    assert len(quotes) == 1
+    text, _ref = quotes[0]
+    # The raw '> second nested' line must not survive, its cleaned form must not
+    # be duplicated, and 'outer end' must not be dropped.
+    assert "> second nested" not in text
+    assert text.count("second nested") == 1
+    assert "outer end" in text
+    assert "outer start" in text and "middle text" in text

@@ -145,7 +145,12 @@ def _extract_quotes(lines: list[str], depth: int = 0) -> list[tuple[list[str], s
         # quotationmark should be quote_char[depth % len(quote_char)] if quote_char is not None else None
 
         subquotes = _extract_quotes(quote_lines, depth=depth + 1)
-        for subquote_lines, subquote_source, subquote_first_line_num, subquote_last_line_num in subquotes:
+        # Process subquotes last-to-first: each splice collapses a multiline
+        # subquote to one line, shifting the indices of everything *after* it.
+        # Recorded indices are against the pre-splice list, so applying them from
+        # the end keeps earlier subquotes' indices valid (a multiline nested
+        # subquote followed by a sibling used to corrupt the later one).
+        for subquote_lines, subquote_source, subquote_first_line_num, subquote_last_line_num in reversed(subquotes):
             # replace the subquote lines in quote_lines with a single line containing the subquote text in quotation marks
 
             src_str = f" (source: {subquote_source})" if subquote_source else ""

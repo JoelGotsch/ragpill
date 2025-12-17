@@ -250,25 +250,15 @@ class SpanBaseEvaluator(BaseEvaluator):
             trace = subtree
         return trace
 
-
-@dataclass(kw_only=True, repr=False)
-class SourcesBaseEvaluator(SpanBaseEvaluator):
-    """
-    This base class that retrieves the sources from mlflow trace.
-
-    Note: only documents retrieved from a retriever, reranker or tool span are considered as sources.
-    """
-
-    evaluation_function: Callable[[list[Document]], bool] = field(repr=False)
-    custom_reason_true: str = field(default="Evaluation function returned True.", repr=False)
-    custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
-
     def get_documents(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> list[Document]:
         """Retrieve source documents from the run's trace.
 
+        Available to any span-based evaluator (used by ``SourcesBaseEvaluator``
+        and ``LiteralQuoteEvaluator``).
+
         Args:
             ctx: The evaluator context; ``ctx.trace`` is read via
-                :meth:`SpanBaseEvaluator.get_trace`.
+                :meth:`get_trace`.
 
         Returns:
             List of :class:`ragpill.trace.Document` extracted from retriever,
@@ -301,6 +291,20 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
                         )
                     )
         return all_documents
+
+
+@dataclass(kw_only=True, repr=False)
+class SourcesBaseEvaluator(SpanBaseEvaluator):
+    """
+    This base class retrieves the sources from the run's trace and applies an
+    ``evaluation_function`` to the retrieved documents.
+
+    Note: only documents retrieved from a retriever, reranker or tool span are considered as sources.
+    """
+
+    evaluation_function: Callable[[list[Document]], bool] = field(repr=False)
+    custom_reason_true: str = field(default="Evaluation function returned True.", repr=False)
+    custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
     async def run(
         self,
@@ -575,7 +579,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
 
 
 @dataclass(kw_only=True, repr=False)
-class LiteralQuoteEvaluator(SourcesBaseEvaluator):
+class LiteralQuoteEvaluator(SpanBaseEvaluator):
     """Verify that all markdown quotes in the output appear literally in source documents.
 
     This evaluator ensures citations are accurate by checking that any text quoted
@@ -645,22 +649,9 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
             Similar evaluator using regex patterns instead of literal quotes
     """
 
-    def __init__(
-        self,
-        expected: bool = True,
-        tags: set[str] | None = None,
-        attributes: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            evaluation_function=lambda docs: True,  # Placeholder, actual logic is in run() for access to output
-            expected=expected,
-            tags=tags or set(),
-            attributes=attributes or {},
-            custom_reason_true="All quotes found in source documents.",
-            custom_reason_false="",  # Will be set dynamically
-            **kwargs,
-        )
+    # No custom __init__ / evaluation_function: it inherits SpanBaseEvaluator
+    # directly (get_documents is available there) and fully overrides run(), so
+    # there is no placeholder lambda to make the evaluator unpicklable.
 
     @classmethod
     def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> LiteralQuoteEvaluator:
