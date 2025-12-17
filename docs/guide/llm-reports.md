@@ -117,7 +117,8 @@ The same tag breakdown is available as a plain dict for programmatic use:
 
 ```python
 result.per_tag_accuracy()
-# {"q2-numerics": 0.33, "factual-recall": 0.75, "tone": 1.0}
+# {"q2-numerics": 0.333, "factual-recall": 0.75, "tone": 1.0}
+# All accuracy values are rounded to 3 decimal places.
 ```
 
 Tags can sit on cases (`TestCaseMetadata.tags`) or on evaluators
@@ -133,12 +134,12 @@ computed per value:
 
 ```python
 result.per_attribute_accuracy("difficulty")
-# {"easy": 1.0, "medium": 0.75, "hard": 0.33}
+# {"easy": 1.0, "medium": 0.75, "hard": 0.333}
 
 result.per_attribute_accuracy_all()
 # {
-#   "difficulty": {"easy": 1.0, "medium": 0.75, "hard": 0.33},
-#   "domain":     {"chemistry": 0.95, "biology": 0.40},
+#   "difficulty": {"easy": 1.0, "medium": 0.75, "hard": 0.333},
+#   "domain":     {"chemistry": 0.95, "biology": 0.4},
 # }
 ```
 

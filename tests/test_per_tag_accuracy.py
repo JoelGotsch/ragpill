@@ -110,3 +110,18 @@ def test_return_type_is_plain_dict_with_python_floats():
     [(tag, value)] = result.items()
     assert isinstance(tag, str)
     assert isinstance(value, float)
+
+
+def test_accuracy_values_are_rounded_to_three_decimals():
+    """Repeating decimals like 1/3 are rounded; not full-float precision."""
+    eo = _eval_output(
+        [
+            {"tags": {"alpha"}, "evaluator_result": True},
+            {"tags": {"alpha"}, "evaluator_result": False},
+            {"tags": {"alpha"}, "evaluator_result": False},  # 1/3 -> 0.333
+            {"tags": {"beta"}, "evaluator_result": True},
+            {"tags": {"beta"}, "evaluator_result": True},
+            {"tags": {"beta"}, "evaluator_result": False},  # 2/3 -> 0.667
+        ]
+    )
+    assert eo.per_tag_accuracy() == {"alpha": 0.333, "beta": 0.667}

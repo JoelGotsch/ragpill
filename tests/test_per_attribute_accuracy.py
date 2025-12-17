@@ -162,3 +162,20 @@ def test_per_attribute_accuracy_all_drops_attributes_with_no_usable_rows() -> No
     """An attribute whose every value-bucket is empty (no usable assertions) is omitted."""
     eo = _eo([_case("c1", {"empty_attr": "v"}, [_run(0, {})])])  # zero assertions
     assert eo.per_attribute_accuracy_all() == {}
+
+
+def test_accuracy_values_are_rounded_to_three_decimals() -> None:
+    """Repeating decimals like 1/3 and 2/3 are rounded; not full-float precision."""
+    eo = _eo(
+        [
+            # 1 of 3 passes -> 0.333... -> 0.333
+            _case("c1", {"difficulty": "hard"}, [_run(0, {"e": _result("e", True)})]),
+            _case("c2", {"difficulty": "hard"}, [_run(0, {"e": _result("e", False)})]),
+            _case("c3", {"difficulty": "hard"}, [_run(0, {"e": _result("e", False)})]),
+            # 2 of 3 passes -> 0.666... -> 0.667
+            _case("c4", {"difficulty": "easy"}, [_run(0, {"e": _result("e", True)})]),
+            _case("c5", {"difficulty": "easy"}, [_run(0, {"e": _result("e", True)})]),
+            _case("c6", {"difficulty": "easy"}, [_run(0, {"e": _result("e", False)})]),
+        ]
+    )
+    assert eo.per_attribute_accuracy("difficulty") == {"hard": 0.333, "easy": 0.667}

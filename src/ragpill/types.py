@@ -165,7 +165,7 @@ class EvaluationOutput:
                         bucket.append(1.0 if v else 0.0)
                     elif isinstance(v, (int, float)):
                         bucket.append(float(v))
-        return {k: sum(vs) / len(vs) for k, vs in buckets.items() if vs}
+        return {k: round(sum(vs) / len(vs), 3) for k, vs in buckets.items() if vs}
 
     def per_attribute_accuracy_all(self) -> dict[str, dict[str, float]]:
         """Auto-discovered per-attribute breakdown across the dataset.
@@ -211,7 +211,7 @@ class EvaluationOutput:
         if df_valid.empty:
             return {}
         grouped = df_valid.explode("tags").groupby("tags")["evaluator_result"].mean()
-        return {str(tag): float(acc) for tag, acc in grouped.items() if pd.notna(tag)}  # pyright: ignore[reportUnknownMemberType]
+        return {str(tag): round(float(acc), 3) for tag, acc in grouped.items() if pd.notna(tag)}  # pyright: ignore[reportUnknownMemberType]
 
     def to_llm_text(
         self,
