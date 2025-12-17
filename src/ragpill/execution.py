@@ -41,7 +41,7 @@ from ragpill.base import (
 )
 from ragpill.eval_types import Case, Dataset
 from ragpill.settings import MLFlowSettings
-from ragpill.trace import filter_to_subtree, from_mlflow_trace, trace_from_dict, trace_to_dict
+from ragpill.trace import filter_to_subtree, trace_from_dict, trace_to_dict
 from ragpill.utils import _fix_evaluator_global_flag  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
@@ -394,17 +394,17 @@ def _fetch_trace(
     the case grouping context closes can miss a trace still in flight. The
     backend polls by id and returns ``None`` (never a different trace) on
     timeout — a miss leaves the SpanBaseEvaluators without a trace rather than
-    silently scoring the wrong one. The captured MLflow trace is converted to
-    the vendor-neutral model at this boundary; nothing downstream sees mlflow.
+    silently scoring the wrong one. ``await_trace`` returns the vendor-neutral
+    ``ragpill.trace.Trace`` (the backend converts its own native trace), so
+    nothing here is MLflow-specific.
     """
-    mlflow_trace = get_backend().await_trace(
+    return get_backend().await_trace(
         parent_trace_id,
         run_id=run_id,
         experiment_id=experiment_id,
         timeout_s=timeout_s,
         poll_interval_s=poll_interval_s,
     )
-    return from_mlflow_trace(mlflow_trace) if mlflow_trace is not None else None
 
 
 async def _execute_case_runs(
@@ -474,19 +474,18 @@ async def _execute_case_runs(
             # Session mode: each repeat already produced its own trace; fetch
             # them individually by the trace_id captured at span open. Poll for
             # export, same as span mode — get_trace right after the context
-            # exits races the async flush just as search_traces did. Convert each
-            # to the neutral model at this boundary.
+            # exits races the async flush just as search_traces did. await_trace
+            # returns the neutral model (the backend converts its own trace).
             backend = get_backend()
             for tr in task_runs:
                 if tr.trace_id:
-                    mlflow_trace = backend.await_trace(
+                    tr.trace = backend.await_trace(
                         tr.trace_id,
                         run_id=tracing.run_id,
                         experiment_id=tracing.experiment_id,
                         timeout_s=tracing.trace_fetch_timeout_s,
                         poll_interval_s=tracing.trace_fetch_poll_interval_s,
                     )
-                    tr.trace = from_mlflow_trace(mlflow_trace) if mlflow_trace is not None else None
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),

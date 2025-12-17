@@ -266,6 +266,34 @@ def test_await_trace_times_out_returns_none(mlflow_mock):
     mlflow_mock.search_traces.assert_not_called()
 
 
+def test_get_trace_converts_native_to_neutral():
+    """get_trace returns the vendor-neutral ragpill.trace.Trace, converting the
+    backend-native mlflow trace internally (ADR-0017)."""
+    backend = MLflowBackend()
+    native = object()
+    neutral = object()
+    with (
+        patch("mlflow.MlflowClient") as client,
+        patch("ragpill.trace.from_mlflow_trace", return_value=neutral) as conv,
+    ):
+        client.return_value.get_trace.return_value = native
+        result = backend.get_trace("tid")
+    assert result is neutral
+    conv.assert_called_once_with(native)
+
+
+def test_get_trace_returns_none_when_absent():
+    backend = MLflowBackend()
+    with (
+        patch("mlflow.MlflowClient") as client,
+        patch("ragpill.trace.from_mlflow_trace") as conv,
+    ):
+        client.return_value.get_trace.return_value = None
+        result = backend.get_trace("tid")
+    assert result is None
+    conv.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Case grouping (sessions)
 # ---------------------------------------------------------------------------

@@ -158,21 +158,19 @@ async def test_execute_dataset_rejects_neither_task_nor_factory():
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_trace_delegates_to_await_trace_then_converts():
+def test_fetch_trace_delegates_to_await_trace():
     from unittest.mock import MagicMock, patch
 
     from ragpill.execution import _fetch_trace
 
     backend = MagicMock()
-    mlflow_trace = MagicMock(name="mlflow_trace")
-    backend.await_trace.return_value = mlflow_trace
+    # await_trace already returns the neutral ragpill.trace.Trace (the backend
+    # converts its own native trace), so _fetch_trace passes it straight through.
     neutral = object()
-    with (
-        patch("ragpill.execution.get_backend", return_value=backend),
-        patch("ragpill.execution.from_mlflow_trace", return_value=neutral) as conv,
-    ):
+    backend.await_trace.return_value = neutral
+    with patch("ragpill.execution.get_backend", return_value=backend):
         result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=7.0, poll_interval_s=0.25)
-    # Fetched via the polling await_trace, then converted to the neutral model.
+    assert result is neutral
     backend.await_trace.assert_called_once_with(
         "trace-1",
         run_id="run-1",
@@ -180,23 +178,17 @@ def test_fetch_trace_delegates_to_await_trace_then_converts():
         timeout_s=7.0,
         poll_interval_s=0.25,
     )
-    conv.assert_called_once_with(mlflow_trace)
-    assert result is neutral
     # No best-effort search_traces fallback that could return the wrong trace.
     backend.search_traces.assert_not_called()
 
 
-def test_fetch_trace_returns_none_without_converting_on_miss():
+def test_fetch_trace_returns_none_on_miss():
     from unittest.mock import MagicMock, patch
 
     from ragpill.execution import _fetch_trace
 
     backend = MagicMock()
     backend.await_trace.return_value = None
-    with (
-        patch("ragpill.execution.get_backend", return_value=backend),
-        patch("ragpill.execution.from_mlflow_trace") as conv,
-    ):
+    with patch("ragpill.execution.get_backend", return_value=backend):
         result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=1.0, poll_interval_s=0.1)
     assert result is None
-    conv.assert_not_called()

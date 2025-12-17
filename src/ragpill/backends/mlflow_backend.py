@@ -12,11 +12,14 @@ from __future__ import annotations
 import time
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mlflow
 import pandas as pd
 from mlflow.entities import AssessmentSource, Feedback, SpanType, Trace as MLflowTrace
+
+if TYPE_CHECKING:
+    from ragpill.trace import Trace as NeutralTrace
 
 from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
 
@@ -151,13 +154,23 @@ class MLflowBackend:
             kwargs["locations"] = [experiment_id]
         return mlflow.search_traces(**kwargs)  # pyright: ignore[reportReturnType]
 
-    def get_trace(self, trace_id: str) -> MLflowTrace | None:
+    def get_trace(self, trace_id: str) -> NeutralTrace | None:
+        # Returns the vendor-neutral ragpill.trace.Trace (converted here), not the
+        # raw mlflow.entities.Trace — every backend converts its own native trace
+        # so the execution layer stays backend-agnostic. See ADR-0017.
         from mlflow import MlflowClient
 
+        from ragpill.trace import from_mlflow_trace
+
         try:
-            return MlflowClient().get_trace(trace_id)
+            native = MlflowClient().get_trace(trace_id)
         except Exception:
             return None
+        # mlflow's stub types this non-Optional, but a not-yet-exported trace can
+        # come back falsy at runtime — keep the guard.
+        if not native:
+            return None
+        return from_mlflow_trace(native)
 
     def await_trace(
         self,
@@ -167,7 +180,7 @@ class MLflowBackend:
         experiment_id: str | None = None,
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
-    ) -> MLflowTrace | None:
+    ) -> NeutralTrace | None:
         # MLflow exports spans asynchronously; the by-id lookup is the
         # authoritative readiness check — it returns the trace with its full
         # span tree only once exported. Poll it rather than search_traces (the

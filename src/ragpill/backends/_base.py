@@ -22,17 +22,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import pandas as pd
 
 from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
 
-# The backend protocol deals in each backend's *native* trace type (e.g.
-# mlflow.entities.Trace) — intentionally vendor-specific. The execute layer
-# converts the native trace into the vendor-neutral ``ragpill.trace.Trace`` at
-# the capture boundary (see ragpill.trace.from_mlflow_trace), so this stays Any
-# rather than coupling the protocol to one backend's classes.
+if TYPE_CHECKING:
+    from ragpill.trace import Trace as NeutralTrace
+
+# ``search_traces`` and ``delete_traces`` deal in each backend's *native* trace
+# type (e.g. mlflow.entities.Trace) — they support backend-internal work like
+# judge-trace cleanup that needs native introspection, so this stays Any. The
+# read methods evaluators consume (``get_trace`` / ``await_trace``) return the
+# vendor-neutral ``ragpill.trace.Trace`` instead — each backend converts its own
+# native trace, keeping the execution layer backend-agnostic (ADR-0017).
 Trace = Any  # backend-native trace; converted to ragpill.trace.Trace downstream
 
 
@@ -122,11 +126,22 @@ class TraceQueryBackend(Protocol):
         experiment_id: str | None = None,
         max_results: int = 1000,
     ) -> list[Trace]:
-        """List traces, optionally filtered by run and/or experiment."""
+        """List traces (backend-native), optionally filtered by run/experiment.
+
+        Returns the backend's native trace objects — used for backend-internal
+        operations like judge-trace cleanup that introspect native span
+        attributes. (Contrast ``get_trace`` / ``await_trace``, which return the
+        neutral model.)
+        """
         ...
 
-    def get_trace(self, trace_id: str) -> Trace | None:
-        """Fetch a single trace by id, or ``None`` when not found."""
+    def get_trace(self, trace_id: str) -> NeutralTrace | None:
+        """Fetch a single trace by id as a neutral ``ragpill.trace.Trace``.
+
+        The adapter converts its native trace before returning, so callers
+        (evaluators, the execution layer) never see backend-specific shapes.
+        ``None`` when not found.
+        """
         ...
 
     def await_trace(
@@ -137,13 +152,14 @@ class TraceQueryBackend(Protocol):
         experiment_id: str | None = None,
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
-    ) -> Trace | None:
-        """Fetch ``trace_id``, polling until the backend has exported it.
+    ) -> NeutralTrace | None:
+        """Fetch ``trace_id`` as a neutral ``ragpill.trace.Trace``, polling until exported.
 
         Backends flush spans to their store asynchronously, so a fetch issued
         immediately after a span context closes can miss a trace that is still
         in flight. This polls up to ``timeout_s`` (every ``poll_interval_s``)
-        for the trace to become available.
+        for the trace to become available, converting the native trace to the
+        neutral model before returning.
 
         Returns the trace with its full span tree once available, or ``None``
         on timeout. It MUST NOT fall back to a different trace: a miss returns
