@@ -51,7 +51,13 @@ class RunResult:
 
     @property
     def all_passed(self) -> bool:
-        """True if the task succeeded and every assertion passed."""
+        """True if the task succeeded and every assertion passed.
+
+        ``evaluator_failures`` (evaluators that raised) are intentionally NOT
+        folded in here: doing so would change pass/fail semantics and shift
+        reported pass rates. They are surfaced in the triage report instead so
+        a silently-dropped evaluator is visible without flipping the verdict.
+        """
         if self.error is not None:
             return False
         if not self.assertions:

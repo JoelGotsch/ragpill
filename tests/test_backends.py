@@ -234,6 +234,39 @@ def test_delete_traces_noop_on_empty(mlflow_mock):
 
 
 # ---------------------------------------------------------------------------
+# await_trace — readiness polling (fixes the async-export race)
+# ---------------------------------------------------------------------------
+
+
+def test_await_trace_returns_once_exported(mlflow_mock):
+    """Polls by id and returns the trace as soon as it becomes available."""
+    backend = MLflowBackend()
+    sentinel = object()
+    with (
+        patch.object(backend, "get_trace", side_effect=[None, None, sentinel]) as gt,
+        patch("ragpill.backends.mlflow_backend.time.sleep"),
+    ):
+        result = backend.await_trace("tid", timeout_s=10.0, poll_interval_s=0.01)
+    assert result is sentinel
+    assert gt.call_count == 3
+    gt.assert_called_with("tid")
+
+
+def test_await_trace_times_out_returns_none(mlflow_mock):
+    """A zero budget still tries once, then returns None on miss — and never a
+    different trace (no search_traces fallback)."""
+    backend = MLflowBackend()
+    with (
+        patch.object(backend, "get_trace", return_value=None) as gt,
+        patch("ragpill.backends.mlflow_backend.time.sleep"),
+    ):
+        result = backend.await_trace("missing", timeout_s=0.0, poll_interval_s=0.01)
+    assert result is None
+    assert gt.call_count == 1
+    mlflow_mock.search_traces.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Case grouping (sessions)
 # ---------------------------------------------------------------------------
 

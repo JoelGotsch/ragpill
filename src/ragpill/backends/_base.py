@@ -128,6 +128,29 @@ class TraceQueryBackend(Protocol):
         """Fetch a single trace by id, or ``None`` when not found."""
         ...
 
+    def await_trace(
+        self,
+        trace_id: str,
+        *,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        timeout_s: float = 10.0,
+        poll_interval_s: float = 0.5,
+    ) -> Trace | None:
+        """Fetch ``trace_id``, polling until the backend has exported it.
+
+        Backends flush spans to their store asynchronously, so a fetch issued
+        immediately after a span context closes can miss a trace that is still
+        in flight. This polls up to ``timeout_s`` (every ``poll_interval_s``)
+        for the trace to become available.
+
+        Returns the trace with its full span tree once available, or ``None``
+        on timeout. It MUST NOT fall back to a different trace: a miss returns
+        ``None``, never the wrong trace. ``run_id`` / ``experiment_id`` are
+        accepted for backends whose readiness query needs them.
+        """
+        ...
+
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         """Delete traces by id. Used today for judge-trace cleanup."""
         ...

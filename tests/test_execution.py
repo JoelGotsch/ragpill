@@ -151,3 +151,30 @@ async def test_execute_dataset_rejects_neither_task_nor_factory():
     ds = _make_minimal_dataset()
     with pytest.raises(ValueError):
         await execute_dataset(ds)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_trace — delegates to the backend's polling await_trace (no fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_trace_delegates_to_await_trace():
+    from unittest.mock import MagicMock, patch
+
+    from ragpill.execution import _fetch_trace
+
+    backend = MagicMock()
+    sentinel = object()
+    backend.await_trace.return_value = sentinel
+    with patch("ragpill.execution.get_backend", return_value=backend):
+        result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=7.0, poll_interval_s=0.25)
+    assert result is sentinel
+    backend.await_trace.assert_called_once_with(
+        "trace-1",
+        run_id="run-1",
+        experiment_id="exp-1",
+        timeout_s=7.0,
+        poll_interval_s=0.25,
+    )
+    # No best-effort search_traces fallback that could return the wrong trace.
+    backend.search_traces.assert_not_called()

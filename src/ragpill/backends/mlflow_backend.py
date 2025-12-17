@@ -9,6 +9,7 @@ behaviour.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any
@@ -157,6 +158,32 @@ class MLflowBackend:
             return MlflowClient().get_trace(trace_id)
         except Exception:
             return None
+
+    def await_trace(
+        self,
+        trace_id: str,
+        *,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        timeout_s: float = 10.0,
+        poll_interval_s: float = 0.5,
+    ) -> MLflowTrace | None:
+        # MLflow exports spans asynchronously; the by-id lookup is the
+        # authoritative readiness check — it returns the trace with its full
+        # span tree only once exported. Poll it rather than search_traces (the
+        # latter's "one result" state can transiently belong to a different
+        # case, which is how the old fallback returned the wrong trace).
+        # run_id / experiment_id are part of the protocol for backends whose
+        # readiness query needs them; MLflow's by-id lookup does not.
+        del run_id, experiment_id
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while True:
+            trace = self.get_trace(trace_id)
+            if trace is not None:
+                return trace
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(poll_interval_s)
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         from mlflow import MlflowClient

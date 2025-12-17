@@ -300,9 +300,11 @@ class _TracingContext:
     run_id: str
     previous_uri: str | None
     temp_dir: str | None  # set for local-temp backend, used to rm -rf on teardown
+    trace_fetch_timeout_s: float  # how long to poll for a trace to be exported
+    trace_fetch_poll_interval_s: float  # interval between readiness polls
 
 
-def _setup_local_tracing(experiment_name: str) -> _TracingContext:
+def _setup_local_tracing(settings: MLFlowSettings) -> _TracingContext:
     """Configure a temporary local SQLite backend.
 
     Used when no server URI is provided. The temp directory (containing
@@ -318,7 +320,7 @@ def _setup_local_tracing(experiment_name: str) -> _TracingContext:
     artifacts_path = os.path.join(temp_dir, "mlartifacts")
     os.makedirs(artifacts_path, exist_ok=True)
     uri = f"sqlite:///{db_path}"
-    backend.set_destination(uri, experiment_name)
+    backend.set_destination(uri, settings.ragpill_experiment_name)
     backend.autolog_pydantic_ai()
     handle = backend.start_run()
     return _TracingContext(
@@ -327,6 +329,8 @@ def _setup_local_tracing(experiment_name: str) -> _TracingContext:
         run_id=handle.run_id,
         previous_uri=previous_uri,
         temp_dir=temp_dir,
+        trace_fetch_timeout_s=settings.ragpill_trace_fetch_timeout_s,
+        trace_fetch_poll_interval_s=settings.ragpill_trace_fetch_poll_interval_s,
     )
 
 
@@ -343,6 +347,8 @@ def _setup_server_tracing(uri: str, settings: MLFlowSettings) -> _TracingContext
         run_id=handle.run_id,
         previous_uri=previous_uri,
         temp_dir=None,
+        trace_fetch_timeout_s=settings.ragpill_trace_fetch_timeout_s,
+        trace_fetch_poll_interval_s=settings.ragpill_trace_fetch_poll_interval_s,
     )
 
 
@@ -392,14 +398,29 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
     return _Trace(info=trace.info, data=filtered_data)
 
 
-def _fetch_trace(experiment_id: str, run_id: str, parent_trace_id: str) -> Trace | None:
-    """Fetch the trace whose request_id matches ``parent_trace_id``."""
-    traces = get_backend().search_traces(run_id=run_id, experiment_id=experiment_id)
-    for t in traces:
-        if t.info.trace_id == parent_trace_id:
-            return t
-    # Fallback: if only one trace exists for the run, use it.
-    return traces[0] if len(traces) == 1 else None
+def _fetch_trace(
+    experiment_id: str,
+    run_id: str,
+    parent_trace_id: str,
+    *,
+    timeout_s: float,
+    poll_interval_s: float,
+) -> Trace | None:
+    """Fetch the trace ``parent_trace_id``, polling until it is exported.
+
+    Spans flush to the backend asynchronously, so a fetch issued right after
+    the case grouping context closes can miss a trace still in flight. The
+    backend polls by id and returns ``None`` (never a different trace) on
+    timeout — a miss leaves the SpanBaseEvaluators without a trace rather than
+    silently scoring the wrong one.
+    """
+    return get_backend().await_trace(
+        parent_trace_id,
+        run_id=run_id,
+        experiment_id=experiment_id,
+        timeout_s=timeout_s,
+        poll_interval_s=poll_interval_s,
+    )
 
 
 async def _execute_case_runs(
@@ -454,18 +475,32 @@ async def _execute_case_runs(
     if capture_traces and tracing is not None:
         if grouping_mode == "span" and case_trace_id:
             # Span mode: one case trace, filtered per repeat.
-            case_trace = _fetch_trace(tracing.experiment_id, tracing.run_id, case_trace_id)
+            case_trace = _fetch_trace(
+                tracing.experiment_id,
+                tracing.run_id,
+                case_trace_id,
+                timeout_s=tracing.trace_fetch_timeout_s,
+                poll_interval_s=tracing.trace_fetch_poll_interval_s,
+            )
             if case_trace is not None:
                 for tr in task_runs:
                     if tr.run_span_id:
                         tr.trace = _filter_trace_to_subtree(case_trace, tr.run_span_id)
         elif grouping_mode == "session":
             # Session mode: each repeat already produced its own trace; fetch
-            # them individually by the trace_id captured at span open.
+            # them individually by the trace_id captured at span open. Poll for
+            # export, same as span mode — get_trace right after the context
+            # exits races the async flush just as search_traces did.
             backend = get_backend()
             for tr in task_runs:
                 if tr.trace_id:
-                    tr.trace = backend.get_trace(tr.trace_id)
+                    tr.trace = backend.await_trace(
+                        tr.trace_id,
+                        run_id=tracing.run_id,
+                        experiment_id=tracing.experiment_id,
+                        timeout_s=tracing.trace_fetch_timeout_s,
+                        poll_interval_s=tracing.trace_fetch_poll_interval_s,
+                    )
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),
@@ -624,7 +659,7 @@ async def execute_dataset(
             if mlflow_tracking_uri:
                 tracing = _setup_server_tracing(mlflow_tracking_uri, _settings)
             else:
-                tracing = _setup_local_tracing(_settings.ragpill_experiment_name)
+                tracing = _setup_local_tracing(_settings)
 
         case_outputs: list[CaseRunOutput] = []
         for case in testset.cases:

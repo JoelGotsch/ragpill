@@ -47,6 +47,16 @@ class MLFlowSettings(BaseSettings):
         le=1.0,
         description="Default minimum fraction of runs that must pass for a case to be considered passing. Per-case overrides via TestCaseMetadata.threshold take precedence. Env: MLFLOW_RAGPILL_THRESHOLD.",
     )
+    ragpill_trace_fetch_timeout_s: float = Field(
+        default=10.0,
+        ge=0.0,
+        description="Max seconds to poll for a trace to be exported before giving up when attaching traces to evaluator context. Backends flush spans asynchronously, so a too-short budget leaves SpanBaseEvaluators without a trace. Env: MLFLOW_RAGPILL_TRACE_FETCH_TIMEOUT_S.",
+    )
+    ragpill_trace_fetch_poll_interval_s: float = Field(
+        default=0.5,
+        gt=0.0,
+        description="Interval in seconds between trace-readiness polls within the trace-fetch timeout. Env: MLFLOW_RAGPILL_TRACE_FETCH_POLL_INTERVAL_S.",
+    )
 
 
 class LLMJudgeSettings(BaseSettings):
