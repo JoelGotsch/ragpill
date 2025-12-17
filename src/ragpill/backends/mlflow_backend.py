@@ -25,6 +25,7 @@ _SPAN_KIND_TO_MLFLOW: dict[SpanKind, str] = {
     SpanKind.LLM: SpanType.LLM,
     SpanKind.RERANKER: SpanType.RERANKER,
     SpanKind.RETRIEVER: SpanType.RETRIEVER,
+    SpanKind.TASK: SpanType.TASK,
     SpanKind.TOOL: SpanType.TOOL,
     SpanKind.UNKNOWN: SpanType.UNKNOWN,
 }

@@ -20,6 +20,7 @@ class SpanKind(StrEnum):
     LLM = "LLM"
     RERANKER = "RERANKER"
     RETRIEVER = "RETRIEVER"
+    TASK = "TASK"
     TOOL = "TOOL"
     UNKNOWN = "UNKNOWN"
 
