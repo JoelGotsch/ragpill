@@ -314,9 +314,24 @@ def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> Non
             evaluator.is_global = True
 
 
-def _get_pydantic_ai_llm_model(base_url: str, api_key: str, model_name: str, temperature: float = 0.0) -> models.Model:  # pyright: ignore[reportUnusedFunction]
-    """Get a pydantic-ai LLM model based on provided settings."""
-    http_client = AsyncClient()
+def _get_pydantic_ai_llm_model(  # pyright: ignore[reportUnusedFunction]
+    base_url: str,
+    api_key: str,
+    model_name: str,
+    temperature: float = 0.0,
+    ssl_ca_cert: str | None = None,
+    ssl_verify: bool = True,
+) -> models.Model:
+    """Get a pydantic-ai LLM model based on provided settings.
+
+    Args:
+        ssl_ca_cert: Path to a custom CA certificate bundle. When set, this is
+            passed as the ``verify`` parameter to ``httpx.AsyncClient``.
+        ssl_verify: Whether to verify SSL certificates. Ignored when
+            *ssl_ca_cert* is provided.
+    """
+    verify: str | bool = ssl_ca_cert if ssl_ca_cert else ssl_verify
+    http_client = AsyncClient(verify=verify)
     openai_client = AsyncOpenAI(
         max_retries=3,
         base_url=base_url,
