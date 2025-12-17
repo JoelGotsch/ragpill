@@ -118,7 +118,7 @@ The same tag breakdown is available as a plain dict for programmatic use:
 ```python
 result.per_tag_accuracy()
 # {"q2-numerics": 0.3333333333333333, "factual-recall": 0.75, "tone": 1.0}
-# API returns raw float means. Triage and MLflow upload round to 3 decimals.
+# API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.
 ```
 
 Tags can sit on cases (`TestCaseMetadata.tags`) or on evaluators
@@ -143,7 +143,7 @@ result.per_attribute_accuracy_all()
 # }
 ```
 
-API returns raw means. Triage and MLflow upload round to 3 decimals.
+API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.
 
 Cases missing the attribute are skipped (not counted as failures).
 Unhashable attribute values are silently stringified for dict-key

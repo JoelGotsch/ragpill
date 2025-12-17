@@ -88,9 +88,9 @@ def _slug(name: str) -> str:
 
 
 def _log_accuracy_metrics(prefix: str, scores: dict[str, float]) -> None:
-    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``, rounded to 3 decimals."""
+    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``."""
     for name, value in scores.items():
-        mlflow.log_metric(f"{prefix}_{_slug(name)}", round(value, 3))
+        mlflow.log_metric(f"{prefix}_{_slug(name)}", value)
 
 
 def _log_table_and_metrics(
@@ -107,7 +107,7 @@ def _log_table_and_metrics(
     eval_df: Any = evaluation.runs
     df_valid = eval_df[eval_df["evaluator_result"].notna()]
     if len(df_valid) > 0:
-        overall_accuracy: float = round(float(df_valid["evaluator_result"].mean()), 3)
+        overall_accuracy: float = float(df_valid["evaluator_result"].mean())
         mlflow.log_metric("overall_accuracy", overall_accuracy)
     _log_accuracy_metrics("accuracy_tag", evaluation.per_tag_accuracy())
     for attr_key, value_map in evaluation.per_attribute_accuracy_all().items():
