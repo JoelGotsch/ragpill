@@ -100,6 +100,10 @@ class TraceCaptureBackend(Protocol):
         MLflow's ``mlflow.start_span`` span already satisfies the handle
         protocol, so the MLflow adapter returns it unchanged; other adapters
         wrap their native span object.
+
+        ``attributes``, when given, are set on the span at open time (all
+        adapters honour this); callers may also set attributes afterwards via
+        the yielded handle's ``set_attribute``.
         """
         ...
 

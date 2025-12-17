@@ -5,9 +5,8 @@ Defaults to ``MLflowBackend`` when MLflow is importable; raises a clear
 "install ``ragpill[mlflow]`` or call ``configure_backend(...)``" error
 otherwise. Callers swap implementations via :func:`configure_backend`.
 
-Step 1 ships the registry but no production code calls
-:func:`get_backend` yet; later steps switch upload/execution/evaluators
-over to it.
+The upload, execution, and evaluator flows all resolve the active backend
+through :func:`get_backend`.
 """
 
 from __future__ import annotations

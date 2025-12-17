@@ -188,15 +188,19 @@ def upload_to_mlflow(
     model_params: dict[str, str] | None = None,
     upload_traces: bool = False,
 ) -> None:
-    """Persist an :class:`EvaluationOutput` to an MLflow server.
+    """Persist an :class:`EvaluationOutput` to the configured tracking backend.
+
+    The name is retained for backward compatibility; behaviour is
+    backend-driven via :func:`ragpill.backends.get_backend` (MLflow by
+    default, Langfuse / Arize Phoenix when their adapter is registered).
 
     Args:
         evaluation: Output of :func:`ragpill.evaluation.evaluate_results`.
-        mlflow_settings: Server connection + experiment info. When omitted, a
+        mlflow_settings: Backend connection + experiment info. When omitted, a
             default :class:`MLFlowSettings` is loaded from environment vars.
         model_params: Optional model parameters to log for reproducibility.
         upload_traces: When ``True``, serialize
-            ``evaluation.dataset_run.to_json()`` and upload it as an MLflow
+            ``evaluation.dataset_run.to_json()`` and upload it as a run
             artifact. Use this for the "disconnected execution + upload later"
             workflow where traces were captured offline and are not yet on the
             server.

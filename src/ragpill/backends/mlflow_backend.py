@@ -106,17 +106,19 @@ class MLflowBackend:
         span_type: SpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
-        # ``attributes`` is reserved for future use (Phoenix/Langfuse pass
-        # per-span attributes at open time); MLflow callers use the yielded
-        # span's ``set_attribute`` method directly today.
-        _ = attributes
         inner = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])
+        span_attributes = dict(attributes) if attributes else None
         session_id = self._active_session_id
         session_metadata = dict(self._active_session_metadata)
 
         @contextmanager
         def wrapped() -> Generator[Any, None, None]:
             with inner as span:
+                # Apply open-time attributes for parity with the Phoenix/Langfuse
+                # adapters (callers may still use ``set_attribute`` afterwards).
+                if span_attributes:
+                    for key, value in span_attributes.items():
+                        span.set_attribute(key, value)
                 # When inside a case-grouping context, tag this span's trace
                 # with the MLflow session id (so the Sessions UI groups repeats
                 # of the same case as turns) plus the case-level metadata,

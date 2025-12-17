@@ -142,6 +142,16 @@ def test_start_span_forwards_kind(mlflow_mock):
     assert "span_type" in kwargs
 
 
+def test_start_span_applies_open_time_attributes(mlflow_mock):
+    """Open-time ``attributes`` are set on the span, for parity with the
+    Phoenix/Langfuse adapters."""
+    span = mlflow_mock.start_span.return_value.__enter__.return_value
+    with MLflowBackend().start_span("name", SpanKind.LLM, attributes={"k": "v", "n": 1}):
+        pass
+    span.set_attribute.assert_any_call("k", "v")
+    span.set_attribute.assert_any_call("n", 1)
+
+
 def test_autolog_pydantic_ai_calls_mlflow(mlflow_mock):
     MLflowBackend().autolog_pydantic_ai()
     mlflow_mock.pydantic_ai.autolog.assert_called_once_with()
@@ -239,11 +249,13 @@ def test_is_run_active_reflects_mlflow_state(mlflow_mock):
     assert backend.is_run_active() is True
 
 
-def test_delete_traces_noop_on_empty(mlflow_mock):
+def test_delete_traces_noop_on_empty():
     """Empty request_ids list is a no-op (no client constructed)."""
-    MLflowBackend().delete_traces("exp-1", [])
-    # MlflowClient is imported lazily; assert it was never instantiated.
-    assert "MlflowClient" not in dir(mlflow_mock) or not mlflow_mock.MlflowClient.called
+    # delete_traces imports MlflowClient lazily from the top-level mlflow
+    # module, so patch it there to assert it was never instantiated.
+    with patch("mlflow.MlflowClient") as client:
+        MLflowBackend().delete_traces("exp-1", [])
+    client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
