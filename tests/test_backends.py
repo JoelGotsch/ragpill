@@ -327,15 +327,17 @@ def test_get_trace_returns_none_when_absent():
 def test_start_case_grouping_yields_session_handle_with_case_id(mlflow_mock):
     """``MLflowBackend.start_case_grouping`` chooses session mode and yields
     a handle whose ``session_id`` equals the supplied ``case_id``."""
+    from ragpill.backends import mlflow_backend as mb
+
     backend = MLflowBackend()
     with backend.start_case_grouping(case_id="case-abc", name="My Case") as handle:
         assert handle.mode == "session"
         assert handle.session_id == "case-abc"
         assert handle.case_trace_id is None
-        # Active session id is recorded for the duration of the context.
-        assert backend._active_session_id == "case-abc"
+        # Active session id is recorded (in a ContextVar) for the context's duration.
+        assert mb._active_session_id.get() == "case-abc"  # pyright: ignore[reportPrivateUsage]
     # And cleared after exit.
-    assert backend._active_session_id is None
+    assert mb._active_session_id.get() is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_start_span_inside_case_grouping_tags_session(mlflow_mock):

@@ -6,9 +6,33 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–3 of the review follow-up: correctness blockers, honest failure
-attribution, and a backend-neutral API clean break. Backwards compatibility is
-a non-goal pre-1.0, so the renames below have no deprecated aliases.
+Phases 1–4 of the review follow-up: correctness blockers, honest failure
+attribution, a backend-neutral API clean break, and concurrency foundations.
+Backwards compatibility is a non-goal pre-1.0, so the renames below have no
+deprecated aliases.
+
+### Added
+
+- **Opt-in, caller-specified timeouts.** `execute_dataset(task_timeout_s=…)`
+  bounds each task and `LLMJudge(timeout_s=…)` bounds each judge call; both
+  default to `None` (no timeout) — ragpill never imposes a latency budget on
+  your code. A timed-out task/judge is recorded as a `TimeoutError` and the run
+  continues.
+- **Bounded-concurrent evaluation.** `evaluate_results(max_concurrency=…)`
+  overlaps `(case, run)` evaluations (default `1`, i.e. unchanged sequential
+  behaviour); results are identical regardless of the value. Built on anyio so
+  it works under both asyncio and trio.
+
+### Changed
+
+- **Synchronous tasks run off the event loop** (via `anyio.to_thread`), so a
+  blocking client (e.g. a `requests`-based RAG call) no longer stalls the loop
+  and the tracking exporters running on it.
+- **MLflow case-grouping session state moved to `ContextVar`s**, so two
+  concurrent `execute_dataset` calls (each an asyncio task with its own context)
+  can't cross-tag each other's traces through the shared backend singleton.
+  Capture itself remains sequential per call (a deliberate constraint of the
+  process-global tracking state, now documented on `execute_dataset`).
 
 ### Breaking
 

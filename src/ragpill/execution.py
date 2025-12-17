@@ -34,6 +34,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import anyio
+import anyio.to_thread
+
 from ragpill.backends import CaptureSpanKind, get_backend
 from ragpill.base import (
     CaseMetadataT,
@@ -419,6 +422,7 @@ async def _execute_case_runs(
     repeat: int,
     capture_traces: bool,
     tracing: _TracingContext | None,
+    task_timeout_s: float | None = None,
 ) -> CaseRunOutput:
     """Execute all ``repeat`` runs for a single case and return its output.
 
@@ -454,10 +458,18 @@ async def _execute_case_runs(
             grouping_mode = case_handle.mode
             case_trace_id = case_handle.case_trace_id or ""
             for i in range(repeat):
-                task_runs.append(await _execute_single_run(case, task_factory, base_key, i, capture_traces=True))
+                task_runs.append(
+                    await _execute_single_run(
+                        case, task_factory, base_key, i, capture_traces=True, task_timeout_s=task_timeout_s
+                    )
+                )
     else:
         for i in range(repeat):
-            task_runs.append(await _execute_single_run(case, task_factory, base_key, i, capture_traces=False))
+            task_runs.append(
+                await _execute_single_run(
+                    case, task_factory, base_key, i, capture_traces=False, task_timeout_s=task_timeout_s
+                )
+            )
 
     # Attach traces after spans have been committed. ``await_trace`` is a
     # synchronous polling call (time.sleep between readiness checks), so it is
@@ -518,6 +530,7 @@ async def _execute_single_run(
     base_key: str,
     run_index: int,
     capture_traces: bool,
+    task_timeout_s: float | None = None,
 ) -> TaskRunOutput:
     """Execute one repeat of a case; capture output, duration, span id, error."""
     input_key = f"{base_key}_{run_index}"
@@ -529,15 +542,32 @@ async def _execute_single_run(
     error_str: str | None = None
 
     async def _call() -> Any:
+        call = fresh_task
         # ``iscoroutinefunction`` is False for a callable *instance* whose
-        # ``__call__`` is async — the exact shape ``task_factory`` exists for
-        # ("stateful tasks" are naturally class instances). Call first, then
-        # await if the result is awaitable, so async ``__call__`` tasks don't
-        # leak an un-awaited coroutine as the output.
-        result = fresh_task(case.inputs)
+        # ``__call__`` is async — the shape ``task_factory`` exists for. Detect
+        # both so async tasks run on the loop and don't leak an un-awaited
+        # coroutine as the output.
+        is_async = inspect.iscoroutinefunction(call) or inspect.iscoroutinefunction(getattr(call, "__call__", None))
+        result: Any
+        if is_async:
+            result = call(case.inputs)
+        else:
+            # A truly synchronous task runs in a worker thread so a blocking
+            # client (e.g. a ``requests``-based RAG call) doesn't stall the event
+            # loop and the tracking exporters running on it. anyio keeps this
+            # portable across the asyncio and trio backends.
+            result = await anyio.to_thread.run_sync(call, case.inputs)
         if inspect.isawaitable(result):
             return await result
         return result
+
+    async def _invoke() -> Any:
+        # Timeouts are opt-in and caller-specified: ragpill imposes no default
+        # budget on the client's task. ``None`` means no timeout.
+        if task_timeout_s is not None:
+            with anyio.fail_after(task_timeout_s):
+                return await _call()
+        return await _call()
 
     if capture_traces:
         try:
@@ -549,7 +579,7 @@ async def _execute_single_run(
                 run_span.set_inputs(case.inputs)
                 t0 = time.perf_counter()
                 try:
-                    output = await _call()
+                    output = await _invoke()
                 finally:
                     # Record duration even when the task raises, so a failed run
                     # reports its real latency (instant crash vs slow timeout)
@@ -561,7 +591,7 @@ async def _execute_single_run(
     else:
         t0 = time.perf_counter()
         try:
-            output = await _call()
+            output = await _invoke()
         except Exception as e:
             error_str = f"{type(e).__name__}: {e}"
         finally:
@@ -592,6 +622,7 @@ async def execute_dataset(
     settings: TrackingSettings | None = None,
     tracking_uri: str | None = None,
     capture_traces: bool = True,
+    task_timeout_s: float | None = None,
 ) -> DatasetRunOutput:
     """Run every case in a dataset and return the captured outputs + traces.
 
@@ -617,6 +648,17 @@ async def execute_dataset(
         capture_traces: When ``False``, tasks are run without capturing spans;
             all ``Trace`` fields in the result will be ``None`` and
             ``run_span_id`` will be empty. Use for fast non-traced runs.
+        task_timeout_s: Optional per-task wall-clock timeout in seconds. ``None``
+            (default) imposes no timeout — the client owns its latency budget. A
+            task exceeding the budget is recorded as a ``TimeoutError`` run and
+            execution continues with the next repeat/case.
+
+    Note:
+        Cases and repeats run sequentially during capture: trace correctness
+        depends on process-global tracking state (e.g. MLflow's active session),
+        so the concurrency ceiling here is a deliberate constraint, not an
+        oversight. Bounded-concurrent *evaluation* is available separately via
+        ``evaluate_results(max_concurrency=...)``.
 
     Returns:
         A :class:`DatasetRunOutput` with one :class:`CaseRunOutput` per case
@@ -679,6 +721,7 @@ async def execute_dataset(
                 repeat,
                 capture_traces=capture_traces,
                 tracing=tracing,
+                task_timeout_s=task_timeout_s,
             )
             case_outputs.append(case_output)
 

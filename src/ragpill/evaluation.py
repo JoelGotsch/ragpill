@@ -18,6 +18,7 @@ import traceback
 from collections.abc import Mapping
 from typing import Any
 
+import anyio
 import pandas as pd
 from pydantic import TypeAdapter
 
@@ -358,6 +359,8 @@ async def evaluate_results(
     dataset_run: DatasetRunOutput,
     testset: Dataset[Any, Any, CaseMetadataT],
     settings: TrackingSettings | None = None,
+    *,
+    max_concurrency: int = 1,
 ) -> EvaluationOutput:
     """Run evaluators against a captured :class:`DatasetRunOutput`.
 
@@ -373,6 +376,11 @@ async def evaluate_results(
             ``testset.evaluators``.
         settings: Global :class:`TrackingSettings`. Only ``repeat`` and
             ``threshold`` are consulted — no MLflow connection is made.
+        max_concurrency: Upper bound on how many ``(case, run)`` evaluations run
+            concurrently. Defaults to ``1`` (fully sequential, unchanged
+            behaviour). Raise it to overlap judge-heavy testsets — evaluation
+            has no capture-time ordering constraint. Results are identical
+            regardless of the value.
 
     Returns:
         :class:`EvaluationOutput` with ``.runs``, ``.cases``, and
@@ -415,28 +423,60 @@ async def evaluate_results(
             "Re-run execute_dataset against this testset, or restore the original testset.\n" + "\n".join(mismatches)
         )
 
-    case_results: list[CaseResult] = []
-    # Evaluator metadata by evaluation_name uuid, so the runs DataFrame can
-    # merge each evaluator's own tags/attributes into its rows.
+    # Per-case setup (synchronous): resolve evaluators, metadata, and threshold.
+    # Evaluator metadata by evaluation_name uuid lets the runs DataFrame merge
+    # each evaluator's own tags/attributes into its rows.
     metadata_by_eval_id: dict[str, EvaluatorMetadata] = {}
+    per_case: list[tuple[Any, Case[Any, Any, Any], list[BaseEvaluator], TestCaseMetadata | None, float]] = []
     for case_run, case in zip(dataset_run.cases, testset.cases):
-        # Resolve evaluators: case-level + dataset-level.
         evaluators: list[BaseEvaluator] = [*case.evaluators, *testset.evaluators]
         metadata_by_eval_id.update({str(ev.evaluation_name): ev.metadata for ev in evaluators})
-
         case_metadata: TestCaseMetadata | None = case.metadata if isinstance(case.metadata, TestCaseMetadata) else None
         _, threshold = resolve_repeat(case_metadata, _settings)
+        per_case.append((case_run, case, evaluators, case_metadata, threshold))
 
-        run_results: list[RunResult] = []
+    # Flatten to a job list, remembering each job's owning case, so results
+    # regroup by case regardless of completion order.
+    jobs: list[tuple[int, Case[Any, Any, Any], TaskRunOutput, Any, list[BaseEvaluator]]] = []
+    for cpos, (case_run, case, evaluators, _cm, _th) in enumerate(per_case):
         for task_run in case_run.task_runs:
-            rr = await _evaluate_single_run(case, task_run, case_run, evaluators)
-            run_results.append(rr)
+            jobs.append((cpos, case, task_run, case_run, evaluators))
 
+    results: list[RunResult | None] = [None] * len(jobs)
+    if max_concurrency <= 1:
+        # Sequential — identical to the pre-concurrency behaviour and free of any
+        # event-loop-specific primitives (portable across asyncio/trio).
+        for i, (_cpos, case, task_run, case_run, evaluators) in enumerate(jobs):
+            results[i] = await _evaluate_single_run(case, task_run, case_run, evaluators)
+    else:
+        # Bounded concurrency via anyio so it works on both async backends.
+        limiter = anyio.CapacityLimiter(max_concurrency)
+
+        async def _worker(
+            i: int,
+            case: Case[Any, Any, Any],
+            task_run: TaskRunOutput,
+            case_run: CaseRunOutput,
+            evaluators: list[BaseEvaluator],
+        ) -> None:
+            async with limiter:
+                results[i] = await _evaluate_single_run(case, task_run, case_run, evaluators)
+
+        async with anyio.create_task_group() as tg:
+            for i, (_cpos, case, task_run, case_run, evaluators) in enumerate(jobs):
+                tg.start_soon(_worker, i, case, task_run, case_run, evaluators)
+
+    runs_by_case: dict[int, list[RunResult]] = {i: [] for i in range(len(per_case))}
+    for (cpos, *_rest), rr in zip(jobs, results):
+        assert rr is not None
+        runs_by_case[cpos].append(rr)
+
+    case_results: list[CaseResult] = []
+    for cpos, (case_run, case, evaluators, case_metadata, threshold) in enumerate(per_case):
+        run_results = runs_by_case[cpos]
         aggregated = _aggregate_runs(run_results, threshold)
-
         # CaseResult demands a TestCaseMetadata; fall back to an empty one.
         metadata_obj = case_metadata or TestCaseMetadata()
-
         case_results.append(
             CaseResult(
                 case_name=case_run.case_name,

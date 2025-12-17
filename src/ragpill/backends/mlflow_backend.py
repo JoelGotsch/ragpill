@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 import mlflow
@@ -61,6 +62,17 @@ _SPAN_KIND_TO_MLFLOW: dict[CaptureSpanKind, str] = {
 }
 
 
+# Session id + case-level metadata active for the current case-grouping context.
+# When set, each ``start_span`` inside the context tags its trace with MLflow's
+# ``mlflow.trace.session`` metadata (so the Sessions UI groups a case's repeats
+# as turns) plus the case-level name/attributes, which have no parent span in
+# session mode. Held in ContextVars, not instance state, so two concurrent
+# ``execute_dataset`` calls (each an asyncio Task with its own copied context)
+# don't cross-tag each other's traces through the shared backend singleton.
+_active_session_id: ContextVar[str | None] = ContextVar("ragpill_mlflow_active_session_id", default=None)
+_active_session_metadata: ContextVar[dict[str, str]] = ContextVar("ragpill_mlflow_active_session_metadata", default={})
+
+
 class MLflowBackend:
     """Adapter forwarding to ``mlflow.*``.
 
@@ -72,17 +84,6 @@ class MLflowBackend:
     # MLflow can track to a local SQLite store, so the execution layer may
     # synthesize a temp-directory URI when no destination is given.
     supports_local_file_store = True
-
-    def __init__(self) -> None:
-        # Session id + case-level metadata active for the current case-grouping
-        # context. When set, each ``start_span`` call inside the context tags
-        # its trace with MLflow's ``mlflow.trace.session`` metadata (so the
-        # Sessions UI groups repeats of a case as turns) plus the case-level
-        # name/attributes, which have no parent span to live on in session mode.
-        # Single-threaded by design: ragpill's execute_dataset processes
-        # cases sequentially.
-        self._active_session_id: str | None = None
-        self._active_session_metadata: dict[str, str] = {}
 
     def _client(self) -> MlflowClient:
         """Fresh MlflowClient bound to the current tracking URI. Not cached:
@@ -126,8 +127,8 @@ class MLflowBackend:
     ) -> AbstractContextManager[Any]:
         inner = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])
         span_attributes = dict(attributes) if attributes else None
-        session_id = self._active_session_id
-        session_metadata = dict(self._active_session_metadata)
+        session_id = _active_session_id.get()
+        session_metadata = dict(_active_session_metadata.get())
 
         @contextmanager
         def wrapped() -> Generator[Any, None, None]:
@@ -173,15 +174,13 @@ class MLflowBackend:
 
         @contextmanager
         def cm() -> Generator[CaseGroupingHandle, None, None]:
-            previous_id = self._active_session_id
-            previous_metadata = self._active_session_metadata
-            self._active_session_id = case_id
-            self._active_session_metadata = metadata
+            id_token = _active_session_id.set(case_id)
+            meta_token = _active_session_metadata.set(metadata)
             try:
                 yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
             finally:
-                self._active_session_id = previous_id
-                self._active_session_metadata = previous_metadata
+                _active_session_id.reset(id_token)
+                _active_session_metadata.reset(meta_token)
 
         return cm()
 

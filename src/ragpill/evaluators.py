@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+import anyio
 from pydantic_ai import models
 
 if TYPE_CHECKING:
@@ -65,6 +66,8 @@ class LLMJudge(BaseEvaluator):
     rubric: str
     model: models.Model = field(repr=False, default_factory=_get_default_judge_llm)
     include_input: bool = field(default=False)
+    # Opt-in, caller-specified judge timeout in seconds. None imposes none.
+    timeout_s: float | None = field(default=None)
 
     @classmethod
     def from_csv_line(
@@ -138,10 +141,20 @@ class LLMJudge(BaseEvaluator):
         # and remove these traces after evaluation.
         with get_backend().start_span(name="llm-judge-evaluation", span_type=CaptureSpanKind.LLM) as span:
             span.set_attribute("ragpill_is_judge_trace", True)
-            if self.include_input:
-                grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+
+            async def _judge() -> Any:
+                if self.include_input:
+                    return await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+                return await judge_output(ctx.output, self.rubric, self.model)
+
+            # Timeout is opt-in and caller-specified (``timeout_s`` on the
+            # evaluator); ragpill imposes no default budget on the judge call.
+            # anyio.fail_after keeps this portable across asyncio and trio.
+            if self.timeout_s is not None:
+                with anyio.fail_after(self.timeout_s):
+                    grading_output = await _judge()
             else:
-                grading_output = await judge_output(ctx.output, self.rubric, self.model)
+                grading_output = await _judge()
             span.set_outputs({"pass": grading_output.pass_, "reason": grading_output.reason})
         # Embed the rubric verbatim alongside the judge's reasoning so anyone
         # reading the assessment in the MLflow UI (or the triage markdown, or
