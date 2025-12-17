@@ -64,7 +64,7 @@ def _make_evaluation_output() -> EvaluationOutput:
         runs=runs_df,
         cases=pd.DataFrame(),
         case_results=[cr],
-        dataset_run=DatasetRunOutput(tracking_uri="http://fake", mlflow_run_id="fake-run", mlflow_experiment_id="1"),
+        dataset_run=DatasetRunOutput(tracking_uri="http://fake", run_id="fake-run", experiment_id="1"),
     )
 
 
@@ -171,3 +171,21 @@ def test_upload_without_dataset_run_still_works(mlflow_mock):
     assert mlflow_mock.log_table.called
     _, kwargs = mlflow_mock.start_run.call_args
     assert "run_id" not in kwargs
+
+
+def test_upload_logs_assessments_to_per_run_traces_in_session_mode(mlflow_mock):
+    # Session-mode grouping: no case-level trace; each repeat carries its own
+    # trace id. Assessments and tags must land on the per-run traces.
+    evaluation = _make_evaluation_output()
+    cr = evaluation.case_results[0]
+    cr.trace_id = ""
+    cr.run_results[0].trace_id = "run-trace-1"
+    cr.metadata = TestCaseMetadata(attributes={"team": "a"}, tags={"t1"})
+
+    upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
+
+    assert mlflow_mock.log_assessment.called
+    args, _kwargs = mlflow_mock.log_assessment.call_args
+    assert args[0] == "run-trace-1"
+    tagged_ids = {call.args[0] for call in mlflow_mock.set_trace_tag.call_args_list}
+    assert tagged_ids == {"run-trace-1"}

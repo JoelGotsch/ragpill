@@ -134,7 +134,7 @@ def test_roundtrip_with_dataset_run(_isolated_mlflow_backend: None) -> None:
             )
         ],
     )
-    dr = DatasetRunOutput(cases=[case], tracking_uri="x", mlflow_run_id="r", mlflow_experiment_id="e")
+    dr = DatasetRunOutput(cases=[case], tracking_uri="x", run_id="r", experiment_id="e")
     eo = EvaluationOutput(
         runs=_runs_df(),
         cases=_cases_df(),

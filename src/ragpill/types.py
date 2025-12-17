@@ -38,6 +38,10 @@ class RunResult:
         assertions: Evaluator name -> EvaluationResult mapping for this run.
         evaluator_failures: Evaluators that raised exceptions (not pass/fail, but code errors).
         error: The exception raised by the task, or None if it succeeded.
+        trace_id: Backend trace id captured at the run's span open. In
+            session-mode backends each repeat is its own trace, so this is
+            where per-run assessments are logged; in span mode it matches the
+            case-level ``CaseResult.trace_id``. Empty when tracing was off.
     """
 
     run_index: int
@@ -48,6 +52,7 @@ class RunResult:
     assertions: dict[str, EvaluationResult]
     evaluator_failures: list[EvaluatorFailureInfo] = field(default_factory=list)
     error: Exception | None = None
+    trace_id: str = ""
 
     @property
     def all_passed(self) -> bool:
@@ -320,6 +325,7 @@ def _run_result_to_dict(rr: RunResult) -> dict[str, Any]:
         "run_index": rr.run_index,
         "input_key": rr.input_key,
         "run_span_id": rr.run_span_id,
+        "trace_id": rr.trace_id,
         "output": rr.output,
         "duration": rr.duration,
         "assertions": {k: _evaluation_result_to_dict(v) for k, v in rr.assertions.items()},
@@ -338,6 +344,7 @@ def _run_result_from_dict(d: dict[str, Any]) -> RunResult:
         run_index=d["run_index"],
         input_key=d["input_key"],
         run_span_id=d.get("run_span_id", ""),
+        trace_id=d.get("trace_id", ""),
         output=d.get("output"),
         duration=d.get("duration", 0.0),
         assertions={k: _evaluation_result_from_dict(v) for k, v in d.get("assertions", {}).items()},

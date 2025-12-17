@@ -31,18 +31,42 @@ from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, S
 if TYPE_CHECKING:
     from ragpill.trace import Trace as NeutralTrace
 
-# ``search_traces`` and ``delete_traces`` deal in each backend's *native* trace
-# type (e.g. mlflow.entities.Trace) — they support backend-internal work like
-# judge-trace cleanup that needs native introspection, so this stays Any. The
-# read methods evaluators consume (``get_trace`` / ``await_trace``) return the
-# vendor-neutral ``ragpill.trace.Trace`` instead — each backend converts its own
-# native trace, keeping the execution layer backend-agnostic (ADR-0017).
-Trace = Any  # backend-native trace; converted to ragpill.trace.Trace downstream
+
+@runtime_checkable
+class SpanHandle(Protocol):
+    """Surface ragpill reads and writes on a span opened via ``start_span``.
+
+    Implementations must expose the ids as strings (empty string when the
+    backend cannot provide one) and accept arbitrary JSON-serializable values
+    for attributes/inputs/outputs. MLflow's native span object already
+    satisfies this; Langfuse/Phoenix wrap their span objects.
+    """
+
+    @property
+    def span_id(self) -> str: ...
+
+    @property
+    def trace_id(self) -> str: ...
+
+    def set_attribute(self, key: str, value: Any) -> None: ...
+
+    def set_inputs(self, value: Any) -> None: ...
+
+    def set_outputs(self, value: Any) -> None: ...
 
 
 @runtime_checkable
 class TraceCaptureBackend(Protocol):
-    """Configuration + write side of trace capture during ``execute_dataset``."""
+    """Configuration + write side of trace capture during ``execute_dataset``.
+
+    Adapters additionally expose a ``supports_local_file_store`` class
+    attribute (default ``False`` when absent). ``True`` means the backend can
+    write to a local file/SQLite store, so the execution layer may synthesize
+    a temp-directory URI for it when no destination is given. Backends that
+    talk to a remote service must leave it ``False`` — they receive
+    ``uri=None`` instead and fall back to their own environment-derived
+    destination (e.g. ``LANGFUSE_HOST`` / ``PHOENIX_COLLECTOR_ENDPOINT``).
+    """
 
     def set_destination(self, uri: str | None, experiment_name: str) -> None:
         """Point future writes at this destination.
@@ -70,12 +94,12 @@ class TraceCaptureBackend(Protocol):
         name: str,
         span_type: SpanKind,
         attributes: Mapping[str, Any] | None = None,
-    ) -> AbstractContextManager[Any]:
-        """Return a context manager yielding a span handle.
+    ) -> AbstractContextManager[SpanHandle]:
+        """Return a context manager yielding a :class:`SpanHandle`.
 
-        The yielded object must expose ``set_attribute``, ``set_inputs`` and
-        ``set_outputs``. MLflow's ``mlflow.start_span`` already does, so the
-        MLflow adapter returns it unchanged.
+        MLflow's ``mlflow.start_span`` span already satisfies the handle
+        protocol, so the MLflow adapter returns it unchanged; other adapters
+        wrap their native span object.
         """
         ...
 
@@ -120,21 +144,6 @@ class TraceCaptureBackend(Protocol):
 class TraceQueryBackend(Protocol):
     """Read side of the tracing store, used by evaluate/upload layers."""
 
-    def search_traces(
-        self,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        max_results: int = 1000,
-    ) -> list[Trace]:
-        """List traces (backend-native), optionally filtered by run/experiment.
-
-        Returns the backend's native trace objects — used for backend-internal
-        operations like judge-trace cleanup that introspect native span
-        attributes. (Contrast ``get_trace`` / ``await_trace``, which return the
-        neutral model.)
-        """
-        ...
-
     def get_trace(self, trace_id: str) -> NeutralTrace | None:
         """Fetch a single trace by id as a neutral ``ragpill.trace.Trace``.
 
@@ -169,7 +178,18 @@ class TraceQueryBackend(Protocol):
         ...
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
-        """Delete traces by id. Used today for judge-trace cleanup."""
+        """Delete traces by id."""
+        ...
+
+    def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:
+        """Delete LLM-judge evaluation traces created during ``evaluate_results``.
+
+        Judge traces are marked with the ``ragpill_is_judge_trace`` span
+        attribute by :class:`~ragpill.evaluators.LLMJudge`; each backend knows
+        how its own store surfaces that attribute. Called at the end of upload
+        so the tracing UI only shows task traces. Backends that cannot delete
+        traces no-op with a one-time warning.
+        """
         ...
 
 

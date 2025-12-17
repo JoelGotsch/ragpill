@@ -147,11 +147,24 @@ def test_autolog_pydantic_ai_calls_mlflow(mlflow_mock):
     mlflow_mock.pydantic_ai.autolog.assert_called_once_with()
 
 
-def test_search_traces_forwards_run_id(mlflow_mock):
-    MLflowBackend().search_traces("run-1", max_results=42)
+def test_delete_judge_traces_deletes_only_marked_traces(mlflow_mock):
+    """Walks the run's native traces and deletes those whose root span carries
+    the ragpill_is_judge_trace attribute — and only those."""
+    judge = MagicMock()
+    judge.data._get_root_span.return_value.attributes = {"ragpill_is_judge_trace": True}
+    judge.info.trace_id = "judge-1"
+    task = MagicMock()
+    task.data._get_root_span.return_value.attributes = {}
+    task.info.trace_id = "task-1"
+    mlflow_mock.search_traces.return_value = [judge, task]
+
+    backend = MLflowBackend()
+    with patch.object(backend, "delete_traces") as dt:
+        backend.delete_judge_traces("exp-1", "run-1")
     _args, kwargs = mlflow_mock.search_traces.call_args
     assert kwargs.get("run_id") == "run-1"
-    assert kwargs.get("max_results") == 42
+    assert kwargs.get("locations") == ["exp-1"]
+    dt.assert_called_once_with(experiment_id="exp-1", trace_ids=["judge-1"])
 
 
 def test_log_metric_forwards(mlflow_mock):
@@ -244,7 +257,7 @@ def test_await_trace_returns_once_exported(mlflow_mock):
     sentinel = object()
     with (
         patch.object(backend, "get_trace", side_effect=[None, None, sentinel]) as gt,
-        patch("ragpill.backends.mlflow_backend.time.sleep"),
+        patch("ragpill.backends._common.time.sleep"),
     ):
         result = backend.await_trace("tid", timeout_s=10.0, poll_interval_s=0.01)
     assert result is sentinel
@@ -258,7 +271,7 @@ def test_await_trace_times_out_returns_none(mlflow_mock):
     backend = MLflowBackend()
     with (
         patch.object(backend, "get_trace", return_value=None) as gt,
-        patch("ragpill.backends.mlflow_backend.time.sleep"),
+        patch("ragpill.backends._common.time.sleep"),
     ):
         result = backend.await_trace("missing", timeout_s=0.0, poll_interval_s=0.01)
     assert result is None
@@ -322,7 +335,7 @@ def test_start_span_inside_case_grouping_tags_session(mlflow_mock):
             pass
     assert mlflow_mock.update_current_trace.called
     _args, kwargs = mlflow_mock.update_current_trace.call_args
-    assert kwargs.get("metadata") == {"mlflow.trace.session": "case-xyz"}
+    assert kwargs.get("metadata") == {"mlflow.trace.session": "case-xyz", "ragpill.case_name": "My Case"}
 
 
 def test_start_span_outside_case_grouping_does_not_tag_session(mlflow_mock):

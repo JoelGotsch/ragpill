@@ -22,12 +22,12 @@ from __future__ import annotations
 # are unresolved here. Relax the unknown-type reports for this adapter; the
 # phoenix CI env (where the extra is installed) type-checks against the real API.
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false
-import warnings
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
-from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
+from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, poll_for_trace
+from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -61,9 +61,8 @@ def _require_phoenix() -> None:
 
 
 class _SpanHandle:
-    """Wraps an OTel span to expose the surface ragpill's capture code reads:
-    ``span_id`` / ``request_id`` (the trace id) plus
-    set_attribute/set_inputs/set_outputs, mapping I/O onto OpenInference keys."""
+    """Wraps an OTel span to satisfy the ``SpanHandle`` protocol, mapping
+    I/O onto OpenInference attribute keys."""
 
     def __init__(self, span: Any) -> None:
         self._span = span
@@ -73,8 +72,7 @@ class _SpanHandle:
         return format(self._span.get_span_context().span_id, "016x")
 
     @property
-    def request_id(self) -> str:
-        # ragpill calls the trace id "request_id" at the capture layer (mlflow's name).
+    def trace_id(self) -> str:
         return format(self._span.get_span_context().trace_id, "032x")
 
     def set_attribute(self, key: str, value: Any) -> None:
@@ -98,8 +96,13 @@ def _as_text(value: Any) -> str:
         return str(value)
 
 
-class PhoenixBackend:
+class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
     """Adapter implementing the tracking backend protocols against Arize Phoenix."""
+
+    # Phoenix is a remote collector; the execution layer must not hand it a
+    # temp SQLite URI — ``uri=None`` lets ``phoenix.otel.register`` fall back
+    # to PHOENIX_COLLECTOR_ENDPOINT.
+    supports_local_file_store = False
 
     def __init__(self) -> None:
         self._project_name = "ragpill"
@@ -107,16 +110,12 @@ class PhoenixBackend:
         self._tracer_provider: Any = None
         self._tracer: Any = None
         self._run_active = False
-        self._warned: set[str] = set()
+        self._client_cache: Any = None
+        self._root_span_ids: dict[str, str] = {}
 
-    def _warn_unsupported(self, capability: str) -> None:
-        if capability not in self._warned:
-            self._warned.add(capability)
-            warnings.warn(
-                f"PhoenixBackend: '{capability}' has no native Phoenix equivalent and is a no-op. "
-                "See plans/multi-backend-tracking.md.",
-                stacklevel=2,
-            )
+    def _flush(self) -> None:
+        if self._tracer_provider is not None:
+            self._tracer_provider.force_flush()
 
     # ------------------------------------------------------------------
     # TraceCaptureBackend
@@ -128,6 +127,8 @@ class PhoenixBackend:
 
         self._endpoint = uri
         self._project_name = experiment_name
+        self._client_cache = None  # rebuilt lazily against the new endpoint
+        self._root_span_ids = {}  # memoized ids belonged to the old store
         # set_global_tracer_provider=False so multiple configure cycles don't
         # clobber a process-global; we keep our own handle.
         self._tracer_provider = register(
@@ -138,21 +139,13 @@ class PhoenixBackend:
         )
         self._tracer = self._tracer_provider.get_tracer("ragpill")
 
-    def start_run(self, run_id: str | None = None, description: str | None = None) -> RunHandle:
-        # Phoenix has no "run" concept; a project ≈ an experiment. Synthesize a
-        # handle so the execution layer's bookkeeping works.
-        _ = description
-        self._run_active = True
-        rid = run_id or self._project_name
-        return RunHandle(run_id=rid, experiment_id=self._project_name)
-
-    def end_run(self) -> None:
-        self._run_active = False
-        if self._tracer_provider is not None:
-            try:
-                self._tracer_provider.force_flush()
-            except Exception:
-                pass
+    def _get_tracer(self) -> Any:
+        """Return the tracer, lazily configuring from env defaults when
+        ``set_destination`` was never called (e.g. ``evaluate_results`` with an
+        LLMJudge on an offline run JSON). Mirrors LangfuseBackend's lazy client."""
+        if self._tracer is None:
+            self.set_destination(self._endpoint, self._project_name)
+        return self._tracer
 
     def start_span(
         self,
@@ -161,7 +154,7 @@ class PhoenixBackend:
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         _require_phoenix()
-        tracer = self._tracer
+        tracer = self._get_tracer()
 
         @contextmanager
         def cm() -> Generator[Any, None, None]:
@@ -193,7 +186,7 @@ class PhoenixBackend:
         """Span mode: open a parent span; per-repeat spans nest under it and the
         execution layer filters per repeat by ``run_span_id``."""
         _require_phoenix()
-        tracer = self._tracer
+        tracer = self._get_tracer()
 
         @contextmanager
         def cm() -> Generator[CaseGroupingHandle, None, None]:
@@ -214,20 +207,12 @@ class PhoenixBackend:
     # ------------------------------------------------------------------
 
     def _client(self) -> Any:
-        from phoenix.client import Client
+        """Cached Phoenix client; invalidated when the endpoint changes."""
+        if self._client_cache is None:
+            from phoenix.client import Client
 
-        return Client(base_url=self._endpoint) if self._endpoint else Client()
-
-    def search_traces(
-        self,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        max_results: int = 1000,
-    ) -> list[Any]:
-        # Native traces are only consumed by the MLflow-specific judge-trace
-        # cleanup path, which Phoenix doesn't support (no deletion). Return empty.
-        _ = run_id, experiment_id, max_results
-        return []
+            self._client_cache = Client(base_url=self._endpoint) if self._endpoint else Client()
+        return self._client_cache
 
     def get_trace(self, trace_id: str) -> NeutralTrace | None:
         _require_phoenix()
@@ -246,41 +231,29 @@ class PhoenixBackend:
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
     ) -> NeutralTrace | None:
-        import time
-
         del run_id, experiment_id
-        deadline = time.monotonic() + max(0.0, timeout_s)
-        while True:
-            trace = self.get_trace(trace_id)
-            if trace is not None and trace.spans:
-                return trace
-            if time.monotonic() >= deadline:
-                return trace  # may be None or empty; caller treats both as "no trace"
-            time.sleep(poll_interval_s)
+        # Spans arrive in independent OTLP export batches, so a readable trace
+        # can still be missing in-flight spans — require a stable span set.
+        return poll_for_trace(
+            lambda: self.get_trace(trace_id),
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            stable_span_set=True,
+        )
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         _ = experiment_id, trace_ids
         self._warn_unsupported("delete_traces")
 
+    def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:
+        # Phoenix has no trace deletion at all; warn rather than silently skipping.
+        _ = experiment_id, run_id
+        self._warn_unsupported("delete_judge_traces")
+
     # ------------------------------------------------------------------
-    # ResultsBackend
+    # ResultsBackend — metrics/params/tables/artifacts are warn-once no-ops
+    # (NoopResultsMixin); only assessments and tags map onto span annotations.
     # ------------------------------------------------------------------
-
-    def log_metric(self, name: str, value: float) -> None:
-        _ = name, value
-        self._warn_unsupported("log_metric")
-
-    def log_params(self, params: Mapping[str, str]) -> None:
-        _ = params
-        self._warn_unsupported("log_params")
-
-    def log_table(self, df: pd.DataFrame, artifact_file: str) -> None:
-        _ = df, artifact_file
-        self._warn_unsupported("log_table")
-
-    def log_artifact(self, local_path: str, artifact_path: str | None = None) -> None:
-        _ = local_path, artifact_path
-        self._warn_unsupported("log_artifact")
 
     def log_assessment(self, trace_id: str, assessment: Assessment) -> None:
         """Map an assessment onto a Phoenix span annotation on the trace's root span."""
@@ -311,11 +284,20 @@ class PhoenixBackend:
         )
 
     def _root_span_id(self, trace_id: str) -> str | None:
+        # Root span ids are immutable once written; memoize so repeated
+        # assessment/tag writes on the same trace fetch the DataFrame once.
+        cached = self._root_span_ids.get(trace_id)
+        if cached is not None:
+            return cached
         try:
             df = self._client().spans.get_spans_dataframe(project_identifier=self._project_name, root_spans_only=True)
         except Exception:
             return None
-        return _root_span_id_for_trace(df, trace_id)
+        rows = _rows_for_trace(df, trace_id)
+        root_span_id = rows[0][0] if rows else None
+        if root_span_id is not None:
+            self._root_span_ids[trace_id] = root_span_id
+        return root_span_id
 
     # ------------------------------------------------------------------
     # LifecycleBackend
@@ -330,9 +312,7 @@ class PhoenixBackend:
 
     def set_tracking_uri(self, uri: str) -> None:
         self._endpoint = uri
-
-    def is_run_active(self) -> bool:
-        return self._run_active
+        self._client_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -396,11 +376,3 @@ def _rows_for_trace(df: pd.DataFrame, trace_id: str) -> list[tuple[str, Mapping[
         if str(record.get("context.trace_id", "")) == trace_id:
             out.append((str(span_id), record))
     return out
-
-
-def _root_span_id_for_trace(df: pd.DataFrame, trace_id: str) -> str | None:
-    for span_id, row in df.iterrows():
-        record: dict[str, Any] = dict(row)
-        if str(record.get("context.trace_id", "")) == trace_id:
-            return str(span_id)
-    return None

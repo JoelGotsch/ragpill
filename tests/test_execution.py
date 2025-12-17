@@ -21,43 +21,6 @@ def _make_minimal_dataset(repeat: int | None = None) -> Dataset[str, str, TestCa
 
 
 # ---------------------------------------------------------------------------
-# Dataclass shape tests
-# ---------------------------------------------------------------------------
-
-
-def test_task_run_output_shape():
-    tr = TaskRunOutput(
-        run_index=0,
-        input_key="k_0",
-        output="out",
-        duration=0.01,
-    )
-    assert tr.trace is None
-    assert tr.run_span_id == ""
-    assert tr.error is None
-
-
-def test_case_run_output_shape():
-    cr = CaseRunOutput(
-        case_name="c",
-        inputs="i",
-        expected_output=None,
-        metadata={},
-        base_input_key="k",
-        trace=None,
-        trace_id="",
-        task_runs=[],
-    )
-    assert cr.task_runs == []
-
-
-def test_dataset_run_output_defaults_to_empty():
-    dr = DatasetRunOutput()
-    assert dr.cases == []
-    assert dr.tracking_uri == ""
-
-
-# ---------------------------------------------------------------------------
 # JSON round trip
 # ---------------------------------------------------------------------------
 
@@ -192,3 +155,43 @@ def test_fetch_trace_returns_none_on_miss():
     with patch("ragpill.execution.get_backend", return_value=backend):
         result = _fetch_trace("exp-1", "run-1", "trace-1", timeout_s=1.0, poll_interval_s=0.1)
     assert result is None
+
+
+def test_setup_local_tracing_passes_none_uri_to_remote_backends():
+    """Backends without a local file store (Langfuse/Phoenix) must not receive
+    the MLflow-specific temp SQLite URI — they get None and fall back to their
+    own env-derived destination."""
+    from unittest.mock import MagicMock, patch
+
+    from ragpill.backends import RunHandle
+    from ragpill.execution import _setup_tracing
+    from ragpill.settings import MLFlowSettings
+
+    backend = MagicMock()
+    backend.supports_local_file_store = False
+    backend.get_tracking_uri.return_value = None
+    backend.start_run.return_value = RunHandle(run_id="r", experiment_id="e")
+    with patch("ragpill.execution.get_backend", return_value=backend):
+        ctx = _setup_tracing(None, MLFlowSettings())
+    (uri, _experiment), _ = backend.set_destination.call_args
+    assert uri is None
+    assert ctx.temp_dir is None
+
+
+def test_setup_local_tracing_builds_temp_sqlite_for_file_store_backends():
+    from unittest.mock import MagicMock, patch
+
+    from ragpill.backends import RunHandle
+    from ragpill.execution import _setup_tracing, _teardown_tracing
+    from ragpill.settings import MLFlowSettings
+
+    backend = MagicMock()
+    backend.supports_local_file_store = True
+    backend.get_tracking_uri.return_value = None
+    backend.start_run.return_value = RunHandle(run_id="r", experiment_id="e")
+    with patch("ragpill.execution.get_backend", return_value=backend):
+        ctx = _setup_tracing(None, MLFlowSettings())
+        (uri, _experiment), _ = backend.set_destination.call_args
+        assert uri is not None and uri.startswith("sqlite:///")
+        assert ctx.temp_dir is not None
+        _teardown_tracing(ctx)

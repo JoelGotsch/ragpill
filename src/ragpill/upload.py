@@ -20,7 +20,6 @@ Two modes:
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import pandas as pd
@@ -57,42 +56,20 @@ def _reattach_run(settings: MLFlowSettings, run_id: str | None) -> tuple[str | N
     return previous_uri, handle.run_id
 
 
-def _delete_llm_judge_traces(experiment_id: str, run_id: str) -> None:
-    """Remove LLM-judge evaluation-only traces from the tracking UI.
-
-    Called at the end of upload so the tracing UI only shows task traces.
-    Walks the run's traces and deletes any whose root span carries the
-    ``ragpill_is_judge_trace`` attribute (set by :class:`LLMJudge`).
-    """
-    backend = get_backend()
-    traces = backend.search_traces(run_id=run_id, experiment_id=experiment_id)
-    delete_trace_ids: list[str] = []
-    for trace in traces:
-        root = trace.data._get_root_span()
-        if root and root.attributes.get("ragpill_is_judge_trace"):
-            delete_trace_ids.append(trace.info.trace_id)
-    if delete_trace_ids:
-        backend.delete_traces(experiment_id=experiment_id, trace_ids=delete_trace_ids)
-
-
 # ---------------------------------------------------------------------------
 # Metric + assessment helpers
 # ---------------------------------------------------------------------------
 
 
-_MLFLOW_METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
-
-
-def _slug(name: str) -> str:
-    """Slug a string to MLflow's metric-name charset (alphanum, `_`, `.`, `/`, space, `-`)."""
-    return _MLFLOW_METRIC_NAME_RE.sub("_", name)
-
-
 def _log_accuracy_metrics(prefix: str, scores: dict[str, float]) -> None:
-    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``."""
+    """Log each entry of ``scores`` as ``f"{prefix}_{key}"``.
+
+    Names are passed raw: each backend applies its own naming rules in
+    ``log_metric`` (e.g. MLflow's metric-name charset).
+    """
     backend = get_backend()
     for name, value in scores.items():
-        backend.log_metric(f"{prefix}_{_slug(name)}", value)
+        backend.log_metric(f"{prefix}_{name}", value)
 
 
 def _log_table_and_metrics(
@@ -114,17 +91,30 @@ def _log_table_and_metrics(
         backend.log_metric("overall_accuracy", overall_accuracy)
     _log_accuracy_metrics("accuracy_tag", evaluation.per_tag_accuracy())
     for attr_key, value_map in evaluation.per_attribute_accuracy_all().items():
-        _log_accuracy_metrics(f"accuracy_attr_{_slug(attr_key)}", value_map)
+        _log_accuracy_metrics(f"accuracy_attr_{attr_key}", value_map)
 
 
 def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
-    """Log per-run + aggregate assessments and trace tags derived from metadata."""
+    """Log per-run + aggregate assessments and trace tags derived from metadata.
+
+    Per-run assessments target the run's own trace (``RunResult.trace_id``,
+    falling back to the case-level id). Aggregates and tags target the
+    case-level trace when one exists (span-mode grouping); in session mode
+    there is no case trace — each repeat is its own trace — so they are logged
+    to every per-run trace instead.
+    """
     backend = get_backend()
     for cr in case_results:
         trace_id = cr.trace_id
         repeat = len(cr.run_results)
+        # Case-level targets: the case trace in span mode, else the distinct
+        # per-run traces (session mode; order-preserving dedup).
+        case_level_ids = (
+            [trace_id] if trace_id else list(dict.fromkeys(rr.trace_id for rr in cr.run_results if rr.trace_id))
+        )
 
         for rr in cr.run_results:
+            run_trace_id = rr.trace_id or trace_id
             for eval_name, eval_result in rr.assertions.items():
                 source_type = "LLM_JUDGE" if "LLMJudge" in eval_result.source.name else "CODE"
                 assessment = Assessment(
@@ -134,10 +124,10 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
                     source_id=eval_result.source.name,
                     rationale=str(eval_result.reason),
                 )
-                if trace_id:
-                    backend.log_assessment(trace_id, assessment)
+                if run_trace_id:
+                    backend.log_assessment(run_trace_id, assessment)
 
-        if repeat > 1 and trace_id:
+        if repeat > 1:
             for eval_name, eval_pass_rate in cr.aggregated.per_evaluator_pass_rates.items():
                 agg_passed = eval_pass_rate >= cr.aggregated.threshold
                 rationale = (
@@ -152,13 +142,14 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
                     source_id="ragpill_aggregation",
                     rationale=rationale,
                 )
-                backend.log_assessment(trace_id, agg_assessment)
+                for tid in case_level_ids:
+                    backend.log_assessment(tid, agg_assessment)
 
-        if trace_id:
+        for tid in case_level_ids:
             for key, value in cr.metadata.attributes.items():
-                backend.set_trace_tag(trace_id, key, str(value))
+                backend.set_trace_tag(tid, key, str(value))
             for tag in cr.metadata.tags:
-                backend.set_trace_tag(trace_id, f"tag_{tag}", "true")
+                backend.set_trace_tag(tid, f"tag_{tag}", "true")
 
 
 def _log_traces_as_artifact(evaluation: EvaluationOutput) -> None:
@@ -224,7 +215,7 @@ def upload_to_mlflow(
     settings = mlflow_settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
     backend = get_backend()
     dataset_run = evaluation.dataset_run
-    run_id: str | None = dataset_run.mlflow_run_id if (dataset_run and dataset_run.mlflow_run_id) else None
+    run_id: str | None = dataset_run.run_id if (dataset_run and dataset_run.run_id) else None
 
     previous_uri, active_run_id = _reattach_run(settings, run_id)
     try:
@@ -236,7 +227,7 @@ def upload_to_mlflow(
         # Strip LLM-judge traces created during evaluation (they only clutter the UI).
         experiment_id = _resolve_experiment_id(settings)
         if backend.is_run_active():
-            _delete_llm_judge_traces(experiment_id, active_run_id)
+            backend.delete_judge_traces(experiment_id, active_run_id)
     finally:
         if backend.is_run_active():
             backend.end_run()

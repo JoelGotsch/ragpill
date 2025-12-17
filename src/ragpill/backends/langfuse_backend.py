@@ -26,16 +26,13 @@ from __future__ import annotations
 # The langfuse SDK is an optional extra and isn't installed in the default
 # type-check environment, so its imports and return types are unresolved here.
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false
-import warnings
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
+from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, poll_for_trace
+from ragpill.backends._types import Assessment, CaseGroupingHandle, SpanKind
 from ragpill.trace.model import Span as RagpillSpan, SpanKind as IngestSpanKind, Trace as RagpillTrace
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 _INSTALL_HINT = (
     "The Langfuse backend requires the 'langfuse' extra. Install it with "
@@ -75,8 +72,7 @@ def _require_langfuse() -> None:
 
 
 class _SpanHandle:
-    """Wraps a Langfuse observation to expose the surface ragpill reads:
-    ``span_id`` / ``request_id`` (trace id) + set_attribute/inputs/outputs."""
+    """Wraps a Langfuse observation to satisfy the ``SpanHandle`` protocol."""
 
     def __init__(self, span: Any) -> None:
         self._span = span
@@ -86,7 +82,7 @@ class _SpanHandle:
         return str(getattr(self._span, "id", "") or "")
 
     @property
-    def request_id(self) -> str:
+    def trace_id(self) -> str:
         return str(getattr(self._span, "trace_id", "") or "")
 
     def set_attribute(self, key: str, value: Any) -> None:
@@ -99,24 +95,18 @@ class _SpanHandle:
         self._span.update(output=value)
 
 
-class LangfuseBackend:
+class LangfuseBackend(SyntheticRunMixin, NoopResultsMixin):
     """Adapter implementing the tracking backend protocols against Langfuse."""
+
+    # Langfuse is a remote service; the execution layer must not hand it a
+    # temp SQLite URI — ``uri=None`` lets the client fall back to LANGFUSE_HOST.
+    supports_local_file_store = False
 
     def __init__(self) -> None:
         self._host: str | None = None
         self._project_name = "ragpill"
         self._client: Any = None
         self._run_active = False
-        self._warned: set[str] = set()
-
-    def _warn_unsupported(self, capability: str) -> None:
-        if capability not in self._warned:
-            self._warned.add(capability)
-            warnings.warn(
-                f"LangfuseBackend: '{capability}' has no native Langfuse equivalent and is a no-op. "
-                "See plans/multi-backend-tracking.md.",
-                stacklevel=2,
-            )
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -125,6 +115,10 @@ class LangfuseBackend:
 
             self._client = Langfuse(host=self._host) if self._host else Langfuse()
         return self._client
+
+    def _flush(self) -> None:
+        if self._client is not None:
+            self._client.flush()
 
     # ------------------------------------------------------------------
     # TraceCaptureBackend
@@ -136,20 +130,6 @@ class LangfuseBackend:
         self._project_name = experiment_name
         self._client = None  # rebuilt lazily with the new host
         self._get_client()
-
-    def start_run(self, run_id: str | None = None, description: str | None = None) -> RunHandle:
-        _ = description
-        self._run_active = True
-        rid = run_id or self._project_name
-        return RunHandle(run_id=rid, experiment_id=self._project_name)
-
-    def end_run(self) -> None:
-        self._run_active = False
-        if self._client is not None:
-            try:
-                self._client.flush()
-            except Exception:
-                pass
 
     def start_span(
         self,
@@ -205,17 +185,6 @@ class LangfuseBackend:
     # TraceQueryBackend
     # ------------------------------------------------------------------
 
-    def search_traces(
-        self,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        max_results: int = 1000,
-    ) -> list[Any]:
-        # Native traces are only consumed by the MLflow-specific judge-trace
-        # cleanup path; for Langfuse, suppression is the exporter-filter route.
-        _ = run_id, experiment_id, max_results
-        return []
-
     def get_trace(self, trace_id: str) -> RagpillTrace | None:
         client = self._get_client()
         try:
@@ -233,17 +202,15 @@ class LangfuseBackend:
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
     ) -> RagpillTrace | None:
-        import time
-
         del run_id, experiment_id
-        deadline = time.monotonic() + max(0.0, timeout_s)
-        while True:
-            trace = self.get_trace(trace_id)
-            if trace is not None and trace.spans:
-                return trace
-            if time.monotonic() >= deadline:
-                return trace
-            time.sleep(poll_interval_s)
+        # Observations arrive in independent ingestion batches, so a readable
+        # trace can still be missing in-flight spans — require a stable span set.
+        return poll_for_trace(
+            lambda: self.get_trace(trace_id),
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            stable_span_set=True,
+        )
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         _ = experiment_id
@@ -256,25 +223,17 @@ class LangfuseBackend:
             except Exception:
                 continue
 
+    def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:
+        # Langfuse can delete traces, but locating judge traces requires a
+        # server-side metadata query that is a later phase; warn rather than
+        # silently skipping.
+        _ = experiment_id, run_id
+        self._warn_unsupported("delete_judge_traces")
+
     # ------------------------------------------------------------------
-    # ResultsBackend
+    # ResultsBackend — metrics/params/tables/artifacts are warn-once no-ops
+    # (NoopResultsMixin); only assessments and tags have native equivalents.
     # ------------------------------------------------------------------
-
-    def log_metric(self, name: str, value: float) -> None:
-        _ = name, value
-        self._warn_unsupported("log_metric")
-
-    def log_params(self, params: Mapping[str, str]) -> None:
-        _ = params
-        self._warn_unsupported("log_params")
-
-    def log_table(self, df: pd.DataFrame, artifact_file: str) -> None:
-        _ = df, artifact_file
-        self._warn_unsupported("log_table")
-
-    def log_artifact(self, local_path: str, artifact_path: str | None = None) -> None:
-        _ = local_path, artifact_path
-        self._warn_unsupported("log_artifact")
 
     def log_assessment(self, trace_id: str, assessment: Assessment) -> None:
         client = self._get_client()
@@ -314,9 +273,6 @@ class LangfuseBackend:
         self._host = uri
         self._client = None
 
-    def is_run_active(self) -> bool:
-        return self._run_active
-
 
 # ---------------------------------------------------------------------------
 # Langfuse trace -> neutral trace (direct field mapping; no dialect adapter yet)
@@ -344,7 +300,7 @@ def _observation_to_span(obs: Any, trace_id: str) -> RagpillSpan:
     )
     return RagpillSpan(
         span_id=str(getattr(obs, "id", "") or ""),
-        parent_id=(str(getattr(obs, "parent_observation_id", "")) or None),
+        parent_id=(str(getattr(obs, "parent_observation_id", None) or "") or None),
         trace_id=trace_id,
         name=str(getattr(obs, "name", "") or ""),
         kind=_OBS_TYPE_TO_KIND.get(obs_type, IngestSpanKind.UNKNOWN),

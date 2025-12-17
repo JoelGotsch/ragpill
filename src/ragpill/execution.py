@@ -22,6 +22,7 @@ two tracing backends:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import os
@@ -128,19 +129,19 @@ class DatasetRunOutput:
 
     Attributes:
         cases: One :class:`CaseRunOutput` per case in the dataset.
-        tracking_uri: The MLflow tracking URI that was active during execution.
+        tracking_uri: The tracking URI that was active during execution.
             Empty string when the local temp backend was used (the temp DB is
             cleaned up after execution).
-        mlflow_run_id: MLflow run ID under which traces were captured. Empty
-            when tracing was disabled or the temp backend was used.
-        mlflow_experiment_id: MLflow experiment ID under which the run was
-            created. Empty when tracing was disabled or the temp backend was used.
+        run_id: Backend run ID under which traces were captured. Empty when
+            tracing was disabled or the temp backend was used.
+        experiment_id: Backend experiment ID under which the run was created.
+            Empty when tracing was disabled or the temp backend was used.
     """
 
     cases: list[CaseRunOutput] = field(default_factory=list)
     tracking_uri: str = ""
-    mlflow_run_id: str = ""
-    mlflow_experiment_id: str = ""
+    run_id: str = ""
+    experiment_id: str = ""
 
     def to_json(self) -> str:
         """Serialize this output to a JSON string.
@@ -269,8 +270,8 @@ def _dataset_run_to_dict(dr: DatasetRunOutput) -> dict[str, Any]:
         "schema_version": _RUN_JSON_SCHEMA_VERSION,
         "cases": [_case_run_to_dict(c) for c in dr.cases],
         "tracking_uri": dr.tracking_uri,
-        "mlflow_run_id": dr.mlflow_run_id,
-        "mlflow_experiment_id": dr.mlflow_experiment_id,
+        "run_id": dr.run_id,
+        "experiment_id": dr.experiment_id,
     }
 
 
@@ -286,8 +287,8 @@ def _dataset_run_from_dict(d: dict[str, Any]) -> DatasetRunOutput:
     return DatasetRunOutput(
         cases=[_case_run_from_dict(c) for c in d.get("cases", [])],
         tracking_uri=d.get("tracking_uri", ""),
-        mlflow_run_id=d.get("mlflow_run_id", ""),
-        mlflow_experiment_id=d.get("mlflow_experiment_id", ""),
+        run_id=d.get("run_id", ""),
+        experiment_id=d.get("experiment_id", ""),
     )
 
 
@@ -309,49 +310,35 @@ class _TracingContext:
     trace_fetch_poll_interval_s: float  # interval between readiness polls
 
 
-def _setup_local_tracing(settings: MLFlowSettings) -> _TracingContext:
-    """Configure a temporary local SQLite backend.
+def _setup_tracing(uri: str | None, settings: MLFlowSettings) -> _TracingContext:
+    """Configure the tracing destination and open a run.
 
-    Used when no server URI is provided. The temp directory (containing
+    With an explicit ``uri``, traces go straight to that server. Without one,
+    file-store backends (``supports_local_file_store``, e.g. MLflow) get a
+    temporary local SQLite store — the temp directory (containing
     ``mlflow.db`` and the ``mlartifacts`` folder) is deleted by
-    :func:`_teardown_tracing`. The SQLite URI is MLflow-specific; backends
-    that don't use a local-file store will ignore the path and fall back to
-    their own destination logic.
+    :func:`_teardown_tracing` — while remote-service backends (Langfuse,
+    Phoenix) get ``uri=None`` and fall back to their own environment-derived
+    destination.
     """
     backend = get_backend()
     previous_uri = backend.get_tracking_uri()
-    temp_dir = tempfile.mkdtemp(prefix="ragpill_exec_")
-    db_path = os.path.join(temp_dir, "mlflow.db")
-    artifacts_path = os.path.join(temp_dir, "mlartifacts")
-    os.makedirs(artifacts_path, exist_ok=True)
-    uri = f"sqlite:///{db_path}"
-    backend.set_destination(uri, settings.ragpill_experiment_name)
-    backend.autolog_pydantic_ai()
-    handle = backend.start_run()
-    return _TracingContext(
-        tracking_uri=uri,
-        experiment_id=handle.experiment_id,
-        run_id=handle.run_id,
-        previous_uri=previous_uri,
-        temp_dir=temp_dir,
-        trace_fetch_timeout_s=settings.ragpill_trace_fetch_timeout_s,
-        trace_fetch_poll_interval_s=settings.ragpill_trace_fetch_poll_interval_s,
-    )
-
-
-def _setup_server_tracing(uri: str, settings: MLFlowSettings) -> _TracingContext:
-    """Configure the tracking URI to point at an existing tracking server."""
-    backend = get_backend()
-    previous_uri = backend.get_tracking_uri()
+    temp_dir: str | None = None
+    if uri is None and getattr(backend, "supports_local_file_store", False):
+        temp_dir = tempfile.mkdtemp(prefix="ragpill_exec_")
+        db_path = os.path.join(temp_dir, "mlflow.db")
+        artifacts_path = os.path.join(temp_dir, "mlartifacts")
+        os.makedirs(artifacts_path, exist_ok=True)
+        uri = f"sqlite:///{db_path}"
     backend.set_destination(uri, settings.ragpill_experiment_name)
     backend.autolog_pydantic_ai()
     handle = backend.start_run(description=settings.ragpill_run_description)
     return _TracingContext(
-        tracking_uri=uri,
+        tracking_uri=uri or "",
         experiment_id=handle.experiment_id,
         run_id=handle.run_id,
         previous_uri=previous_uri,
-        temp_dir=None,
+        temp_dir=temp_dir,
         trace_fetch_timeout_s=settings.ragpill_trace_fetch_timeout_s,
         trace_fetch_poll_interval_s=settings.ragpill_trace_fetch_poll_interval_s,
     )
@@ -454,12 +441,15 @@ async def _execute_case_runs(
         for i in range(repeat):
             task_runs.append(await _execute_single_run(case, task_factory, base_key, i, capture_traces=False))
 
-    # Attach traces after spans have been committed.
+    # Attach traces after spans have been committed. ``await_trace`` is a
+    # synchronous polling call (time.sleep between readiness checks), so it is
+    # offloaded to a worker thread rather than run on the event loop.
     case_trace: Trace | None = None
     if capture_traces and tracing is not None:
         if grouping_mode == "span" and case_trace_id:
             # Span mode: one case trace, filtered per repeat.
-            case_trace = _fetch_trace(
+            case_trace = await asyncio.to_thread(
+                _fetch_trace,
                 tracing.experiment_id,
                 tracing.run_id,
                 case_trace_id,
@@ -472,20 +462,25 @@ async def _execute_case_runs(
                         tr.trace = filter_to_subtree(case_trace, tr.run_span_id)
         elif grouping_mode == "session":
             # Session mode: each repeat already produced its own trace; fetch
-            # them individually by the trace_id captured at span open. Poll for
-            # export, same as span mode — get_trace right after the context
-            # exits races the async flush just as search_traces did. await_trace
-            # returns the neutral model (the backend converts its own trace).
-            backend = get_backend()
-            for tr in task_runs:
-                if tr.trace_id:
-                    tr.trace = backend.await_trace(
+            # them individually by the trace_id captured at span open. The
+            # fetches are independent, so they run concurrently — worst case
+            # is one timeout, not one per repeat.
+            pending = [tr for tr in task_runs if tr.trace_id]
+            traces = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        _fetch_trace,
+                        tracing.experiment_id,
+                        tracing.run_id,
                         tr.trace_id,
-                        run_id=tracing.run_id,
-                        experiment_id=tracing.experiment_id,
                         timeout_s=tracing.trace_fetch_timeout_s,
                         poll_interval_s=tracing.trace_fetch_poll_interval_s,
                     )
+                    for tr in pending
+                )
+            )
+            for tr, trace in zip(pending, traces):
+                tr.trace = trace
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),
@@ -524,10 +519,7 @@ async def _execute_single_run(
         try:
             with get_backend().start_span(name=f"run-{run_index}", span_type=SpanKind.TASK) as run_span:
                 run_span_id = run_span.span_id
-                # ``request_id`` is mlflow's name for the trace id at this
-                # layer. Phoenix/Langfuse adapters return spans that expose
-                # the same attribute via the alias shortcut in Phase 1.
-                trace_id = getattr(run_span, "request_id", "") or ""
+                trace_id = run_span.trace_id
                 run_span.set_attribute("run_index", run_index)
                 run_span.set_attribute("input_key", input_key)
                 run_span.set_inputs(case.inputs)
@@ -641,10 +633,7 @@ async def execute_dataset(
     tracing: _TracingContext | None = None
     try:
         if capture_traces:
-            if mlflow_tracking_uri:
-                tracing = _setup_server_tracing(mlflow_tracking_uri, _settings)
-            else:
-                tracing = _setup_local_tracing(_settings)
+            tracing = _setup_tracing(mlflow_tracking_uri or None, _settings)
 
         case_outputs: list[CaseRunOutput] = []
         for case in testset.cases:
@@ -665,8 +654,8 @@ async def execute_dataset(
         return DatasetRunOutput(
             cases=case_outputs,
             tracking_uri=tracing.tracking_uri if (tracing and tracing.temp_dir is None) else "",
-            mlflow_run_id=tracing.run_id if (tracing and tracing.temp_dir is None) else "",
-            mlflow_experiment_id=tracing.experiment_id if (tracing and tracing.temp_dir is None) else "",
+            run_id=tracing.run_id if (tracing and tracing.temp_dir is None) else "",
+            experiment_id=tracing.experiment_id if (tracing and tracing.temp_dir is None) else "",
         )
     finally:
         _teardown_tracing(tracing)

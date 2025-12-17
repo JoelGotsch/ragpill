@@ -1,27 +1,35 @@
 """MLflow adapter for the tracking backend protocols.
 
-Phase 1: pure forwarder. Each method maps to a single ``mlflow.*`` call (or
-a tiny piece of glue) so behaviour is identical to the inline calls being
-replaced. Call sites still talk to ``mlflow`` directly today; this adapter
-is in place so subsequent steps can switch them over without changing
-behaviour.
+The default backend. Mostly a thin forwarder to ``mlflow.*`` plus the glue
+MLflow needs for ragpill's session-mode case grouping (``mlflow.trace.session``
+metadata) and judge-trace cleanup (native root-span introspection). All
+MLflow-specific knowledge — trace shapes, metric-name charset, session
+metadata keys — is confined to this module.
 """
 
 from __future__ import annotations
 
-import time
+import re
 from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
 import mlflow
 import pandas as pd
-from mlflow.entities import AssessmentSource, Feedback, SpanType, Trace as MLflowTrace
+from mlflow.entities import AssessmentSource, Feedback, SpanType
 
 if TYPE_CHECKING:
+    from mlflow import MlflowClient
+
     from ragpill.trace import Trace as NeutralTrace
 
+from ragpill.backends._common import poll_for_trace
 from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
+
+# MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
+# other backends have their own rules, so the slugging lives here, not in the
+# shared upload layer.
+_METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
 
 _SPAN_KIND_TO_MLFLOW: dict[SpanKind, str] = {
     SpanKind.AGENT: SpanType.AGENT,
@@ -43,14 +51,29 @@ class MLflowBackend:
     protocol is the natural shape.
     """
 
+    # MLflow can track to a local SQLite store, so the execution layer may
+    # synthesize a temp-directory URI when no destination is given.
+    supports_local_file_store = True
+
     def __init__(self) -> None:
-        # Session id active for the current case-grouping context. When set,
-        # each ``start_span`` call inside the context tags its trace with
-        # MLflow's ``mlflow.trace.session`` metadata so the Sessions UI
-        # groups repeats of a case as turns of one session.
+        # Session id + case-level metadata active for the current case-grouping
+        # context. When set, each ``start_span`` call inside the context tags
+        # its trace with MLflow's ``mlflow.trace.session`` metadata (so the
+        # Sessions UI groups repeats of a case as turns) plus the case-level
+        # name/attributes, which have no parent span to live on in session mode.
         # Single-threaded by design: ragpill's execute_dataset processes
         # cases sequentially.
         self._active_session_id: str | None = None
+        self._active_session_metadata: dict[str, str] = {}
+
+    def _client(self) -> MlflowClient:
+        """Fresh MlflowClient bound to the current tracking URI. Not cached:
+        callers (including our own tests) can repoint mlflow's global
+        tracking URI at any time via ``mlflow.set_tracking_uri``, and a
+        cached client would silently keep talking to the old store."""
+        from mlflow import MlflowClient
+
+        return MlflowClient()
 
     # ------------------------------------------------------------------
     # TraceCaptureBackend
@@ -89,16 +112,18 @@ class MLflowBackend:
         _ = attributes
         inner = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])
         session_id = self._active_session_id
+        session_metadata = dict(self._active_session_metadata)
 
         @contextmanager
         def wrapped() -> Generator[Any, None, None]:
             with inner as span:
                 # When inside a case-grouping context, tag this span's trace
-                # with the MLflow session id so the Sessions UI groups
-                # repeats of the same case as turns. Done lazily on enter so
-                # we operate on the actual active trace.
+                # with the MLflow session id (so the Sessions UI groups repeats
+                # of the same case as turns) plus the case-level metadata,
+                # which has no parent span to live on in session mode. Done
+                # lazily on enter so we operate on the actual active trace.
                 if session_id is not None:
-                    mlflow.update_current_trace(metadata={"mlflow.trace.session": session_id})
+                    mlflow.update_current_trace(metadata={**session_metadata, "mlflow.trace.session": session_id})
                 yield span
 
         return wrapped()
@@ -117,23 +142,26 @@ class MLflowBackend:
         let each per-repeat ``start_span`` call open as a fresh top-level
         trace tagged with that session id.
 
-        ``inputs`` and ``attributes`` are not surfaced on a parent span
-        (there isn't one in session mode); callers can attach them to
-        individual per-repeat spans via ``start_span``'s yielded handle.
+        There is no parent span in session mode, so the case-level ``name``
+        and ``attributes`` are carried as trace metadata on every per-repeat
+        trace instead (``inputs`` are already recorded on each per-repeat
+        span by the execution layer).
         """
-        # ``inputs`` and ``attributes`` are part of the protocol for
-        # symmetry with span-mode backends; the MLflow session mode
-        # surfaces those via individual per-repeat span attributes.
-        _ = inputs, attributes, name
+        _ = inputs
+        metadata = {"ragpill.case_name": name}
+        metadata.update({k: str(v) for k, v in (attributes or {}).items()})
 
         @contextmanager
         def cm() -> Generator[CaseGroupingHandle, None, None]:
-            previous = self._active_session_id
+            previous_id = self._active_session_id
+            previous_metadata = self._active_session_metadata
             self._active_session_id = case_id
+            self._active_session_metadata = metadata
             try:
                 yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
             finally:
-                self._active_session_id = previous
+                self._active_session_id = previous_id
+                self._active_session_metadata = previous_metadata
 
         return cm()
 
@@ -141,29 +169,14 @@ class MLflowBackend:
     # TraceQueryBackend
     # ------------------------------------------------------------------
 
-    def search_traces(
-        self,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        max_results: int = 1000,
-    ) -> list[MLflowTrace]:
-        kwargs: dict[str, Any] = {"return_type": "list", "max_results": max_results}
-        if run_id is not None:
-            kwargs["run_id"] = run_id
-        if experiment_id is not None:
-            kwargs["locations"] = [experiment_id]
-        return mlflow.search_traces(**kwargs)  # pyright: ignore[reportReturnType]
-
     def get_trace(self, trace_id: str) -> NeutralTrace | None:
         # Returns the vendor-neutral ragpill.trace.Trace (converted here), not the
         # raw mlflow.entities.Trace — every backend converts its own native trace
         # so the execution layer stays backend-agnostic. See ADR-0017.
-        from mlflow import MlflowClient
-
         from ragpill.trace import from_mlflow_trace
 
         try:
-            native = MlflowClient().get_trace(trace_id)
+            native = self._client().get_trace(trace_id)
         except Exception:
             return None
         # mlflow's stub types this non-Optional, but a not-yet-exported trace can
@@ -181,36 +194,47 @@ class MLflowBackend:
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
     ) -> NeutralTrace | None:
-        # MLflow exports spans asynchronously; the by-id lookup is the
-        # authoritative readiness check — it returns the trace with its full
-        # span tree only once exported. Poll it rather than search_traces (the
-        # latter's "one result" state can transiently belong to a different
-        # case, which is how the old fallback returned the wrong trace).
-        # run_id / experiment_id are part of the protocol for backends whose
-        # readiness query needs them; MLflow's by-id lookup does not.
+        # MLflow's by-id lookup is the authoritative readiness check — it
+        # returns the trace with its full span tree only once exported, so no
+        # span-set stability check is needed. run_id / experiment_id are part
+        # of the protocol for backends whose readiness query needs them;
+        # MLflow's by-id lookup does not.
         del run_id, experiment_id
-        deadline = time.monotonic() + max(0.0, timeout_s)
-        while True:
-            trace = self.get_trace(trace_id)
-            if trace is not None:
-                return trace
-            if time.monotonic() >= deadline:
-                return None
-            time.sleep(poll_interval_s)
+        return poll_for_trace(
+            lambda: self.get_trace(trace_id),
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            stable_span_set=False,
+        )
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
-        from mlflow import MlflowClient
-
         if not trace_ids:
             return
-        MlflowClient().delete_traces(experiment_id=experiment_id, trace_ids=trace_ids)
+        self._client().delete_traces(experiment_id=experiment_id, trace_ids=trace_ids)
+
+    def delete_judge_traces(self, experiment_id: str, run_id: str) -> None:
+        # Walk the run's native traces and delete those whose root span carries
+        # the ``ragpill_is_judge_trace`` attribute. Native introspection
+        # (``trace.data._get_root_span`` is not public API) is confined here —
+        # only this adapter knows MLflow's trace shape.
+        traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
+            return_type="list", run_id=run_id, locations=[experiment_id], max_results=1000
+        )
+        judge_trace_ids: list[str] = []
+        for trace in traces:
+            root = trace.data._get_root_span()
+            if root and root.attributes.get("ragpill_is_judge_trace"):
+                judge_trace_ids.append(trace.info.trace_id)
+        self.delete_traces(experiment_id=experiment_id, trace_ids=judge_trace_ids)
 
     # ------------------------------------------------------------------
     # ResultsBackend
     # ------------------------------------------------------------------
 
     def log_metric(self, name: str, value: float) -> None:
-        mlflow.log_metric(name, value)
+        # Sanitize to MLflow's metric-name charset; other backends have their
+        # own naming rules, so callers pass raw names.
+        mlflow.log_metric(_METRIC_NAME_RE.sub("_", name), value)
 
     def log_params(self, params: Mapping[str, str]) -> None:
         mlflow.log_params(dict(params))

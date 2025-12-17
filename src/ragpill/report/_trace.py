@@ -1,11 +1,11 @@
 """Render captured traces (or subtrees) as nested markdown bullets.
 
-Today the trace object is MLflow-flavoured (``mlflow.entities.Trace``).
-The dialect-specific bits — which attribute keys count as "internal" so
-they get surfaced through dedicated paths instead of the attribute
-bullet — live in :mod:`ragpill.backends._dialects`. Phase 2 / the OTel
-ingestion plan replaces the type alias with a normalised dataclass and
-lets each backend register its own internal-attr set.
+Operates purely on the vendor-neutral :class:`ragpill.trace.Trace` model.
+Dialect-specific knowledge (which raw attribute keys are backend
+bookkeeping, where inputs/outputs live) is handled upstream by the
+dialect adapters in :mod:`ragpill.trace.adapters` — by the time a trace
+reaches the renderer, those are already lifted to first-class ``Span``
+fields.
 """
 
 from __future__ import annotations

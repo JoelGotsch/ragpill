@@ -94,9 +94,9 @@ def test_start_span_handle_exposes_ids_and_io(fake_phoenix):
     backend._tracer.start_as_current_span.return_value.__enter__.return_value = span  # pyright: ignore[reportAttributeAccessIssue]
 
     with backend.start_span("run-0", WriteSpanKind.TASK) as handle:
-        # execution reads these off the handle (run_span.span_id / .request_id).
+        # execution reads these off the handle (run_span.span_id / .trace_id).
         assert handle.span_id == format(0xABC, "016x")
-        assert handle.request_id == format(0x123, "032x")
+        assert handle.trace_id == format(0x123, "032x")
         handle.set_inputs("hi")
         handle.set_outputs("bye")
     span.set_attribute.assert_any_call("input.value", "hi")
@@ -227,3 +227,33 @@ async def test_phoenix_end_to_end_capture_and_fetch():
         assert tr.trace is not None and tr.trace.spans
     finally:
         reset_backend()
+
+
+def test_await_trace_waits_for_span_set_to_stabilize():
+    """Spans arrive in independent OTLP batches: await_trace must not return
+    the first non-empty snapshot, only one that is stable across two polls."""
+    from unittest.mock import patch
+
+    from ragpill.trace import Span, SpanKind, Trace
+
+    def _trace(n_spans: int) -> Trace:
+        spans = [
+            Span(
+                span_id=f"s{i}",
+                parent_id=None,
+                trace_id="t",
+                name=f"s{i}",
+                kind=SpanKind.CHAIN,
+                start_time_ns=0,
+                end_time_ns=0,
+            )
+            for i in range(n_spans)
+        ]
+        return Trace(trace_id="t", spans=spans)
+
+    backend = PhoenixBackend()
+    partial, full = _trace(1), _trace(3)
+    with patch.object(PhoenixBackend, "get_trace", side_effect=[partial, full, full]) as mock_get:
+        got = backend.await_trace("t", timeout_s=5.0, poll_interval_s=0.01)
+    assert got is not None and len(got.spans) == 3
+    assert mock_get.call_count == 3

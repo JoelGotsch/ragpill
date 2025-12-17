@@ -66,7 +66,7 @@ def _make_dataset_run(with_trace: bool = True) -> DatasetRunOutput:
             )
         ],
     )
-    return DatasetRunOutput(cases=[case], tracking_uri="sqlite:///x.db", mlflow_run_id="r1", mlflow_experiment_id="e1")
+    return DatasetRunOutput(cases=[case], tracking_uri="sqlite:///x.db", run_id="r1", experiment_id="e1")
 
 
 def test_header_lists_run_metadata():

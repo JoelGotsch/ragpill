@@ -1,23 +1,18 @@
 """Pluggable tracking backends.
 
-Phase 1 of ``plans/multi-backend-tracking.md``. This package defines the
-small protocols ragpill needs from any tracking backend (MLflow today,
-Langfuse and Arize Phoenix in Phase 2) and ships an in-tree
-:class:`MLflowBackend` adapter that forwards directly to ``mlflow.*``.
+This package defines the small protocols ragpill needs from any tracking
+backend (see ``plans/multi-backend-tracking.md``) and the in-tree adapters:
+MLflow (default), Langfuse, and Arize Phoenix.
 
-Step 1 — what this commit lands:
+Contents:
 
 - the four capability protocols (``TraceCaptureBackend``,
   ``TraceQueryBackend``, ``ResultsBackend``, ``LifecycleBackend``) plus the
-  combined ``Backend`` protocol;
+  combined ``Backend`` protocol and the ``SpanHandle`` span contract;
 - vendor-neutral data types (``Assessment``, ``RunHandle``, ``SpanKind``);
-- :class:`MLflowBackend` that satisfies all four protocols;
 - a registry (``get_backend`` / ``configure_backend``) that returns the
-  MLflow backend by default.
-
-No existing call sites change in this commit; the suite still passes
-unchanged. Subsequent commits switch ``upload.py``, ``execution.py`` and
-``evaluators.py`` over to use the registry.
+  MLflow backend by default;
+- shared adapter scaffolding in ``_common`` (polling, no-op mixins).
 """
 
 from __future__ import annotations
@@ -26,6 +21,7 @@ from ragpill.backends._base import (
     Backend,
     LifecycleBackend,
     ResultsBackend,
+    SpanHandle,
     TraceCaptureBackend,
     TraceQueryBackend,
 )
@@ -38,6 +34,7 @@ __all__ = [
     "LifecycleBackend",
     "ResultsBackend",
     "RunHandle",
+    "SpanHandle",
     "SpanKind",
     "TraceCaptureBackend",
     "TraceQueryBackend",

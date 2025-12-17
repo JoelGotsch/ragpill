@@ -80,7 +80,7 @@ def test_start_span_handle_exposes_ids_and_io(fake_langfuse):
 
     with backend.start_span("run-0", WriteSpanKind.TASK) as handle:
         assert handle.span_id == "obs-1"
-        assert handle.request_id == "trace-1"
+        assert handle.trace_id == "trace-1"
         handle.set_inputs("hi")
         handle.set_outputs("bye")
     # as_type for TASK is "chain"
@@ -164,6 +164,8 @@ def test_get_trace_converts_observations(fake_langfuse):
     trace = backend.get_trace("trace-1")
     assert trace is not None and trace.dialect == "langfuse"
     by_id = {s.span_id: s for s in trace.spans}
+    # A None parent must stay None (not the string "None"), or root detection breaks.
+    assert by_id["obs-root"].parent_id is None
     assert by_id["obs-root"].kind is SpanKind.CHAIN
     assert by_id["obs-root"].inputs == {"q": "hi"}
     assert by_id["obs-root"].attributes == {"k": "v"}
@@ -218,3 +220,34 @@ async def test_langfuse_end_to_end_capture_and_fetch():
         assert tr.trace is not None and tr.trace.spans
     finally:
         reset_backend()
+
+
+def test_await_trace_waits_for_span_set_to_stabilize(fake_langfuse):
+    """Observations arrive in independent batches: await_trace must not return
+    the first non-empty snapshot, only one that is stable across two polls."""
+    from unittest.mock import patch
+
+    from ragpill.trace import Span, Trace
+
+    def _trace(n_spans: int) -> Trace:
+        spans = [
+            Span(
+                span_id=f"s{i}",
+                parent_id=None,
+                trace_id="t",
+                name=f"s{i}",
+                kind=SpanKind.CHAIN,
+                start_time_ns=0,
+                end_time_ns=0,
+            )
+            for i in range(n_spans)
+        ]
+        return Trace(trace_id="t", spans=spans)
+
+    backend = LangfuseBackend()
+    backend.set_destination("https://lf", "proj")
+    partial, full = _trace(1), _trace(3)
+    with patch.object(LangfuseBackend, "get_trace", side_effect=[partial, full, full]) as mock_get:
+        got = backend.await_trace("t", timeout_s=5.0, poll_interval_s=0.01)
+    assert got is not None and len(got.spans) == 3
+    assert mock_get.call_count == 3
