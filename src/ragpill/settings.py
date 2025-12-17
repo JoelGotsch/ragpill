@@ -5,6 +5,37 @@ from pydantic_ai import models
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class RagpillTraceSettings(BaseSettings):
+    """Trace-ingestion settings for :func:`ragpill.trace.parse_otel`.
+
+    Controls how externally-produced OTLP traces are normalised into the
+    vendor-neutral model. Does not affect the live ``execute_dataset`` capture
+    path, which is MLflow-native via ``ragpill.trace.from_mlflow_trace``. All
+    fields are settable via environment variables with the ``RAGPILL_TRACE_``
+    prefix.
+
+    Example:
+        ```python
+        from ragpill.settings import RagpillTraceSettings
+
+        settings = RagpillTraceSettings(dialect="openinference")
+        ```
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_TRACE_")
+
+    dialect: str = Field(
+        "auto",
+        description="Dialect for parse_otel: 'auto' to detect per span, or an adapter name "
+        "('mlflow', 'openinference', 'gen_ai'). Env: RAGPILL_TRACE_DIALECT.",
+    )
+    fallback_dialect: str = Field(
+        "gen_ai",
+        description="Adapter used when 'auto' detection matches nothing for a span. "
+        "Env: RAGPILL_TRACE_FALLBACK_DIALECT.",
+    )
+
+
 class MLFlowSettings(BaseSettings):
     """MLflow connection and evaluation settings.
 

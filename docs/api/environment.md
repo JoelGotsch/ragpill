@@ -14,6 +14,14 @@ This file is automatically loaded by pydantic-settings in the `LLMJudgeSettings`
       show_source: true
       heading_level: 4
 
+### RagpillTraceSettings
+
+::: ragpill.settings.RagpillTraceSettings
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 4
+
 ### LLMJudgeSettings
 
 ::: ragpill.settings.LLMJudgeSettings

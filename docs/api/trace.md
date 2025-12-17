@@ -55,6 +55,22 @@ OTLP-JSON span dicts into [`Span`][ragpill.trace.Span] objects.
       show_source: true
       heading_level: 3
 
+## parse_otel
+
+::: ragpill.trace.parse_otel
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
+
+## detect_dialect
+
+::: ragpill.trace.detect_dialect
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
+
 ## from_mlflow_trace
 
 ::: ragpill.trace.from_mlflow_trace
@@ -98,6 +114,22 @@ OTLP-JSON span dicts into [`Span`][ragpill.trace.Span] objects.
 ## adapters.MLflowAdapter
 
 ::: ragpill.trace.adapters.MLflowAdapter
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
+
+## adapters.GenAIAdapter
+
+::: ragpill.trace.adapters.gen_ai.GenAIAdapter
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
+
+## adapters.OpenInferenceAdapter
+
+::: ragpill.trace.adapters.openinference.OpenInferenceAdapter
     options:
       show_root_heading: true
       show_source: true

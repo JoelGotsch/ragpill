@@ -45,8 +45,14 @@ vendor-neutral model.
   - `trace_to_dict` / `trace_from_dict` — JSON-safe (de)serialisation.
   - `filter_to_subtree()` — subtree filter over the neutral model.
   - `adapters.SpanAdapter` (Option C interface: `signature_attributes` +
-    `from_otel`) with `MLflowAdapter`. Further dialects (gen_ai, openinference,
-    …) land in later phases. See ADR-0013.
+    `from_otel`) with `MLflowAdapter`, `GenAIAdapter` (OTel GenAI convention),
+    and `OpenInferenceAdapter` (Arize/Phoenix). See ADR-0013.
+  - `parse_otel(source, dialect="auto")` + `detect_dialect()` — ingest
+    OTLP-JSON (or a list of span dicts) from any supported dialect, with a
+    priority registry, per-span auto-detect, and a best-effort universal
+    fallback. `RagpillTraceSettings` (env `RAGPILL_TRACE_*`) configures the
+    default dialect/fallback. The `gen_ai` and `openinference` adapters ship
+    always-on (no extra) since they only read attribute keys.
 
 ### Fixed
 
