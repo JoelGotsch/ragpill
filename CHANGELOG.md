@@ -16,6 +16,21 @@ vendor-neutral model.
   pulls MLflow; opt in with `pip install ragpill[mlflow]`. Tracking is driven
   through a small backend protocol (`ragpill.backends`) so other backends can
   be added without touching the execute/evaluate/upload layers.
+- **Backend read methods return the neutral trace.** `Backend.get_trace` /
+  `await_trace` now return a `ragpill.trace.Trace` (each backend converts its
+  own native trace internally), so the execution layer is backend-agnostic.
+  `search_traces` / `delete_traces` stay native. See ADR-0017.
+
+### Added (backends)
+
+- **Experimental Arize Phoenix backend** (`ragpill.backends.phoenix_backend.PhoenixBackend`,
+  extra `ragpill[phoenix]`): OpenInference-native capture + spans-dataframe
+  reads converted via the OpenInference adapter. Select it with
+  `configure_backend(PhoenixBackend)`. Note: `ragpill[phoenix]` and
+  `ragpill[mlflow]` are not co-installable in one environment (OpenTelemetry
+  version conflict). Metrics/params/tables/artifacts/trace-deletion no-op
+  (Phoenix has no native equivalent); the live path is covered by an env-gated
+  integration test.
 
 ### Breaking
 

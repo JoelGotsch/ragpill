@@ -22,9 +22,21 @@ mlflow = [
     "sqlalchemy>=2.0.31", # for mlflow
     "alembic>=1.10.1",    # for mlflow
 ]
-# Reserved for Phase 2; the adapter modules don't ship yet.
+# Arize Phoenix backend (OpenInference-native trace ingestion).
+#
+# NOTE: `phoenix` and `mlflow` are NOT co-installable in one environment.
+# arize-phoenix-otel pulls opentelemetry-* >=1.42 (the otlp-grpc exporter),
+# which is incompatible with the opentelemetry-sdk that mlflow-skinny pins —
+# importing `phoenix.otel` then fails. Pick one tracking backend per env:
+# `pip install ragpill[phoenix]` OR `pip install ragpill[mlflow]`. See
+# plans/phoenix-backend-findings.md (Blocker 1).
+phoenix = [
+    "arize-phoenix-otel>=0.16.1",
+    "arize-phoenix-client>=2.9.0",
+    "openinference-instrumentation-pydantic-ai>=0.1.16",
+]
+# Reserved for a later phase; the adapter module doesn't ship yet.
 langfuse = []
-phoenix = []
 
 [dependency-groups]
 dev = [

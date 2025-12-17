@@ -106,6 +106,7 @@ nav:
     - CSV Module: api/csv.md
     - Execution Layer: api/execution.md
     - Trace Model: api/trace.md
+    - Tracking Backends: api/backends.md
     - Evaluation Layer: api/evaluation.md
     - Upload Layer: api/upload.md
     - MLflow Helper: api/mlflow.md
