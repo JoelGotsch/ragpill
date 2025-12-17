@@ -86,12 +86,18 @@ class MLflowBackend:
     # TraceQueryBackend
     # ------------------------------------------------------------------
 
-    def search_traces(self, run_id: str, max_results: int = 1000) -> list[MLflowTrace]:
-        return mlflow.search_traces(  # pyright: ignore[reportReturnType]
-            return_type="list",
-            max_results=max_results,
-            run_id=run_id,
-        )
+    def search_traces(
+        self,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        max_results: int = 1000,
+    ) -> list[MLflowTrace]:
+        kwargs: dict[str, Any] = {"return_type": "list", "max_results": max_results}
+        if run_id is not None:
+            kwargs["run_id"] = run_id
+        if experiment_id is not None:
+            kwargs["locations"] = [experiment_id]
+        return mlflow.search_traces(**kwargs)  # pyright: ignore[reportReturnType]
 
     def get_trace(self, trace_id: str) -> MLflowTrace | None:
         from mlflow import MlflowClient

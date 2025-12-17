@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -77,30 +77,51 @@ def _settings() -> MLFlowSettings:
 
 @pytest.fixture
 def mlflow_mock():
-    """Patch ``mlflow`` calls at the module-under-test level."""
-    with patch("ragpill.upload.mlflow") as m:
-        m.get_tracking_uri.return_value = "previous-uri"
-        m.active_run.return_value = MagicMock(info=MagicMock(run_id="fake-run"))
-        m.get_experiment_by_name.return_value = MagicMock(experiment_id="1")
-        m.search_traces.return_value = []
-        yield m
+    """Inject a fully-mocked Backend so upload_to_mlflow never touches a real backend.
+
+    The fixture pretends a run is active until ``end_run`` is called once, so
+    the upload's ``finally`` block can call ``end_run`` exactly once.
+    """
+    from ragpill.backends import RunHandle, configure_backend, reset_backend
+
+    backend = MagicMock()
+    backend.get_tracking_uri.return_value = "previous-uri"
+    backend.resolve_experiment_id.return_value = "1"
+    backend.search_traces.return_value = []
+    backend.start_run.return_value = RunHandle(run_id="fake-run", experiment_id="1")
+
+    state = {"active": False}
+
+    def _set_active(*_a, **_kw):
+        state["active"] = True
+        return backend.start_run.return_value
+
+    def _clear_active(*_a, **_kw):
+        state["active"] = False
+
+    backend.start_run.side_effect = _set_active
+    backend.end_run.side_effect = _clear_active
+    backend.is_run_active.side_effect = lambda: state["active"]
+
+    configure_backend(lambda: backend)
+    try:
+        yield backend
+    finally:
+        reset_backend()
 
 
 def test_upload_calls_log_table(mlflow_mock):
     evaluation = _make_evaluation_output()
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_table.called
-    args, kwargs = mlflow_mock.log_table.call_args
-    # Second positional is the artifact filename
-    positional_filename = args[1] if len(args) > 1 else None
-    assert positional_filename == "evaluation_results.json" or kwargs.get("artifact_file") == "evaluation_results.json"
+    args, _kwargs = mlflow_mock.log_table.call_args
+    assert args[1] == "evaluation_results.json"
 
 
 def test_upload_reattaches_existing_run(mlflow_mock):
     evaluation = _make_evaluation_output()
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
     assert mlflow_mock.start_run.called
-    # Called with run_id=fake-run to reattach
     _, kwargs = mlflow_mock.start_run.call_args
     assert kwargs.get("run_id") == "fake-run"
 
@@ -121,17 +142,16 @@ def test_upload_ends_run_even_on_exception(mlflow_mock):
 
 def test_upload_logs_assessment_when_trace_id_set(mlflow_mock):
     evaluation = _make_evaluation_output()
-    # Give the case a real trace_id so assessment logging fires
     evaluation.case_results[0].trace_id = "trace-1"
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_assessment.called
-    _, kwargs = mlflow_mock.log_assessment.call_args
-    assert kwargs.get("trace_id") == "trace-1"
+    args, _kwargs = mlflow_mock.log_assessment.call_args
+    # First positional arg is the trace id.
+    assert args[0] == "trace-1"
 
 
 def test_upload_skips_assessments_when_trace_id_empty(mlflow_mock):
     evaluation = _make_evaluation_output()
-    # trace_id is already "" in the default
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
     assert not mlflow_mock.log_assessment.called
 
@@ -140,8 +160,7 @@ def test_upload_traces_writes_artifact(mlflow_mock):
     evaluation = _make_evaluation_output()
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=True)
     assert mlflow_mock.log_artifact.called
-    _, kwargs = mlflow_mock.log_artifact.call_args
-    # Artifact path includes "ragpill_traces"
+    _args, kwargs = mlflow_mock.log_artifact.call_args
     assert kwargs.get("artifact_path") == "ragpill_traces"
 
 
@@ -150,6 +169,5 @@ def test_upload_without_dataset_run_still_works(mlflow_mock):
     evaluation.dataset_run = None
     upload_to_mlflow(evaluation, mlflow_settings=_settings(), upload_traces=False)
     assert mlflow_mock.log_table.called
-    # Without a run_id, a new run is started (no run_id kwarg)
     _, kwargs = mlflow_mock.start_run.call_args
     assert "run_id" not in kwargs
