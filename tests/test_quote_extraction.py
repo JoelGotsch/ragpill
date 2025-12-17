@@ -11,6 +11,8 @@ stripping, markdown emphasis stripping, dash folding — now lives in
 
 from __future__ import annotations
 
+import pytest
+
 from ragpill._text import extract_markdown_quotes
 
 # ---------------------------------------------------------------------------
@@ -97,6 +99,65 @@ def test_extract_preserves_markdown_link_text():
     assert "(https://test.org)" in quote
     # No spurious ``.*`` injected from the bracketed text.
     assert ".*" not in quote
+
+
+# ---------------------------------------------------------------------------
+# Round-3 R5 — source attribution happens per block, at that block's own
+# nesting level. A ``(source: …)`` ref on a nested (``>``-prefixed) trailing
+# line belongs to the nested block; only a same-level trailing line (or the
+# after-block plain-text line) may claim the enclosing block. Expected outputs
+# below were derived by running the pre-rewrite parser
+# (``git show 2ca3707^:src/ragpill/_text.py``) — except ``no-trailing-marker``,
+# where the old parser itself mis-attributed the nested ref to the parent (and
+# dropped the nested line); there the fixed level-aware behavior is pinned
+# instead. Validated against the old parser with a 30k-input fuzz comparison
+# (one-off script: old-vs-new ``extract_markdown_quotes`` over random nested
+# blockquote shapes); all remaining divergences classified as old-parser bugs
+# (F4 splice corruption, R5-style source steals, per-level quote-strip
+# mangling).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param(
+            '> line with "inner" quotes\n>> nested a\n>> nested (file: [n.md])\n>',
+            [("line with 'inner' quotes 'nested a' (source: n.md)", None)],
+            id="r5-repro-nested-trailing-source-stays-nested",
+        ),
+        pytest.param(
+            "> a\n>> nested a\n>> nested (file: [n.md])",
+            [("a 'nested a' (source: n.md)", None)],
+            id="no-trailing-marker-nested-source-stays-nested",
+        ),
+        pytest.param(
+            "> a\n>> nested (file: [n.md])\n>> nested b\n> tail",
+            [("a 'nested (file:.*) nested b' tail", None)],
+            id="nested-source-on-non-last-line-stays-inline",
+        ),
+        pytest.param(
+            "> a\n>> nested x\n> (file: [p.md])",
+            [("a 'nested x'", "p.md")],
+            id="same-level-trailing-source-claims-parent",
+        ),
+        pytest.param(
+            "> a\n>> n1 (file: [one.md])\n> mid\n>> n2\n>> (file: [two.md])\n> end\n(file: [outer.md])",
+            [("a '' (source: one.md) mid 'n2' (source: two.md) end", "outer.md")],
+            id="multiple-nested-blocks-each-keep-their-source",
+        ),
+        pytest.param(
+            "> a (file: [x.md])\n>",
+            [("a (file:.*)", None)],
+            id="trailing-blank-marker-keeps-source-inline",
+        ),
+    ],
+)
+def test_nested_source_attribution_stays_at_own_level(output: str, expected: list[tuple[str, str | None]]):
+    """Regression (round-3 R5): the tail-source check must not run on a block's
+    raw pre-nesting content — a nested quote's trailing source ref was deleted
+    from the parent and re-attributed to the parent block."""
+    assert extract_markdown_quotes(output) == expected
 
 
 def test_sibling_subquote_after_multiline_nested_is_not_corrupted():

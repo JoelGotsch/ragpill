@@ -143,13 +143,14 @@ def _parse_blocks(lines: list[str]) -> list[str | _QuoteBlock]:
 
         indent = len(match.group(1))
         content: list[str] = []
+        tail_text = ""  # peeled content of the run's last raw line ("" if blank)
         while i < n:
             inner = _QUOTE_LINE_RE.match(lines[i])
             if inner is None or len(inner.group(1)) != indent:
                 break
-            text = inner.group(2).strip()
-            if text:
-                content.append(text)
+            tail_text = inner.group(2).strip()
+            if tail_text:
+                content.append(tail_text)
             i += 1
 
         # A run of empty ``>`` markers with no content is not a quote.
@@ -157,11 +158,23 @@ def _parse_blocks(lines: list[str]) -> list[str | _QuoteBlock]:
             continue
 
         # Source: the line immediately after the block, else a trailing
-        # ``(source: …)`` on the block's own last content line (which is then
-        # dropped from the quote text).
+        # ``(source: …)`` on the block's own last line (which is then dropped
+        # from the quote text). The trailing line only counts when it sits at
+        # *this* block's nesting level: a source ref on a ``>``-prefixed
+        # trailing line belongs to the nested block and is claimed by the
+        # recursive parse below (round-3 R5 — checking the raw content
+        # re-attributed nested sources to the parent). A trailing blank ``>``
+        # marker likewise leaves the ref inline rather than promoting it.
         source = _get_source(lines[i]) if i < n else None
-        if source is None and content and (tail := _get_source(content[-1])) is not None:
+        if (
+            source is None
+            and tail_text
+            and _QUOTE_LINE_RE.match(tail_text) is None
+            and (tail := _get_source(tail_text)) is not None
+        ):
             source = tail
+            # Drop the claimed line before recursing so a preceding nested
+            # block cannot also claim it via its after-block lookup.
             content = content[:-1]
 
         items.append(_QuoteBlock(items=_parse_blocks(content), source=source))
