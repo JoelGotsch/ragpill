@@ -124,6 +124,32 @@ Tags can sit on cases (`TestCaseMetadata.tags`) or on evaluators
 (`BaseEvaluator.tags`) — both are union-merged before grouping. Rows where
 an evaluator raised an exception are excluded from the denominator.
 
+### Per-attribute accuracy (key → value breakdown)
+
+Attributes are key→value pairs on `TestCaseMetadata.attributes` (and
+`EvaluatorMetadata.attributes`). Where tags answer "do you have this
+label?", attributes answer "which value of this label?". Pass rates are
+computed per value:
+
+```python
+result.per_attribute_accuracy("difficulty")
+# {"easy": 1.0, "medium": 0.75, "hard": 0.33}
+
+result.per_attribute_accuracy_all()
+# {
+#   "difficulty": {"easy": 1.0, "medium": 0.75, "hard": 0.33},
+#   "domain":     {"chemistry": 0.95, "biology": 0.40},
+# }
+```
+
+Cases missing the attribute are skipped (not counted as failures).
+Unhashable attribute values are silently stringified for dict-key
+safety. The triage view emits a "Pass rate by attribute" section with
+one table per attribute that has at least two distinct values; uniform
+attributes are skipped. The upload layer logs each `(key, value)` pair
+as an `accuracy_attr_{key}_{value}` MLflow metric, mirroring how
+`accuracy_tag_{tag}` is logged.
+
 ---
 
 ## Exploration: looking at what the agent did

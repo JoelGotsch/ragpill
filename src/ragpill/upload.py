@@ -18,6 +18,7 @@ Two modes:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import mlflow
@@ -78,11 +79,25 @@ def _delete_llm_judge_traces(settings: MLFlowSettings, experiment_id: str, run_i
 # ---------------------------------------------------------------------------
 
 
+_MLFLOW_METRIC_NAME_RE = re.compile(r"[^A-Za-z0-9_./ -]+")
+
+
+def _slug(name: str) -> str:
+    """Slug a string to MLflow's metric-name charset (alphanum, `_`, `.`, `/`, space, `-`)."""
+    return _MLFLOW_METRIC_NAME_RE.sub("_", name)
+
+
+def _log_accuracy_metrics(prefix: str, scores: dict[str, float]) -> None:
+    """Log each entry of ``scores`` as ``f"{prefix}_{slug(key)}"``."""
+    for name, value in scores.items():
+        mlflow.log_metric(f"{prefix}_{_slug(name)}", value)
+
+
 def _log_table_and_metrics(
     evaluation: EvaluationOutput,
     model_params: dict[str, str] | None,
 ) -> None:
-    """Log the runs DataFrame as an MLflow table plus overall/per-tag accuracy."""
+    """Log the runs DataFrame as an MLflow table plus overall + per-tag + per-attribute accuracy."""
     mlflow.log_table(evaluation.runs, "evaluation_results.json")
     if model_params:
         mlflow.log_params(model_params)
@@ -94,8 +109,9 @@ def _log_table_and_metrics(
     if len(df_valid) > 0:
         overall_accuracy: float = float(df_valid["evaluator_result"].mean())
         mlflow.log_metric("overall_accuracy", overall_accuracy)
-    for tag, accuracy in evaluation.per_tag_accuracy().items():
-        mlflow.log_metric(f"accuracy_tag_{tag}", accuracy)
+    _log_accuracy_metrics("accuracy_tag", evaluation.per_tag_accuracy())
+    for attr_key, value_map in evaluation.per_attribute_accuracy_all().items():
+        _log_accuracy_metrics(f"accuracy_attr_{_slug(attr_key)}", value_map)
 
 
 def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:

@@ -212,6 +212,76 @@ def test_tag_breakdown_section_appears_when_runs_have_tags():
     assert "100%" in out
 
 
+def test_attribute_breakdown_renders_per_attribute_section():
+    cases = [
+        CaseResult(
+            case_name=f"q{i}",
+            inputs="in",
+            metadata=TestCaseMetadata(attributes={"difficulty": diff}),
+            base_input_key=f"c{i}",
+            trace_id="",
+            run_results=[
+                RunResult(
+                    run_index=0,
+                    input_key="k0",
+                    run_span_id="",
+                    output="out",
+                    duration=0.1,
+                    assertions={"e": _result("e", passed)},
+                )
+            ],
+            aggregated=_aggregated(passed=passed, pass_rate=1.0 if passed else 0.0),
+        )
+        for i, (diff, passed) in enumerate([("easy", True), ("easy", True), ("hard", False), ("hard", True)])
+    ]
+    out = render_evaluation_output_as_triage(_eval_output(cases))
+    assert "## Pass rate by attribute" in out
+    assert "### `difficulty`" in out
+    # hard (50%) sorts before easy (100%) — worst first
+    assert out.index("`hard`") < out.index("`easy`")
+    assert "50%" in out
+    assert "100%" in out
+
+
+def test_attribute_breakdown_skips_single_value_attributes():
+    """A uniform attribute (every case has the same value) is not worth a table."""
+    cases = [
+        CaseResult(
+            case_name=f"q{i}",
+            inputs="in",
+            metadata=TestCaseMetadata(attributes={"domain": "chem"}),  # same on every case
+            base_input_key=f"c{i}",
+            trace_id="",
+            run_results=[
+                RunResult(
+                    run_index=0,
+                    input_key="k0",
+                    run_span_id="",
+                    output="out",
+                    duration=0.1,
+                    assertions={"e": _result("e", True)},
+                )
+            ],
+            aggregated=_aggregated(passed=True, pass_rate=1.0),
+        )
+        for i in range(3)
+    ]
+    out = render_evaluation_output_as_triage(_eval_output(cases))
+    assert "Pass rate by attribute" not in out
+
+
+def test_attribute_breakdown_omitted_when_no_attributes():
+    failing = _case(
+        "Q",
+        "case-1",
+        "in",
+        runs=[_run(0, "k0", "out", {"E": _result("E", False)})],
+        aggregated=_aggregated(passed=False, pass_rate=0.0),
+    )
+    out = render_evaluation_output_as_triage(_eval_output([failing]))
+    assert "Pass rate by attribute" not in out
+
+
 def test_tag_breakdown_omitted_when_runs_have_no_tags():
     failing = _case(
         "Q",
