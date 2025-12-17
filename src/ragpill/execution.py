@@ -164,6 +164,28 @@ class DatasetRunOutput:
         """
         return _dataset_run_from_dict(json.loads(s))
 
+    def to_llm_text(
+        self,
+        *,
+        max_chars: int = 16_000,
+        include_spans: bool = True,
+        redact: bool = True,
+        redact_patterns: list[str] | None = None,
+    ) -> str:
+        """Render an exploration-focused markdown view of this run.
+
+        See :func:`ragpill.report.exploration.render_dataset_run_as_exploration`.
+        """
+        from ragpill.report.exploration import render_dataset_run_as_exploration
+
+        return render_dataset_run_as_exploration(
+            self,
+            max_chars=max_chars,
+            include_spans=include_spans,
+            redact=redact,
+            redact_patterns=redact_patterns,
+        )
+
 
 # ---------------------------------------------------------------------------
 # JSON helpers

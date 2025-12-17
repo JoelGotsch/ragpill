@@ -90,6 +90,7 @@ nav:
     - Test Sets: guide/testsets.md
     - CSV Adapter: guide/csv-adapter.md
     - Repeated Runs: guide/repeated-runs.md
+    - LLM-Readable Reports: guide/llm-reports.md
   - How-To:
     - Custom Evaluator: how-to/custom-evaluator.md
     - Custom Type Evaluator: how-to/custom-type-evaluator.md
@@ -108,6 +109,7 @@ nav:
     - Upload Layer: api/upload.md
     - MLflow Helper: api/mlflow.md
     - Result Types: api/types.md
+    - Reporting: api/report.md
     - Environment Settings: api/environment.md
     - Utils: api/utils.md
   - Development:
