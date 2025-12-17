@@ -157,10 +157,23 @@ def test_autolog_pydantic_ai_calls_mlflow(mlflow_mock):
     mlflow_mock.pydantic_ai.autolog.assert_called_once_with()
 
 
+def _mock_trace(trace_id: str, root_attributes: dict[str, Any] | None = None) -> MagicMock:
+    """A native-shaped mock trace; ``root_attributes=None`` means no root span."""
+    trace = MagicMock()
+    trace.info.trace_id = trace_id
+    if root_attributes is None:
+        trace.data._get_root_span.return_value = None
+    else:
+        root = MagicMock()
+        root.attributes = dict(root_attributes)
+        trace.data._get_root_span.return_value = root
+    return trace
+
+
 def test_delete_judge_traces_filters_server_side(mlflow_mock):
     """Filters judge traces server-side by the ``ragpill_is_judge_trace`` tag —
-    the search returns only judge traces, so all of them are deleted (no
-    client-side root-span walk / full-payload download)."""
+    the search returns only judge traces, so all of them are deleted without
+    downloading span payloads (``include_spans=False``; only trace ids are read)."""
     judge = MagicMock()
     judge.info.trace_id = "judge-1"
     mlflow_mock.search_traces.return_value = [judge]
@@ -172,7 +185,47 @@ def test_delete_judge_traces_filters_server_side(mlflow_mock):
     assert kwargs.get("run_id") == "run-1"
     assert kwargs.get("locations") == ["exp-1"]
     assert kwargs.get("filter_string") == "tags.ragpill_is_judge_trace = 'true'"
+    assert kwargs.get("include_spans") is False
+    mlflow_mock.search_traces.assert_called_once()  # tag match -> no fallback sweep
     dt.assert_called_once_with(experiment_id="exp-1", trace_ids=["judge-1"])
+
+
+def test_delete_judge_traces_falls_back_to_legacy_attribute_sweep(mlflow_mock, caplog):
+    """Zero tag matches -> one-shot fallback sweep: traces marked as judge only
+    via the legacy root-span *attribute* (pre-tag ragpill) are detected, deleted,
+    and the cleanup is logged."""
+    legacy = _mock_trace("legacy-1", {"ragpill_is_judge_trace": True})
+    task = _mock_trace("task-1", {"other": "x"})
+    rootless = _mock_trace("rootless-1", None)
+    mlflow_mock.search_traces.side_effect = [[], [legacy, task, rootless]]
+
+    backend = MLflowBackend()
+    with patch.object(backend, "delete_traces") as dt, caplog.at_level("INFO", logger="ragpill.backends"):
+        backend.delete_judge_traces("exp-1", "run-1")
+
+    assert mlflow_mock.search_traces.call_count == 2
+    _args, sweep_kwargs = mlflow_mock.search_traces.call_args_list[1]
+    assert sweep_kwargs.get("run_id") == "run-1"
+    assert sweep_kwargs.get("locations") == ["exp-1"]
+    assert "filter_string" not in sweep_kwargs  # unfiltered: legacy traces carry no tag
+    assert sweep_kwargs.get("include_spans") is True  # must inspect root-span attributes
+    dt.assert_called_once_with(experiment_id="exp-1", trace_ids=["legacy-1"])
+    assert any("legacy judge trace" in r.message for r in caplog.records)
+
+
+def test_delete_judge_traces_fallback_without_legacy_traces_deletes_nothing(mlflow_mock, caplog):
+    """Zero tag matches and no legacy root-span attributes -> nothing deleted,
+    no legacy-cleanup log line, no crash."""
+    task = _mock_trace("task-1", {"other": "x"})
+    mlflow_mock.search_traces.side_effect = [[], [task]]
+
+    backend = MLflowBackend()
+    with patch.object(backend, "delete_traces") as dt, caplog.at_level("INFO", logger="ragpill.backends"):
+        backend.delete_judge_traces("exp-1", "run-1")
+
+    assert mlflow_mock.search_traces.call_count == 2
+    dt.assert_called_once_with(experiment_id="exp-1", trace_ids=[])
+    assert not any("legacy" in r.message for r in caplog.records)
 
 
 def test_log_metric_forwards(mlflow_mock):

@@ -217,19 +217,50 @@ class MLflowBackend(RemoteQueryMixin):
         # Judge spans promote the ``ragpill_is_judge_trace`` marker to a trace
         # tag (see start_span), so we filter server-side and get back *only* the
         # judge traces — no downloading of every task trace's span payload to
-        # inspect a root span. ``mlflow.search_traces`` auto-paginates internally
-        # up to ``max_results`` (a large cap avoids the old silent 1000 cap).
+        # inspect a root span. Only ``trace.info.trace_id`` is read, so
+        # ``include_spans=False`` skips the span payloads entirely.
+        # ``mlflow.search_traces`` auto-paginates internally up to
+        # ``max_results`` (a large cap avoids the old silent 1000 cap).
         traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
             return_type="list",
             run_id=run_id,
             locations=[experiment_id],
             filter_string=f"tags.{JUDGE_TRACE_TAG} = 'true'",
             max_results=_JUDGE_TRACE_SEARCH_LIMIT,
+            include_spans=False,
         )
         judge_trace_ids: list[str] = [trace.info.trace_id for trace in traces]
         if judge_trace_ids:
             logger.info("Deleting %d judge trace(s) from run %s.", len(judge_trace_ids), run_id)
-        self.delete_traces(experiment_id=experiment_id, trace_ids=judge_trace_ids)
+            self.delete_traces(experiment_id=experiment_id, trace_ids=judge_trace_ids)
+            return
+        # Traces persisted by pre-tag ragpill versions carry the judge marker
+        # only as a root-span *attribute*, which the tag filter can never match.
+        # One-shot fallback sweep: it only fires when nothing is tagged, so the
+        # normal path stays cheap. This search needs the span payloads
+        # (``include_spans=True``) to inspect root-span attributes; native
+        # introspection (``trace.data._get_root_span`` is not public API) is
+        # confined here — only this adapter knows MLflow's trace shape.
+        legacy_traces: list[Any] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
+            return_type="list",
+            run_id=run_id,
+            locations=[experiment_id],
+            max_results=_JUDGE_TRACE_SEARCH_LIMIT,
+            include_spans=True,
+        )
+        legacy_trace_ids: list[str] = []
+        for trace in legacy_traces:
+            root = trace.data._get_root_span()
+            if root and root.attributes.get(JUDGE_TRACE_TAG):
+                legacy_trace_ids.append(trace.info.trace_id)
+        if legacy_trace_ids:
+            logger.info(
+                "Cleaned %d legacy judge trace(s) from run %s "
+                "(pre-tag ragpill marked judge traces via a root-span attribute only).",
+                len(legacy_trace_ids),
+                run_id,
+            )
+        self.delete_traces(experiment_id=experiment_id, trace_ids=legacy_trace_ids)
 
     # ------------------------------------------------------------------
     # ResultsBackend
