@@ -31,6 +31,12 @@ vendor-neutral model.
   version conflict). Metrics/params/tables/artifacts/trace-deletion no-op
   (Phoenix has no native equivalent); the live path is covered by an env-gated
   integration test.
+- **Experimental Langfuse backend** (`ragpill.backends.langfuse_backend.LangfuseBackend`,
+  extra `ragpill[langfuse]`): v4 OTel SDK; assessments map to Langfuse **scores**
+  (BOOLEAN/NUMERIC/CATEGORICAL), trace deletion is supported, and observations
+  convert to the neutral trace by direct field mapping. Select with
+  `configure_backend(LangfuseBackend)`. Metrics/params/tables/artifacts no-op;
+  live path covered by an env-gated integration test.
 
 ### Breaking
 

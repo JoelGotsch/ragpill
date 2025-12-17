@@ -35,8 +35,11 @@ phoenix = [
     "arize-phoenix-client>=2.9.0",
     "openinference-instrumentation-pydantic-ai>=0.1.16",
 ]
-# Reserved for a later phase; the adapter module doesn't ship yet.
-langfuse = []
+# Langfuse backend (v4 OTel-based SDK). Unlike phoenix, langfuse's OTel deps
+# import alongside the mlflow extra without a version conflict.
+langfuse = [
+    "langfuse>=4.9.0",
+]
 
 [dependency-groups]
 dev = [

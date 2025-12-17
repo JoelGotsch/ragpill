@@ -64,3 +64,11 @@ configure_backend(PhoenixBackend)  # use Arize Phoenix instead of MLflow
       show_root_heading: true
       show_source: true
       heading_level: 3
+
+## LangfuseBackend
+
+::: ragpill.backends.langfuse_backend.LangfuseBackend
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
