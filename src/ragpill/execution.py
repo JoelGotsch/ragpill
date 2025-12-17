@@ -30,11 +30,12 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
-
-from mlflow.entities import Trace
+from typing import TYPE_CHECKING, Any
 
 from ragpill.backends import SpanKind, get_backend
+
+if TYPE_CHECKING:
+    from mlflow.entities import Trace
 from ragpill.base import (
     CaseMetadataT,
     TestCaseMetadata,
@@ -206,7 +207,12 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
 
 def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
     trace_json: str | None = d.get("trace")
-    trace = Trace.from_json(trace_json) if trace_json else None
+    if trace_json:
+        from mlflow.entities import Trace
+
+        trace = Trace.from_json(trace_json)
+    else:
+        trace = None
     return TaskRunOutput(
         run_index=d["run_index"],
         input_key=d["input_key"],
@@ -233,7 +239,12 @@ def _case_run_to_dict(cr: CaseRunOutput) -> dict[str, Any]:
 
 def _case_run_from_dict(d: dict[str, Any]) -> CaseRunOutput:
     trace_json: str | None = d.get("trace")
-    trace = Trace.from_json(trace_json) if trace_json else None
+    if trace_json:
+        from mlflow.entities import Trace
+
+        trace = Trace.from_json(trace_json)
+    else:
+        trace = None
     return CaseRunOutput(
         case_name=d["case_name"],
         inputs=d.get("inputs"),
@@ -352,6 +363,8 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
     ``root_span_id``, or ``None`` when that span is not present."""
     from copy import copy
 
+    from mlflow.entities import Trace as _Trace
+
     all_spans = trace.data.spans or []
     if not any(s.span_id == root_span_id for s in all_spans):
         return None
@@ -365,7 +378,7 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
                 queue.append(span.span_id)
     filtered_data = copy(trace.data)
     filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return Trace(info=trace.info, data=filtered_data)
+    return _Trace(info=trace.info, data=filtered_data)
 
 
 def _fetch_trace(experiment_id: str, run_id: str, parent_trace_id: str) -> Trace | None:
