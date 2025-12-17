@@ -61,11 +61,21 @@ def _require_phoenix() -> None:
 
 
 class _SpanHandle:
-    """Wraps an OTel span to expose the set_attribute/set_inputs/set_outputs
-    surface ragpill's capture code uses, mapping I/O onto OpenInference keys."""
+    """Wraps an OTel span to expose the surface ragpill's capture code reads:
+    ``span_id`` / ``request_id`` (the trace id) plus
+    set_attribute/set_inputs/set_outputs, mapping I/O onto OpenInference keys."""
 
     def __init__(self, span: Any) -> None:
         self._span = span
+
+    @property
+    def span_id(self) -> str:
+        return format(self._span.get_span_context().span_id, "016x")
+
+    @property
+    def request_id(self) -> str:
+        # ragpill calls the trace id "request_id" at the capture layer (mlflow's name).
+        return format(self._span.get_span_context().trace_id, "032x")
 
     def set_attribute(self, key: str, value: Any) -> None:
         self._span.set_attribute(key, value)

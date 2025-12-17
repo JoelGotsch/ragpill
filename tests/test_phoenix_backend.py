@@ -83,6 +83,26 @@ def test_set_destination_registers(fake_phoenix):
     assert backend.resolve_experiment_id("my-proj") == "my-proj"
 
 
+def test_start_span_handle_exposes_ids_and_io(fake_phoenix):
+    from ragpill.backends import SpanKind as WriteSpanKind
+
+    backend = PhoenixBackend()
+    backend.set_destination("http://localhost:6006", "proj")
+    span = MagicMock()
+    span.get_span_context.return_value.span_id = 0xABC
+    span.get_span_context.return_value.trace_id = 0x123
+    backend._tracer.start_as_current_span.return_value.__enter__.return_value = span  # pyright: ignore[reportAttributeAccessIssue]
+
+    with backend.start_span("run-0", WriteSpanKind.TASK) as handle:
+        # execution reads these off the handle (run_span.span_id / .request_id).
+        assert handle.span_id == format(0xABC, "016x")
+        assert handle.request_id == format(0x123, "032x")
+        handle.set_inputs("hi")
+        handle.set_outputs("bye")
+    span.set_attribute.assert_any_call("input.value", "hi")
+    span.set_attribute.assert_any_call("output.value", "bye")
+
+
 def test_start_run_synthesizes_handle():
     backend = PhoenixBackend()
     backend._project_name = "proj"  # pyright: ignore[reportPrivateUsage]
