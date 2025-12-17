@@ -16,8 +16,8 @@ from ragpill.trace.model import Trace
 def filter_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
     """Return a copy of ``trace`` with only the subtree rooted at ``root_span_id``.
 
-    Returns ``None`` when no span with that id is present, mirroring the old
-    MLflow helper's contract.
+    Returns ``None`` when no span with that id is present so callers can tell
+    "span missing" apart from "empty subtree" and decide their own fallback.
     """
     spans = trace.spans
     if not any(s.span_id == root_span_id for s in spans):

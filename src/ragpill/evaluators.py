@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai import models
@@ -199,11 +199,13 @@ class SpanBaseEvaluator(BaseEvaluator):
             )
         trace = ctx.trace
         if ctx.run_span_id:
-            # Restrict to the run's subtree; if the span isn't present (e.g. the
-            # trace is already scoped), keep the full trace rather than nothing.
+            # Restrict to the run's subtree. When the span isn't present (e.g.
+            # the run's spans were still in flight when the trace was fetched),
+            # return an empty span set rather than the full trace — falling
+            # back to the whole case trace would silently score spans from
+            # OTHER repeats of the same case.
             subtree = filter_to_subtree(trace, ctx.run_span_id)
-            if subtree is not None:
-                trace = subtree
+            trace = subtree if subtree is not None else replace(trace, spans=[])
         return trace
 
 
@@ -234,6 +236,13 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
         all_documents: list[Document] = []
         for span in trace.spans:
             if span.kind not in _SOURCE_SPAN_KINDS:
+                continue
+            # Prefer the neutral field: dialect adapters (e.g. OpenInference)
+            # lift retrieved documents into ``Span.documents``. Fall back to
+            # parsing LangChain-shaped dicts out of raw outputs (the MLflow
+            # dialect, whose adapter leaves outputs unparsed).
+            if span.documents:
+                all_documents.extend(span.documents)
                 continue
             outputs = span.outputs
             if not isinstance(outputs, list) or not outputs:
@@ -453,6 +462,9 @@ class RegexInOutputEvaluator(BaseEvaluator):
     pattern: str
 
     def __post_init__(self) -> None:
+        # The output is matched in normalized form, so normalize the pattern
+        # the same way regardless of construction path (constructor or CSV).
+        self.pattern = _normalize_text(self.pattern)
         try:
             self._compiled_pattern = re.compile(self.pattern)
         except re.error as exc:  # pragma: no cover - defensive
@@ -473,7 +485,6 @@ class RegexInOutputEvaluator(BaseEvaluator):
                 pattern = parsed
         except json.JSONDecodeError:
             pass
-        pattern = _normalize_text(pattern)
         return cls(
             pattern=pattern,
             expected=expected,
