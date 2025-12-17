@@ -292,7 +292,13 @@ def _create_runs_dataframe(
                     {
                         "inputs": str(cr.inputs),
                         "output": str(rr.output),
-                        "evaluator_result": False,
+                        # None (NaN), not False: an evaluator that could not run
+                        # (raised, or its trace was unavailable) must be excluded
+                        # from accuracy denominators — matching RunResult.all_passed
+                        # and per_tag_accuracy — so infra failures don't depress the
+                        # score. The failure is still surfaced via this row's reason
+                        # and the triage report.
+                        "evaluator_result": None,
                         "evaluator_data": "",
                         "evaluator_reason": f"Evaluator failed: {ef.error_message}\n\n{ef.error_stacktrace}",
                         "expected": True,

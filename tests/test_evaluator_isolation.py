@@ -62,7 +62,11 @@ def test_get_trace_filters_to_run_subtree():
     assert {s.span_id for s in scoped.spans} == {"run-0", "run-0-child"}
 
 
-def test_unknown_run_span_id_yields_empty_spans_not_full_trace():
+def test_unknown_run_span_id_raises_trace_unavailable():
+    import pytest
+
+    from ragpill.evaluators import TraceUnavailableError
+
     trace = Trace(
         trace_id="tr-1",
         spans=[
@@ -70,9 +74,11 @@ def test_unknown_run_span_id_yields_empty_spans_not_full_trace():
             _span("run-0", "case-root"),
         ],
     )
-    scoped = _evaluator().get_trace(_ctx(trace, "run-9-missing"))
-    # The other repeats' spans must NOT leak into this run's evaluation.
-    assert scoped.spans == []
+    # The run's subtree is absent (spans in flight): this is an infra state, not
+    # an empty retrieval. It must raise so the evaluation layer records an error
+    # rather than a false ``False`` — and must NOT leak other repeats' spans.
+    with pytest.raises(TraceUnavailableError):
+        _evaluator().get_trace(_ctx(trace, "run-9-missing"))
 
 
 def test_get_documents_reads_neutral_documents_field():

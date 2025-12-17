@@ -166,8 +166,8 @@ async def test_mismatched_case_counts_raises():
 
 
 def test_span_base_evaluator_get_trace_raises_when_trace_missing():
-    """SpanBaseEvaluator.get_trace raises ValueError when ctx.trace is None."""
-    from ragpill.evaluators import RegexInSourcesEvaluator
+    """SpanBaseEvaluator.get_trace raises TraceUnavailableError when ctx.trace is None."""
+    from ragpill.evaluators import RegexInSourcesEvaluator, TraceUnavailableError
 
     ev = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check="x")
     ctx: EvaluatorContext[Any, Any, EvaluatorMetadata] = EvaluatorContext(
@@ -178,7 +178,7 @@ def test_span_base_evaluator_get_trace_raises_when_trace_missing():
         output="o",
         duration=0.0,
     )
-    with pytest.raises(ValueError, match=r"ctx\.trace"):
+    with pytest.raises(TraceUnavailableError):
         ev.get_trace(ctx)
 
 

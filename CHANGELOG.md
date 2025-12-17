@@ -6,11 +6,27 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phase 1 of the review follow-up: correctness blockers that could produce a
-silent wrong answer, plus small mechanical hardening. No public API renames yet
+Phases 1–2 of the review follow-up: correctness blockers that could produce a
+silent wrong answer, plus honest failure attribution. No public API renames yet
 (those land in a later phase).
 
 ### Fixed
+
+- **A trace that could not be read is now an evaluator error, not a false
+  `False`.** When a span-based evaluator's trace was unavailable (fetch timed
+  out, backend error, or the run's spans were still in flight), `get_trace`
+  returned an empty span set, so `RegexInSourcesEvaluator` reported "pattern not
+  found in any document" — a flaky tracking server was indistinguishable from a
+  real regression. It now raises `TraceUnavailableError` (exported from
+  `ragpill`), which the evaluation layer records as an evaluator failure (error
+  state), distinct from a fail verdict.
+- **Evaluator-failure rows no longer depress accuracy.** Rows for evaluators
+  that could not run are written as `NaN` (not `False`) in the runs DataFrame,
+  so `overall_accuracy` / `per_tag_accuracy` exclude them — matching
+  `RunResult.all_passed` and the documented behavior, so the case-pass and
+  accuracy dashboards no longer disagree.
+
+### Fixed (Phase 1)
 
 - **`evaluate_results` now verifies case identity, not just count.** Runs were
   paired to testset cases by index with only a length check, so a reordered or

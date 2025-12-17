@@ -15,6 +15,7 @@ from ragpill.evaluators import (
     RegexInDocumentMetadataEvaluator,
     RegexInOutputEvaluator,
     RegexInSourcesEvaluator,
+    TraceUnavailableError,
 )
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput, execute_dataset
 from ragpill.llm_judge import GradingOutput, judge_input_output, judge_output
@@ -49,6 +50,7 @@ __all__ = [
     "RunResult",
     "TaskRunOutput",
     "TestCaseMetadata",
+    "TraceUnavailableError",
     "configure_llm_judge",
     "evaluate_results",
     "evaluate_testset_with_mlflow",

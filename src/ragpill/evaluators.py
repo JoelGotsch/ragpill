@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai import models
@@ -28,6 +28,18 @@ from ragpill.utils import (
 # import a second SpanKind into this module — ``SpanKind`` above is the
 # write-side enum used by ``LLMJudge.start_span``.
 _SOURCE_SPAN_KINDS: frozenset[str] = frozenset({"RETRIEVER", "TOOL", "RERANKER"})
+
+
+class TraceUnavailableError(Exception):
+    """Raised when a span-based evaluator's trace is missing or incomplete.
+
+    Distinct from a genuine evaluation failure: it means the run's trace could
+    not be read (capture disabled, fetch timed out, backend error, or the run's
+    spans were still in flight), so the check *could not run* — not that it ran
+    and failed. The evaluation layer records it as an evaluator failure (error
+    state) rather than a ``False`` verdict, so a slow exporter or a flaky
+    tracking server is never mistaken for a real regression.
+    """
 
 
 def _get_default_judge_llm() -> models.Model:
@@ -191,23 +203,35 @@ class SpanBaseEvaluator(BaseEvaluator):
             subtree when ``ctx.run_span_id`` is set.
 
         Raises:
-            ValueError: If ``ctx.trace`` is ``None``.
+            TraceUnavailableError: If ``ctx.trace`` is ``None`` (capture off or
+                the fetch failed) or the run's subtree is absent from the
+                fetched trace (spans still in flight). Surfaced as an evaluator
+                *error*, never a ``False`` verdict.
         """
         if ctx.trace is None:
-            raise ValueError(
-                "SpanBaseEvaluator.get_trace requires ctx.trace to be populated. "
-                "Make sure execute_dataset() was called with capture_traces=True "
-                "before running evaluators."
+            raise TraceUnavailableError(
+                "No trace is available for this run. Either execute_dataset() ran with "
+                "capture_traces=False, or the trace fetch timed out / the backend errored. "
+                "This is an infrastructure problem, so the check could not run — it is not "
+                "an evaluation failure."
             )
         trace = ctx.trace
         if ctx.run_span_id:
-            # Restrict to the run's subtree. When the span isn't present (e.g.
-            # the run's spans were still in flight when the trace was fetched),
-            # return an empty span set rather than the full trace — falling
-            # back to the whole case trace would silently score spans from
-            # OTHER repeats of the same case.
+            # Restrict to the run's subtree. When the run's span isn't present
+            # (its spans were still in flight when the trace was fetched, or the
+            # fetch was incomplete), raise rather than scoring an empty span set:
+            # an empty set is indistinguishable from "retrieval returned nothing"
+            # and would report a false failure. Falling back to the whole case
+            # trace is also wrong — it would score OTHER repeats' spans.
             subtree = filter_to_subtree(trace, ctx.run_span_id)
-            trace = subtree if subtree is not None else replace(trace, spans=[])
+            if subtree is None:
+                raise TraceUnavailableError(
+                    f"This run's span subtree ({ctx.run_span_id!r}) is not present in the "
+                    "fetched trace — its spans were likely still in flight when the trace "
+                    "was read. Treating as trace-unavailable (infra), not as an empty "
+                    "retrieval, so a slow exporter is not mistaken for a regression."
+                )
+            trace = subtree
         return trace
 
 
