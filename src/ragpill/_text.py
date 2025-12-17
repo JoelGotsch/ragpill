@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 
-def _clean_quote_text(text: str, depth: int = 0, quote_char: str | None = None) -> tuple[str, str | None]:
+def _clean_quote_text(text: str, quote_char: str | None = None) -> tuple[str, str | None]:
     """
     Recursively clean quote text by detecting quote characters and ensuring proper nesting and alternation.
     Returns cleaned text and the detected quote char of the outermost level if any.
@@ -44,7 +45,7 @@ def _clean_quote_text(text: str, depth: int = 0, quote_char: str | None = None) 
         match_idx = find_matching_quote(text, 0, outer_quote)
         if match_idx == len(text) - 1:
             # Strip outer quotes and recurse
-            inner_text, inner_quote_char = _clean_quote_text(text[1:-1], depth + 1, quote_char)
+            inner_text, inner_quote_char = _clean_quote_text(text[1:-1], quote_char)
             return inner_text.strip(), inner_quote_char
 
     # Check for unmatched leading quote
@@ -53,7 +54,7 @@ def _clean_quote_text(text: str, depth: int = 0, quote_char: str | None = None) 
         match_idx = find_matching_quote(text, 0, leading_quote)
         if match_idx == -1:
             # Unmatched leading quote - strip it
-            inner_text, _ = _clean_quote_text(text[1:], depth + 1, quote_char or leading_quote)
+            inner_text, _ = _clean_quote_text(text[1:], quote_char or leading_quote)
             return inner_text.strip(), quote_char or leading_quote
 
     def normalize_quotes_to(out_quote: str) -> str:
@@ -68,7 +69,7 @@ def _clean_quote_text(text: str, depth: int = 0, quote_char: str | None = None) 
                 match_idx = find_matching_quote(text, i, ch)
                 if match_idx != -1:
                     inner_content = text[i + 1 : match_idx]
-                    cleaned_inner, _ = _clean_quote_text(inner_content, depth + 1, alt)
+                    cleaned_inner, _ = _clean_quote_text(inner_content, alt)
                     result.append(out_quote)
                     result.append(cleaned_inner)
                     result.append(out_quote)
@@ -97,86 +98,110 @@ def _get_source(line: str) -> str | None:
     return None
 
 
-def _extract_quotes(lines: list[str], depth: int = 0) -> list[tuple[list[str], str | None, int, int]]:
-    """Extract blocks of quoted text from lines (as lines), their source, the first line number and the last line number of that quote.
+_QUOTE_LINE_RE = re.compile(r"^(\s*)>(.*)$")
+_QUOTE_CHARS = ('"', "'")
 
-    Note: for nested quotes the last_line_num-first_line_num+1 is generally different from len(lines) because
-    quotes get collapsed.
+
+@dataclass
+class _QuoteBlock:
+    """One markdown blockquote, as a tree node.
+
+    ``items`` is the block's content in document order: plain text lines
+    (``str``) interleaved with nested :class:`_QuoteBlock` children. ``source``
+    is the ``(source: …)`` / ``(file: …)`` reference attached to this block, if
+    any. Built in a single pass by :func:`_parse_blocks` and flattened to a
+    quote string by :func:`_render_block`.
     """
 
+    items: list[str | _QuoteBlock]
+    source: str | None = None
+
+
+def _parse_blocks(lines: list[str]) -> list[str | _QuoteBlock]:
+    """Parse ``lines`` into document-order plain lines and blockquote trees.
+
+    A block is a maximal run of consecutive ``>``-prefixed lines sharing the
+    same leading indent. Each line contributes its content (one ``>`` peeled
+    off, whitespace stripped); the collected content is parsed recursively, so a
+    content line that itself begins with ``>`` becomes a nested child *in place*.
+
+    This tree replaces the old index-splicing recursion, which recorded
+    subquote positions against a list it then mutated — a multiline nested quote
+    followed by a sibling shifted the sibling's indices and corrupted it
+    (round-2 F4). Building children in place makes that class of bug
+    unrepresentable.
+    """
+    items: list[str | _QuoteBlock] = []
     i = 0
-    all_quotes: list[tuple[list[str], str | None, int, int]] = []
-    quote_chars = ['"', "'"]
-    while i < len(lines):
-        line = lines[i]
-        match = re.match(r"^(\s*)>(.*)$", line)
-        if not match:
+    n = len(lines)
+    while i < n:
+        match = _QUOTE_LINE_RE.match(lines[i])
+        if match is None:
+            items.append(lines[i])
             i += 1
             continue
 
-        current_indent = len(match.group(1))
-        quote_lines: list[str] = []
-
-        # Collect contiguous quote lines; break when indentation level changes or line isn't a quote
-        first_line_num = last_line_num = i
-        while i < len(lines):
-            inner_match = re.match(r"^(\s*)>(.*)$", lines[i])
-            if not inner_match:
+        indent = len(match.group(1))
+        content: list[str] = []
+        while i < n:
+            inner = _QUOTE_LINE_RE.match(lines[i])
+            if inner is None or len(inner.group(1)) != indent:
                 break
-            last_line_num = i
-            indent = len(inner_match.group(1))
-            if indent != current_indent:
-                break
-            content = inner_match.group(2)
-            if content.strip():
-                quote_lines.append(
-                    content.strip()
-                )  # the strip is a bit lenient if subquotes would have had different indents.
+            text = inner.group(2).strip()
+            if text:
+                content.append(text)
             i += 1
-        if not quote_lines:
+
+        # A run of empty ``>`` markers with no content is not a quote.
+        if not content:
             continue
-        src = _get_source(lines[i] if i < len(lines) else "")
-        if not src:
-            src = _get_source(lines[i - 1])
-            if src:
-                quote_lines.pop()  # remove the source line from the quote block if it's part of it
 
-        # get subquotes and replace those lines with the text in quotation-marks.
-        # quotationmark should be quote_char[depth % len(quote_char)] if quote_char is not None else None
+        # Source: the line immediately after the block, else a trailing
+        # ``(source: …)`` on the block's own last content line (which is then
+        # dropped from the quote text).
+        source = _get_source(lines[i]) if i < n else None
+        if source is None and content and (tail := _get_source(content[-1])) is not None:
+            source = tail
+            content = content[:-1]
 
-        subquotes = _extract_quotes(quote_lines, depth=depth + 1)
-        # Process subquotes last-to-first: each splice collapses a multiline
-        # subquote to one line, shifting the indices of everything *after* it.
-        # Recorded indices are against the pre-splice list, so applying them from
-        # the end keeps earlier subquotes' indices valid (a multiline nested
-        # subquote followed by a sibling used to corrupt the later one).
-        for subquote_lines, subquote_source, subquote_first_line_num, subquote_last_line_num in reversed(subquotes):
-            # replace the subquote lines in quote_lines with a single line containing the subquote text in quotation marks
+        items.append(_QuoteBlock(items=_parse_blocks(content), source=source))
+    return items
 
-            src_str = f" (source: {subquote_source})" if subquote_source else ""
-            subquote_text = " ".join(subquote_lines).strip()
-            subquote_text, inner_quote_char = _clean_quote_text(subquote_text)
-            remaining_quote_chars = [qc for qc in quote_chars if qc != inner_quote_char]
-            quote_char = remaining_quote_chars[depth % len(remaining_quote_chars)]
-            quote_lines = (
-                [line for i, line in enumerate(quote_lines) if i < subquote_first_line_num]
-                + [(f"{quote_char}{subquote_text}{quote_char}" + src_str)]
-                + [line for i, line in enumerate(quote_lines) if i > subquote_last_line_num]
-            )
-        for quote_char in quote_chars:
-            if (
-                quote_lines
-                and quote_lines[0].lstrip().startswith(quote_char)
-                and quote_lines[-1].rstrip().endswith(quote_char)
-            ):
-                # Strip the quote character from the first and last line of the quote block
-                quote_lines[0] = quote_lines[0].lstrip()[1:]
-                quote_lines[-1] = quote_lines[-1].rstrip()[:-1]
-                break
 
-        all_quotes.append((quote_lines, src, first_line_num, last_line_num))
+def _render_block(block: _QuoteBlock, depth: int) -> str:
+    """Flatten a block to a single quote string.
 
-    return all_quotes
+    Plain lines join with spaces; each nested child collapses to
+    ``{q}{child}{q} (source: …)``. The wrapping quote char ``q`` alternates with
+    ``depth`` and is chosen to differ from the child's own outermost quote so
+    the two levels stay visually distinct.
+    """
+    parts: list[str] = []
+    for item in block.items:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        child_text = _render_block(item, depth + 1)
+        child_text, inner_quote_char = _clean_quote_text(child_text)
+        candidates = [qc for qc in _QUOTE_CHARS if qc != inner_quote_char]
+        quote_char = candidates[depth % len(candidates)]
+        src_str = f" (source: {item.source})" if item.source else ""
+        parts.append(f"{quote_char}{child_text}{quote_char}{src_str}")
+    return " ".join(parts)
+
+
+def _strip_balanced_outer(text: str) -> str:
+    """Strip one pair of balanced outer quote characters from a top-level block.
+
+    Unlike :func:`_clean_quote_text` (used for nested quotes) this does not
+    rewrite interior quote characters — an outer ``"…"`` is peeled but interior
+    ``'…'`` content pairs are left verbatim.
+    """
+    stripped = text.strip()
+    for quote_char in _QUOTE_CHARS:
+        if len(stripped) >= 2 and stripped.startswith(quote_char) and stripped.endswith(quote_char):
+            return stripped[1:-1]
+    return text
 
 
 # Compiled once at module load. Applied symmetrically to both the agent's
@@ -349,14 +374,14 @@ def extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:
     """
 
     quotes: list[tuple[str, str | None]] = []
-    lines = output.split("\n")
-
-    found_quotes = _extract_quotes(lines)
-    for quote_lines, source, _, _ in found_quotes:
-        quote_text = " ".join(quote_lines).strip() if quote_lines else ""
+    for item in _parse_blocks(output.split("\n")):
+        if not isinstance(item, _QuoteBlock):
+            continue
+        quote_text = _render_block(item, depth=0)
+        quote_text = _strip_balanced_outer(quote_text)
         quote_text = normalize_text(quote_text)
         # Convert agent elisions / bare ellipsis to regex ``.*``. Markdown
         # links ``[text](url)`` are excluded by the regex.
         quote_text = _AGENT_ELISION_RE.sub(".*", quote_text)
-        quotes.append((quote_text, source))
+        quotes.append((quote_text, item.source))
     return quotes
