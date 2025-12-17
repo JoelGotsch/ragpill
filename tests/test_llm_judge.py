@@ -129,6 +129,102 @@ def test_judge_input_output_prompt_includes_input_section():
     assert "the answer" in prompt
 
 
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_run_includes_rubric_verbatim_in_reason():
+    """``LLMJudge.run`` prepends the rubric to the judge's reasoning in EvaluationResult.reason."""
+    from typing import Any
+
+    from ragpill.base import EvaluatorMetadata
+    from ragpill.eval_types import EvaluatorContext
+
+    rubric = "Output must mention Paris as the capital of France."
+    judge = LLMJudge(rubric=rubric, model=TestModel())
+    ctx: EvaluatorContext[Any, Any, EvaluatorMetadata] = EvaluatorContext(
+        name="t",
+        inputs="What is the capital?",
+        metadata=EvaluatorMetadata(expected=True),
+        expected_output=None,
+        output="Paris is the capital.",
+        duration=0.0,
+    )
+    result = await judge.run(ctx)
+    assert rubric in (result.reason or ""), f"Rubric verbatim missing from reason: {result.reason!r}"
+    # And the judge's own reasoning is still there (TestModel produces a non-empty reason).
+    assert "Rubric:" in (result.reason or "")
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_run_includes_rubric_even_on_pass():
+    """Rubric is embedded whether the verdict is pass or fail (unconditional embedding)."""
+    from typing import Any
+
+    from ragpill.base import EvaluatorMetadata
+    from ragpill.eval_types import EvaluatorContext
+
+    rubric = "Output should be non-empty."
+    judge = LLMJudge(rubric=rubric, model=TestModel())
+    ctx: EvaluatorContext[Any, Any, EvaluatorMetadata] = EvaluatorContext(
+        name="t",
+        inputs=None,
+        metadata=EvaluatorMetadata(expected=True),
+        expected_output=None,
+        output="Something",
+        duration=0.0,
+    )
+    result = await judge.run(ctx)
+    assert rubric in (result.reason or "")
+
+
+def test_evaluation_output_roundtrip_preserves_rubric_in_reason():
+    """to_json / from_json keep the rubric-plus-judge-reasoning string intact."""
+    import pandas as pd
+
+    from ragpill.base import TestCaseMetadata
+    from ragpill.eval_types import EvaluationResult, EvaluatorSource
+    from ragpill.types import (
+        AggregatedResult,
+        CaseResult,
+        EvaluationOutput,
+        RunResult,
+    )
+
+    rubric = "Output must mention Paris as the capital of France."
+    combined_reason = f"Rubric: {rubric}\nVerdict: the output mentions Paris."
+    rr = RunResult(
+        run_index=0,
+        input_key="k0",
+        run_span_id="",
+        output="Paris is the capital.",
+        duration=0.0,
+        assertions={
+            "LLMJudge": EvaluationResult(
+                name="LLMJudge",
+                value=True,
+                reason=combined_reason,
+                source=EvaluatorSource(name="LLMJudge", arguments={}),
+            )
+        },
+    )
+    cr = CaseResult(
+        case_name="c",
+        inputs="What is the capital?",
+        metadata=TestCaseMetadata(),
+        base_input_key="c0",
+        trace_id="",
+        run_results=[rr],
+        aggregated=AggregatedResult(
+            passed=True, pass_rate=1.0, threshold=0.8, summary="ok", per_evaluator_pass_rates={"LLMJudge": 1.0}
+        ),
+    )
+    eo = EvaluationOutput(runs=pd.DataFrame(), cases=pd.DataFrame(), case_results=[cr])
+    restored = EvaluationOutput.from_json(eo.to_json())
+    restored_reason = restored.case_results[0].run_results[0].assertions["LLMJudge"].reason
+    assert restored_reason == combined_reason
+    assert rubric in (restored_reason or "")
+
+
 def test_judge_output_prompt_has_no_input_section():
     """``_build_prompt`` omits the ``<Input>`` section when inputs is None."""
     from ragpill.llm_judge import _build_prompt
