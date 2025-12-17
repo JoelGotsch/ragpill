@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Literal
 
 
 class SpanKind(StrEnum):
@@ -36,6 +37,34 @@ class RunHandle:
 
     run_id: str
     experiment_id: str
+
+
+@dataclass
+class CaseGroupingHandle:
+    """Returned by :meth:`TraceCaptureBackend.start_case_grouping`.
+
+    Tells the execution layer how the backend chose to relate the per-repeat
+    traces produced inside the case's loop, so it can assemble
+    :class:`~ragpill.execution.CaseRunOutput` correctly.
+
+    Two modes:
+
+    - ``"session"`` — the backend tagged each per-repeat top-level trace with
+      a native session id (MLflow ``mlflow.trace.session`` metadata,
+      Langfuse ``session_id``, OpenInference ``session.id``). The Sessions
+      UI then shows one session per case with each repeat as a turn.
+      ``case_trace_id`` is ``None``; each ``TaskRunOutput`` carries its own
+      trace_id and the execution layer fetches them individually.
+    - ``"span"`` — the backend opened a parent span instead. Repeats nest as
+      child spans of that parent (the pre-0.5 behaviour). Used as the
+      fallback for any future adapter that lacks a sessions concept.
+      ``case_trace_id`` is the parent's trace_id so the execution layer can
+      filter the case-level trace to per-repeat subtrees as before.
+    """
+
+    mode: Literal["session", "span"]
+    case_trace_id: str | None = None
+    session_id: str | None = None
 
 
 @dataclass

@@ -234,6 +234,45 @@ def test_delete_traces_noop_on_empty(mlflow_mock):
 
 
 # ---------------------------------------------------------------------------
+# Case grouping (sessions)
+# ---------------------------------------------------------------------------
+
+
+def test_start_case_grouping_yields_session_handle_with_case_id(mlflow_mock):
+    """``MLflowBackend.start_case_grouping`` chooses session mode and yields
+    a handle whose ``session_id`` equals the supplied ``case_id``."""
+    backend = MLflowBackend()
+    with backend.start_case_grouping(case_id="case-abc", name="My Case") as handle:
+        assert handle.mode == "session"
+        assert handle.session_id == "case-abc"
+        assert handle.case_trace_id is None
+        # Active session id is recorded for the duration of the context.
+        assert backend._active_session_id == "case-abc"
+    # And cleared after exit.
+    assert backend._active_session_id is None
+
+
+def test_start_span_inside_case_grouping_tags_session(mlflow_mock):
+    """While a case grouping is active, the next ``start_span`` call calls
+    ``mlflow.update_current_trace`` with the session metadata."""
+    backend = MLflowBackend()
+    with backend.start_case_grouping(case_id="case-xyz", name="My Case"):
+        with backend.start_span("inner", SpanKind.TASK):
+            pass
+    assert mlflow_mock.update_current_trace.called
+    _args, kwargs = mlflow_mock.update_current_trace.call_args
+    assert kwargs.get("metadata") == {"mlflow.trace.session": "case-xyz"}
+
+
+def test_start_span_outside_case_grouping_does_not_tag_session(mlflow_mock):
+    """Without an active grouping, ``start_span`` doesn't touch session metadata."""
+    backend = MLflowBackend()
+    with backend.start_span("orphan", SpanKind.TASK):
+        pass
+    assert not mlflow_mock.update_current_trace.called
+
+
+# ---------------------------------------------------------------------------
 # Neutral types
 # ---------------------------------------------------------------------------
 

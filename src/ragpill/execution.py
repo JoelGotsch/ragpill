@@ -63,10 +63,18 @@ class TaskRunOutput:
         input_key: Unique key for this run, formatted as ``{base_hash}_{run_index}``.
         output: Return value of the task, or ``None`` if the task raised.
         duration: Wall-clock seconds the task took to run.
-        trace: MLflow ``Trace`` scoped to this run (filtered to the run's
-            subtree). ``None`` when tracing is disabled.
-        run_span_id: Span ID of the per-run parent span inside the case trace.
-            Empty string when tracing is disabled.
+        trace: Captured ``Trace`` scoped to this run. In session-mode
+            backends (e.g. MLflow with ``mlflow.trace.session`` metadata
+            set) this is the run's own top-level trace; in span-mode
+            backends it's the per-run subtree filtered out of the
+            case-level trace. ``None`` when tracing is disabled.
+        run_span_id: Span ID captured at the per-run span open. In
+            session mode this is the trace's root span id; in span mode
+            it's the child span id under the case's parent.
+        trace_id: Backend trace id captured at the per-run span open.
+            Populated in session-mode backends so the post-loop can
+            fetch each repeat's own trace; empty string in span mode
+            (use the case-level ``CaseRunOutput.trace_id`` instead).
         error: String representation of any exception the task raised. ``None``
             on success. We store the string (not the exception) so the
             dataclass stays JSON-serializable.
@@ -78,6 +86,7 @@ class TaskRunOutput:
     duration: float
     trace: Trace | None = None
     run_span_id: str = ""
+    trace_id: str = ""
     error: str | None = None
 
 
@@ -201,6 +210,7 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
         "duration": tr.duration,
         "trace": tr.trace.to_json() if tr.trace is not None else None,
         "run_span_id": tr.run_span_id,
+        "trace_id": tr.trace_id,
         "error": tr.error,
     }
 
@@ -220,6 +230,7 @@ def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
         duration=d.get("duration", 0.0),
         trace=trace,
         run_span_id=d.get("run_span_id", ""),
+        trace_id=d.get("trace_id", ""),
         error=d.get("error"),
     )
 
@@ -399,23 +410,39 @@ async def _execute_case_runs(
     capture_traces: bool,
     tracing: _TracingContext | None,
 ) -> CaseRunOutput:
-    """Execute all ``repeat`` runs for a single case and return its output."""
+    """Execute all ``repeat`` runs for a single case and return its output.
+
+    Tracing-mode branches on the backend's ``start_case_grouping`` handle:
+
+    - **session mode** (e.g. MLflow with ``mlflow.trace.session`` metadata,
+      Langfuse with ``session_id``): each repeat opens as its own top-level
+      trace, tagged with the case's id. The UI then shows one session per
+      case, one turn per repeat. ``CaseRunOutput.trace`` is ``None``; each
+      ``TaskRunOutput.trace`` is the repeat's own trace.
+
+    - **span mode** (fallback for backends without sessions): the case
+      opens a parent span and repeats nest beneath it. The post-loop fetches
+      the case-level trace once and filters per-repeat subtrees, as in
+      pre-0.5 versions.
+    """
     metadata = case.metadata
     assert metadata is None or isinstance(metadata, TestCaseMetadata)
     base_key = input_to_key(case.inputs)
 
     task_runs: list[TaskRunOutput] = []
-    parent_trace_id = ""
+    case_trace_id = ""
+    grouping_mode: str = "span"
 
     if capture_traces and tracing is not None:
-        with get_backend().start_span(
-            name=(case.name or str(case.inputs))[:60], span_type=SpanKind.TASK
-        ) as parent_span:
-            parent_span.set_inputs(case.inputs)
-            parent_span.set_attribute("input_key", base_key)
-            parent_span.set_attribute("n_runs", repeat)
-            parent_trace_id = parent_span.request_id
-
+        backend = get_backend()
+        with backend.start_case_grouping(
+            case_id=base_key,
+            name=(case.name or str(case.inputs))[:60],
+            inputs=case.inputs,
+            attributes={"input_key": base_key, "n_runs": repeat},
+        ) as case_handle:
+            grouping_mode = case_handle.mode
+            case_trace_id = case_handle.case_trace_id or ""
             for i in range(repeat):
                 task_runs.append(await _execute_single_run(case, task_factory, base_key, i, capture_traces=True))
     else:
@@ -424,12 +451,21 @@ async def _execute_case_runs(
 
     # Attach traces after spans have been committed.
     case_trace: Trace | None = None
-    if capture_traces and tracing is not None and parent_trace_id:
-        case_trace = _fetch_trace(tracing.experiment_id, tracing.run_id, parent_trace_id)
-        if case_trace is not None:
+    if capture_traces and tracing is not None:
+        if grouping_mode == "span" and case_trace_id:
+            # Span mode: one case trace, filtered per repeat.
+            case_trace = _fetch_trace(tracing.experiment_id, tracing.run_id, case_trace_id)
+            if case_trace is not None:
+                for tr in task_runs:
+                    if tr.run_span_id:
+                        tr.trace = _filter_trace_to_subtree(case_trace, tr.run_span_id)
+        elif grouping_mode == "session":
+            # Session mode: each repeat already produced its own trace; fetch
+            # them individually by the trace_id captured at span open.
+            backend = get_backend()
             for tr in task_runs:
-                if tr.run_span_id:
-                    tr.trace = _filter_trace_to_subtree(case_trace, tr.run_span_id)
+                if tr.trace_id:
+                    tr.trace = backend.get_trace(tr.trace_id)
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),
@@ -438,7 +474,7 @@ async def _execute_case_runs(
         metadata=metadata.model_dump(mode="json") if metadata is not None else {},
         base_input_key=base_key,
         trace=case_trace,
-        trace_id=parent_trace_id,
+        trace_id=case_trace_id,
         task_runs=task_runs,
     )
 
@@ -454,6 +490,7 @@ async def _execute_single_run(
     input_key = f"{base_key}_{run_index}"
     fresh_task = task_factory()
     run_span_id = ""
+    trace_id = ""
     duration = 0.0
     output: Any = None
     error_str: str | None = None
@@ -467,6 +504,10 @@ async def _execute_single_run(
         try:
             with get_backend().start_span(name=f"run-{run_index}", span_type=SpanKind.TASK) as run_span:
                 run_span_id = run_span.span_id
+                # ``request_id`` is mlflow's name for the trace id at this
+                # layer. Phoenix/Langfuse adapters return spans that expose
+                # the same attribute via the alias shortcut in Phase 1.
+                trace_id = getattr(run_span, "request_id", "") or ""
                 run_span.set_attribute("run_index", run_index)
                 run_span.set_attribute("input_key", input_key)
                 run_span.set_inputs(case.inputs)
@@ -489,8 +530,9 @@ async def _execute_single_run(
         input_key=input_key,
         output=output,
         duration=duration,
-        trace=None,  # filled in after the parent span has closed
+        trace=None,  # filled in after the span has closed (session or span mode)
         run_span_id=run_span_id,
+        trace_id=trace_id,
         error=error_str,
     )
 

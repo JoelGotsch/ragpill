@@ -26,7 +26,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import pandas as pd
 
-from ragpill.backends._types import Assessment, RunHandle, SpanKind
+from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
 
 # Phase 1 short-cut (see plans/multi-backend-tracking.md Step 1.2(a)):
 # The internal trace type is still mlflow's. Non-MLflow adapters convert
@@ -76,6 +76,38 @@ class TraceCaptureBackend(Protocol):
 
     def autolog_pydantic_ai(self) -> None:
         """Install instrumentation so ``pydantic-ai`` calls land as spans."""
+        ...
+
+    def start_case_grouping(
+        self,
+        case_id: str,
+        name: str,
+        inputs: Any = None,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> AbstractContextManager[CaseGroupingHandle]:
+        """Open a case-level grouping under which the case's repeats relate.
+
+        Two implementation strategies, advertised on the yielded
+        :class:`CaseGroupingHandle`:
+
+        - **``"session"`` mode** (preferred when the backend has a native
+          sessions concept): the adapter registers ``case_id`` as the
+          session id and arranges for each child trace opened via
+          :meth:`start_span` inside this context to be tagged with that
+          session id. No parent span is opened. The Sessions UI then
+          groups one case = one session, one repeat = one turn.
+
+        - **``"span"`` mode** (fallback for backends without sessions): the
+          adapter opens a parent span (with ``inputs``/``attributes`` set
+          on it) and lets child spans nest under it as today. The execution
+          layer reads ``handle.case_trace_id`` to drive its existing
+          per-repeat subtree filtering.
+
+        Implementations choose one mode. The execution layer branches on
+        ``handle.mode`` to assemble :class:`~ragpill.execution.CaseRunOutput`
+        correctly. See ``plans/sessions-for-case-grouping.md`` for the
+        backing analysis.
+        """
         ...
 
 

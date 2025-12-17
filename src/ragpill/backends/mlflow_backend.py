@@ -9,15 +9,15 @@ behaviour.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Generator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 import mlflow
 import pandas as pd
 from mlflow.entities import AssessmentSource, Feedback, SpanType, Trace as MLflowTrace
 
-from ragpill.backends._types import Assessment, RunHandle, SpanKind
+from ragpill.backends._types import Assessment, CaseGroupingHandle, RunHandle, SpanKind
 
 _SPAN_KIND_TO_MLFLOW: dict[SpanKind, str] = {
     SpanKind.AGENT: SpanType.AGENT,
@@ -38,6 +38,15 @@ class MLflowBackend:
     ``ResultsBackend``, and ``LifecycleBackend``. The combined ``Backend``
     protocol is the natural shape.
     """
+
+    def __init__(self) -> None:
+        # Session id active for the current case-grouping context. When set,
+        # each ``start_span`` call inside the context tags its trace with
+        # MLflow's ``mlflow.trace.session`` metadata so the Sessions UI
+        # groups repeats of a case as turns of one session.
+        # Single-threaded by design: ragpill's execute_dataset processes
+        # cases sequentially.
+        self._active_session_id: str | None = None
 
     # ------------------------------------------------------------------
     # TraceCaptureBackend
@@ -70,18 +79,59 @@ class MLflowBackend:
         span_type: SpanKind,
         attributes: Mapping[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
-        cm = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])
-        if attributes:
-            # MLflow's context manager exposes attribute methods on the yielded
-            # span. Stash the attributes for the caller to apply after enter.
-            # Keeping the protocol simple: callers using attributes use the
-            # ``set_attribute`` method on the yielded span directly today, so
-            # we don't pre-set anything here in Step 1.
-            pass
-        return cm
+        # ``attributes`` is reserved for future use (Phoenix/Langfuse pass
+        # per-span attributes at open time); MLflow callers use the yielded
+        # span's ``set_attribute`` method directly today.
+        _ = attributes
+        inner = mlflow.start_span(name=name, span_type=_SPAN_KIND_TO_MLFLOW[span_type])
+        session_id = self._active_session_id
+
+        @contextmanager
+        def wrapped() -> Generator[Any, None, None]:
+            with inner as span:
+                # When inside a case-grouping context, tag this span's trace
+                # with the MLflow session id so the Sessions UI groups
+                # repeats of the same case as turns. Done lazily on enter so
+                # we operate on the actual active trace.
+                if session_id is not None:
+                    mlflow.update_current_trace(metadata={"mlflow.trace.session": session_id})
+                yield span
+
+        return wrapped()
 
     def autolog_pydantic_ai(self) -> None:
         mlflow.pydantic_ai.autolog()  # pyright: ignore[reportPrivateImportUsage]
+
+    def start_case_grouping(
+        self,
+        case_id: str,
+        name: str,
+        inputs: Any = None,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> AbstractContextManager[CaseGroupingHandle]:
+        """Session mode: register ``case_id`` as the MLflow session id and
+        let each per-repeat ``start_span`` call open as a fresh top-level
+        trace tagged with that session id.
+
+        ``inputs`` and ``attributes`` are not surfaced on a parent span
+        (there isn't one in session mode); callers can attach them to
+        individual per-repeat spans via ``start_span``'s yielded handle.
+        """
+        # ``inputs`` and ``attributes`` are part of the protocol for
+        # symmetry with span-mode backends; the MLflow session mode
+        # surfaces those via individual per-repeat span attributes.
+        _ = inputs, attributes, name
+
+        @contextmanager
+        def cm() -> Generator[CaseGroupingHandle, None, None]:
+            previous = self._active_session_id
+            self._active_session_id = case_id
+            try:
+                yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
+            finally:
+                self._active_session_id = previous
+
+        return cm()
 
     # ------------------------------------------------------------------
     # TraceQueryBackend
