@@ -145,11 +145,9 @@ class LLMJudge(BaseEvaluator):
 
             # Timeout is opt-in and caller-specified (``timeout_s`` on the
             # evaluator); ragpill imposes no default budget on the judge call.
-            # anyio.fail_after keeps this portable across asyncio and trio.
-            if self.timeout_s is not None:
-                with anyio.fail_after(self.timeout_s):
-                    grading_output = await _judge()
-            else:
+            # anyio.fail_after keeps this portable across asyncio and trio;
+            # fail_after(None) means "no timeout".
+            with anyio.fail_after(self.timeout_s):
                 grading_output = await _judge()
             span.set_outputs({"pass": grading_output.pass_, "reason": grading_output.reason})
         # Embed the rubric verbatim alongside the judge's reasoning so anyone
@@ -212,11 +210,20 @@ class SpanBaseEvaluator(BaseEvaluator):
             subtree when ``ctx.run_span_id`` is set.
 
         Raises:
-            TraceUnavailableError: If ``ctx.trace`` is ``None`` (capture off or
-                the fetch failed) or the run's subtree is absent from the
-                fetched trace (spans still in flight). Surfaced as an evaluator
-                *error*, never a ``False`` verdict.
+            TraceUnavailableError: If the run's ``trace_status`` is not ``"ok"``
+                (the fetch timed out, the export was still settling, or the
+                backend errored), if ``ctx.trace`` is ``None`` (capture off or
+                the fetch failed), or if the run's subtree is absent from the
+                fetched trace. Surfaced as an evaluator *error*, never a
+                ``False`` verdict.
         """
+        if ctx.trace_status != "ok":
+            raise TraceUnavailableError(
+                f"This run's trace is {ctx.trace_status!r} (not fully exported at the fetch "
+                "deadline, or the backend errored). Treating as trace-unavailable (infra), "
+                "not as an evaluation failure — a slow/partial exporter must not read as a "
+                "retrieval regression."
+            )
         if ctx.trace is None:
             raise TraceUnavailableError(
                 "No trace is available for this run. Either execute_dataset() ran with "
@@ -308,6 +315,19 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
             The evaluation result with a custom reason message.
         """
         documents = self.get_documents(ctx)
+        # Distinguish "the trace was fine but retrieval returned nothing" from
+        # "the pattern was absent from retrieved content" — the same courtesy
+        # LiteralQuoteEvaluator gives. (Trace-unavailability already raised in
+        # get_documents -> get_trace, so reaching here with no documents means a
+        # genuine empty retrieval, not an infra failure.)
+        if not documents:
+            return EvaluationReason(
+                value=False,
+                reason=(
+                    "No documents were retrieved (the trace was available but contained no "
+                    "retriever/tool/reranker output), so the source check could not match."
+                ),
+            )
         result = self.evaluation_function(documents)
         return EvaluationReason(
             value=result,

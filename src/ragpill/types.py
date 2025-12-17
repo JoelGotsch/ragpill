@@ -55,18 +55,27 @@ class RunResult:
     trace_id: str = ""
 
     @property
+    def is_error_state(self) -> bool:
+        """True when the run could not be evaluated at all — it produced no
+        assertions and no task error, only evaluator failures (e.g. the trace
+        was unavailable). Such runs are excluded from pass-rate denominators so
+        an infrastructure outage neither passes nor fails a case."""
+        return not self.assertions and self.error is None and bool(self.evaluator_failures)
+
+    @property
     def all_passed(self) -> bool:
         """True if the task succeeded and every assertion passed.
 
-        ``evaluator_failures`` (evaluators that raised) are intentionally NOT
-        folded in here: doing so would change pass/fail semantics and shift
-        reported pass rates. They are surfaced in the triage report instead so
-        a silently-dropped evaluator is visible without flipping the verdict.
+        A run with only evaluator failures (no assertions, no task error) is an
+        error state, not a pass — "no data" must never read green. Runs where
+        *some* evaluators produced verdicts and others failed are judged on the
+        verdicts they did produce (the failures are surfaced separately in the
+        triage report and the per-evaluator error counts).
         """
         if self.error is not None:
             return False
         if not self.assertions:
-            return True
+            return not self.evaluator_failures
         return all(r.value is True for r in self.assertions.values())
 
 
@@ -79,7 +88,13 @@ class AggregatedResult:
         pass_rate: Fraction of runs where ``all_passed`` was True (0.0 to 1.0).
         threshold: The minimum pass_rate required to pass.
         summary: Human-readable summary string (e.g. "2/3 runs passed").
-        per_evaluator_pass_rates: Per-evaluator pass rates across runs.
+        per_evaluator_pass_rates: Per-evaluator pass rates across runs. The
+            denominator for each evaluator is the number of runs in which it
+            produced a verdict — runs where it errored (e.g. trace unavailable)
+            are excluded, never counted as failures.
+        error_counts: Per-evaluator count of runs in which the evaluator errored
+            (could not produce a verdict). Surfaces an outage instead of hiding
+            or diluting it.
     """
 
     passed: bool
@@ -87,6 +102,7 @@ class AggregatedResult:
     threshold: float
     summary: str
     per_evaluator_pass_rates: dict[str, float]
+    error_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

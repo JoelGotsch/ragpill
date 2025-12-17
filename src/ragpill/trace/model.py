@@ -98,8 +98,12 @@ class Span:
     trace_id: str
     name: str
     kind: SpanKind
-    start_time_ns: int
-    end_time_ns: int
+    # Unix nanoseconds, or ``None`` when the backend could not provide a real
+    # timestamp (e.g. an in-flight span whose end time is still unset). ``None``
+    # signals "unknown" so ordering/duration degrade gracefully instead of
+    # rendering an absurd value.
+    start_time_ns: int | None
+    end_time_ns: int | None
     status: str = "UNSET"
     """``"OK" | "ERROR" | "UNSET"``."""
 

@@ -271,8 +271,9 @@ def test_await_trace_returns_once_exported(mlflow_mock):
         patch.object(backend, "get_trace", side_effect=[None, None, sentinel]) as gt,
         patch("ragpill.backends._common.time.sleep"),
     ):
-        result = backend.await_trace("tid", timeout_s=10.0, poll_interval_s=0.01)
-    assert result is sentinel
+        trace, stable = backend.await_trace("tid", timeout_s=10.0, poll_interval_s=0.01)
+    assert trace is sentinel
+    assert stable is True  # returned because the criterion was met, not the deadline
     assert gt.call_count == 3
     gt.assert_called_with("tid")
 
@@ -285,8 +286,9 @@ def test_await_trace_times_out_returns_none(mlflow_mock):
         patch.object(backend, "get_trace", return_value=None) as gt,
         patch("ragpill.backends._common.time.sleep"),
     ):
-        result = backend.await_trace("missing", timeout_s=0.0, poll_interval_s=0.01)
-    assert result is None
+        trace, stable = backend.await_trace("missing", timeout_s=0.0, poll_interval_s=0.01)
+    assert trace is None
+    assert stable is False  # hit the deadline with nothing
     assert gt.call_count == 1
     mlflow_mock.search_traces.assert_not_called()
 

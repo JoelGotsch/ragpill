@@ -98,6 +98,10 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
     metrics: dict[str, int | float] = field(default_factory=dict)
     trace: Trace | None = None
     run_span_id: str | None = None
+    # Trace-availability for this run: "ok", "incomplete", or "unavailable".
+    # Span-based evaluators treat anything other than "ok" as an infrastructure
+    # failure (raise TraceUnavailableError) rather than an evaluation result.
+    trace_status: str = "ok"
 
 
 @dataclass

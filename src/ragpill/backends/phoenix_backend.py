@@ -28,10 +28,10 @@ from typing import TYPE_CHECKING, Any
 
 from ragpill.backends._common import (
     NoopResultsMixin,
+    RemoteQueryMixin,
     SyntheticRunMixin,
     is_http_not_found,
     logger,
-    poll_for_trace,
     require_extra,
     to_text,
     to_unix_nano,
@@ -91,7 +91,7 @@ class _SpanHandle:
         self._span.set_attribute("output.value", to_text(value))
 
 
-class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
+class PhoenixBackend(RemoteQueryMixin, SyntheticRunMixin, NoopResultsMixin):
     """Adapter implementing the tracking backend protocols against Arize Phoenix."""
 
     # Phoenix is a remote collector; the execution layer must not hand it a
@@ -223,25 +223,6 @@ class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
             logger.warning("PhoenixBackend.get_trace failed for %s: %s", trace_id, exc)
             raise
         return _trace_from_spans_dataframe(df, trace_id)
-
-    def await_trace(
-        self,
-        trace_id: str,
-        *,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        timeout_s: float = 10.0,
-        poll_interval_s: float = 0.5,
-    ) -> NeutralTrace | None:
-        del run_id, experiment_id
-        # Spans arrive in independent OTLP export batches, so a readable trace
-        # can still be missing in-flight spans — require a stable span set.
-        return poll_for_trace(
-            lambda: self.get_trace(trace_id),
-            timeout_s=timeout_s,
-            poll_interval_s=poll_interval_s,
-            stable_span_set=True,
-        )
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         _ = experiment_id, trace_ids

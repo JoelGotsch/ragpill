@@ -15,8 +15,8 @@ def test_to_unix_nano_handles_datetime_timestamp_and_none():
     pd = __import__("pandas")
     ts = pd.Timestamp("2024-01-02T03:04:05Z")
     assert to_unix_nano(ts) == ts.value
-    assert to_unix_nano(None) == 0
-    assert to_unix_nano(float("nan")) == 0
+    assert to_unix_nano(None) is None
+    assert to_unix_nano(float("nan")) is None
 
 
 def test_langfuse_observation_carries_timestamps_and_status():

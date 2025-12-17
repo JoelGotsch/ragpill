@@ -14,7 +14,9 @@ Phase 3 upload.
 
 from __future__ import annotations
 
+import re
 import traceback
+import warnings
 from collections.abc import Mapping
 from typing import Any
 
@@ -50,6 +52,10 @@ from ragpill.types import (
 
 _ta = TypeAdapter(dict[str, Any])
 
+# Signature of the default ``object.__repr__`` (``<Foo object at 0x…>``), which
+# makes ``str(inputs)`` — and therefore the input hash — process-unstable.
+_DEFAULT_REPR_RE = re.compile(r" object at 0x[0-9a-fA-F]+")
+
 
 # ---------------------------------------------------------------------------
 # Aggregation
@@ -66,25 +72,39 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
     Returns:
         :class:`AggregatedResult` with pass/fail, pass_rate, and per-evaluator rates.
     """
-    total = len(run_results)
-    passed_count = sum(1 for r in run_results if r.all_passed)
+    # Error-state runs (could not be evaluated — only infra failures) are
+    # excluded from the case denominator: an outage neither passes nor fails.
+    evaluable = [r for r in run_results if not r.is_error_state]
+    total = len(evaluable)
+    passed_count = sum(1 for r in evaluable if r.all_passed)
     pass_rate = passed_count / total if total > 0 else 0.0
     passed = pass_rate >= threshold
 
+    # Every evaluator seen either as a verdict or as a failure.
     evaluator_names: set[str] = set()
+    error_counts: dict[str, int] = {}
     for r in run_results:
         evaluator_names.update(r.assertions.keys())
+        for f in r.evaluator_failures:
+            evaluator_names.add(f.name)
+            error_counts[f.name] = error_counts.get(f.name, 0) + 1
 
+    # Per-evaluator denominator = runs in which that evaluator produced a
+    # verdict; runs where it errored are excluded (not counted as failures).
     per_evaluator_pass_rates: dict[str, float] = {}
     for eval_name in sorted(evaluator_names):
-        eval_passed = sum(1 for r in run_results if eval_name in r.assertions and r.assertions[eval_name].value is True)
-        per_evaluator_pass_rates[eval_name] = eval_passed / total if total > 0 else 0.0
+        produced = [r for r in run_results if eval_name in r.assertions]
+        eval_passed = sum(1 for r in produced if r.assertions[eval_name].value is True)
+        per_evaluator_pass_rates[eval_name] = eval_passed / len(produced) if produced else 0.0
 
+    error_note = ""
+    if error_counts:
+        error_note = f" (excluded {sum(error_counts.values())} errored evaluator run(s))"
     if passed:
-        summary = f"{passed_count}/{total} runs passed (threshold={threshold})"
+        summary = f"{passed_count}/{total} runs passed (threshold={threshold}){error_note}"
     else:
         failed_details: list[str] = []
-        for r in run_results:
+        for r in evaluable:
             if not r.all_passed:
                 if r.error:
                     failed_details.append(f"run-{r.run_index}: task error: {r.error}")
@@ -93,7 +113,10 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
                         f"{name}: {res.reason}" for name, res in r.assertions.items() if res.value is not True
                     ]
                     failed_details.append(f"run-{r.run_index}: {'; '.join(failed_evals)}")
-        summary = f"{passed_count}/{total} runs passed (threshold={threshold}). Failed: {'; '.join(failed_details)}"
+        summary = (
+            f"{passed_count}/{total} runs passed (threshold={threshold}){error_note}. "
+            f"Failed: {'; '.join(failed_details)}"
+        )
 
     return AggregatedResult(
         passed=passed,
@@ -101,6 +124,7 @@ def _aggregate_runs(run_results: list[RunResult], threshold: float) -> Aggregate
         threshold=threshold,
         summary=summary,
         per_evaluator_pass_rates=per_evaluator_pass_rates,
+        error_counts=error_counts,
     )
 
 
@@ -180,6 +204,7 @@ async def _evaluate_single_run(
         metrics={},
         trace=task_run.trace if task_run.trace is not None else case_run.trace,
         run_span_id=task_run.run_span_id,
+        trace_status=task_run.trace_status,
     )
 
     assertions = {}
@@ -407,8 +432,19 @@ async def evaluate_results(
     # index. A reordered or edited testset would otherwise judge each output
     # against the wrong case's evaluators/expected/rubric. Both sides carry the
     # input hash, so verify identity per case before trusting the zip.
+    #
+    # The hash is ``md5(str(inputs))``, which is only stable when the input has a
+    # deterministic ``str()``. For objects using the default ``object.__repr__``
+    # (embedding the memory address, e.g. ``<Foo object at 0x…>``) the key was
+    # never stable across processes, so a mismatch there is meaningless — skip
+    # the check for those cases (with a one-time warning) rather than hard-fail a
+    # valid saved run.
     mismatches: list[str] = []
+    skipped_unstable = 0
     for idx, (case_run, case) in enumerate(zip(dataset_run.cases, testset.cases)):
+        if _DEFAULT_REPR_RE.search(str(case.inputs)) is not None:
+            skipped_unstable += 1
+            continue
         expected_key = default_input_to_key(case.inputs)
         if case_run.base_input_key != expected_key:
             mismatches.append(
@@ -416,6 +452,14 @@ async def evaluate_results(
                 f"(case {case_run.case_name!r}) but testset case {case.name or str(case.inputs)!r} "
                 f"hashes to {expected_key!r}"
             )
+    if skipped_unstable:
+        warnings.warn(
+            f"evaluate_results: input-identity verification skipped for {skipped_unstable} case(s) whose "
+            "inputs have no stable str()/repr (default object repr embeds a memory address). Give such "
+            "inputs a deterministic __repr__ (or use a dataclass/pydantic model) to re-enable the alignment "
+            "check for the disconnected execute→save→evaluate workflow.",
+            stacklevel=2,
+        )
     if mismatches:
         raise ValueError(
             "dataset_run cases do not align with testset cases by input identity — the "

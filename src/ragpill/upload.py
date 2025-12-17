@@ -19,6 +19,7 @@ Two modes:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -27,6 +28,8 @@ from ragpill.backends import Assessment, get_backend
 from ragpill.llm_judge import JUDGE_PROMPT_VERSION, judge_prompt_hash
 from ragpill.settings import TrackingSettings
 from ragpill.types import CaseResult, EvaluationOutput
+
+logger = logging.getLogger("ragpill.upload")
 
 # ---------------------------------------------------------------------------
 # Run lifecycle helpers
@@ -130,11 +133,30 @@ def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
 
         if repeat > 1:
             for eval_name, eval_pass_rate in cr.aggregated.per_evaluator_pass_rates.items():
+                produced = sum(1 for r in cr.run_results if eval_name in r.assertions)
+                errored = cr.aggregated.error_counts.get(eval_name, 0)
+                if produced == 0:
+                    # Every run of this evaluator errored (e.g. trace unavailable):
+                    # don't upload a misleading "failed" aggregate verdict that would
+                    # disagree with the case reading. Record an error marker instead.
+                    error_assessment = Assessment(
+                        name=f"agg_{eval_name}",
+                        value=f"error ({errored} run(s) could not be evaluated)",
+                        source_type="CODE",
+                        source_id="ragpill_aggregation",
+                        rationale="Evaluator produced no verdicts — excluded from pass rate.",
+                    )
+                    for tid in case_level_ids:
+                        backend.log_assessment(tid, error_assessment)
+                    continue
                 agg_passed = eval_pass_rate >= cr.aggregated.threshold
+                passed_n = sum(
+                    1 for r in cr.run_results if eval_name in r.assertions and r.assertions[eval_name].value is True
+                )
+                errored_note = f", {errored} errored/excluded" if errored else ""
                 rationale = (
-                    f"Aggregate: "
-                    f"{sum(1 for r in cr.run_results if eval_name in r.assertions and r.assertions[eval_name].value is True)}"
-                    f"/{repeat} runs passed (threshold={cr.aggregated.threshold})"
+                    f"Aggregate: {passed_n}/{produced} evaluated runs passed "
+                    f"(threshold={cr.aggregated.threshold}{errored_note})"
                 )
                 agg_assessment = Assessment(
                     name=f"agg_{eval_name}",
@@ -225,6 +247,8 @@ def upload_results(
             Without it, a completed run raises rather than duplicating data.
 
     Raises:
+        ValueError: If no tracking URI can be resolved (explicit arg, the run's
+            recorded URI, or settings/``RAGPILL_TRACKING_URI``).
         RuntimeError: If the run was already uploaded and ``overwrite`` is False.
 
     Example:
@@ -246,6 +270,17 @@ def upload_results(
     # Destination precedence: explicit arg > the run's recorded URI > settings.
     recorded_uri = dataset_run.tracking_uri if (dataset_run and dataset_run.tracking_uri) else None
     dest_uri = tracking_uri or recorded_uri or settings.tracking_uri
+    source = "tracking_uri arg" if tracking_uri else "recorded run URI" if recorded_uri else "settings"
+    if not dest_uri:
+        # Unlike execute_dataset (which falls back to a temp store), upload has
+        # nowhere to write without a URI: set_destination(None) would silently
+        # land in mlflow's process default (./mlruns). Fail loudly instead.
+        raise ValueError(
+            "upload_results needs a tracking URI, but none was resolved (pass tracking_uri=, "
+            "set RAGPILL_TRACKING_URI, or capture the run against an explicit server). "
+            "This run was likely captured with capture_traces=False / no server."
+        )
+    logger.info("upload_results: uploading to %s (from %s).", dest_uri, source)
 
     # Record which judge prompts produced these scores, so a ragpill upgrade
     # that edits a judge system prompt (and thus shifts every score) is visible

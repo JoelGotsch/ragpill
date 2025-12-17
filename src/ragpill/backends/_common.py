@@ -52,17 +52,28 @@ def to_text(value: object) -> str:
         return str(value)
 
 
-def to_unix_nano(val: object) -> int:
-    """Coerce a timestamp to Unix nanoseconds, or ``0`` when absent.
+def to_unix_nano(val: object) -> int | None:
+    """Coerce a timestamp to Unix nanoseconds, or ``None`` when absent/unknown.
 
     Handles the shapes the remote adapters see: a pandas ``Timestamp`` (has an
     integer ``.value`` in nanos), a ``datetime`` (has ``.timestamp()`` in
-    seconds), and missing values (``None`` / ``NaN``). Keeps real span timing in
-    the neutral model instead of the old hard-coded ``0`` that made every span
-    render as ``0ms`` and broke time ordering.
+    seconds), and missing values (``None`` / ``NaN`` / ``NaT``). Returns ``None``
+    (not ``0``) for missing values — a not-yet-ingested Phoenix row has
+    ``end_time = NaT``, whose ``.value`` is ``int64`` *min*; treating that as a
+    timestamp would yield an absurd negative duration. ``None`` signals "unknown"
+    so ordering and duration rendering degrade gracefully.
     """
     if val is None:
-        return 0
+        return None
+    # NaT / NaN: pandas scalar missing-value. Guard before reading ``.value``
+    # (pd.NaT.value is int64-min, which must NOT be treated as a real timestamp).
+    try:
+        import pandas as pd
+
+        if bool(pd.isna(val)):  # pyright: ignore[reportUnknownMemberType]
+            return None
+    except (TypeError, ValueError):
+        pass  # not a pandas-recognized scalar; fall through
     # pandas Timestamp: .value is integer nanoseconds since the epoch.
     value = getattr(val, "value", None)
     if isinstance(value, int):
@@ -74,8 +85,8 @@ def to_unix_nano(val: object) -> int:
             seconds: Any = ts()
             return int(seconds * 1_000_000_000)
         except Exception:
-            return 0
-    return 0
+            return None
+    return None
 
 
 def is_http_not_found(exc: BaseException) -> bool:
@@ -102,7 +113,7 @@ def poll_for_trace(
     timeout_s: float,
     poll_interval_s: float,
     stable_span_set: bool,
-) -> NeutralTrace | None:
+) -> tuple[NeutralTrace | None, bool]:
     """Poll ``fetch`` until the trace is exported, up to ``timeout_s``.
 
     Args:
@@ -118,8 +129,12 @@ def poll_for_trace(
             still be missing in-flight spans.
 
     Returns:
-        The trace once ready, or whatever the final fetch produced at the
-        deadline (possibly partial or ``None``). Never a different trace.
+        ``(trace, stable)``. ``stable`` is ``True`` only when the readiness
+        criterion was met before the deadline — the trace is complete. When the
+        deadline is hit first, returns whatever the final fetch produced
+        (possibly partial or ``None``) with ``stable=False`` so the caller can
+        record the run as ``incomplete``/``unavailable`` rather than trusting a
+        half-exported trace. Never a different trace.
     """
     deadline = time.monotonic() + max(0.0, timeout_s)
     previous_span_ids: set[str] | None = None
@@ -127,14 +142,14 @@ def poll_for_trace(
         trace = fetch()
         if trace is not None:
             if not stable_span_set:
-                return trace
+                return trace, True
             if trace.spans:
                 span_ids = {s.span_id for s in trace.spans}
                 if span_ids == previous_span_ids:
-                    return trace
+                    return trace, True
                 previous_span_ids = span_ids
         if time.monotonic() >= deadline:
-            return trace
+            return trace, False
         time.sleep(poll_interval_s)
 
 
@@ -220,3 +235,38 @@ class SyntheticRunMixin:
 
     def _flush(self) -> None:
         """Flush pending exports on run end. Override per backend."""
+
+
+class RemoteQueryMixin:
+    """Shared ``await_trace`` for backends whose reads poll for export.
+
+    Subclasses implement :meth:`get_trace`; ``_stable_span_set`` selects the
+    readiness criterion — ``True`` for batch-ingest backends (Langfuse/Phoenix),
+    ``False`` for atomic-read backends (MLflow's by-id lookup returns the full
+    span tree at once). Returns ``(trace, stable)`` per :func:`poll_for_trace`.
+    """
+
+    _stable_span_set: bool = True
+
+    def get_trace(self, trace_id: str) -> NeutralTrace | None:  # pragma: no cover - provided by concrete backend
+        del trace_id
+        raise NotImplementedError
+
+    def await_trace(
+        self,
+        trace_id: str,
+        *,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        timeout_s: float = 10.0,
+        poll_interval_s: float = 0.5,
+    ) -> tuple[NeutralTrace | None, bool]:
+        # run_id / experiment_id are part of the protocol for backends whose
+        # readiness query needs them; the poll-by-id backends do not.
+        del run_id, experiment_id
+        return poll_for_trace(
+            lambda: self.get_trace(trace_id),
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            stable_span_set=self._stable_span_set,
+        )

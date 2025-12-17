@@ -1,0 +1,282 @@
+"""Regression tests for the round-2 review findings (F1-F8, plus cleanups).
+
+Each test reproduces a specific finding and pins the fix.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pandas as pd
+import pytest
+
+from ragpill.backends import RunHandle, configure_backend, reset_backend
+from ragpill.backends._common import to_unix_nano  # pyright: ignore[reportPrivateUsage]
+from ragpill.base import TestCaseMetadata, default_input_to_key
+from ragpill.eval_types import Case, Dataset, EvaluatorContext
+from ragpill.evaluation import evaluate_results
+from ragpill.evaluators import RegexInSourcesEvaluator, TraceUnavailableError
+from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput, execute_dataset
+from ragpill.trace import Span, SpanKind, Trace
+
+# ---------------------------------------------------------------------------
+# F1 — a transient trace-fetch error must not destroy the whole run
+# ---------------------------------------------------------------------------
+
+
+class _RaisingTraceBackend:
+    """Minimal backend whose get_trace raises (a transient 5xx), used to prove
+    execute_dataset survives and records the run as trace-unavailable."""
+
+    supports_local_file_store = True
+
+    def get_tracking_uri(self):
+        return None
+
+    def set_tracking_uri(self, uri):
+        pass
+
+    def set_destination(self, uri, experiment_name):
+        pass
+
+    def autolog_pydantic_ai(self):
+        pass
+
+    def start_run(self, run_id=None, description=None):
+        return RunHandle(run_id="r", experiment_id="e")
+
+    def end_run(self):
+        pass
+
+    def is_run_active(self):
+        return True
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def start_span(self, name, span_type, attributes=None):
+        yield _FakeSpan()
+
+    @contextmanager
+    def start_case_grouping(self, case_id, name, inputs=None, attributes=None):
+        from ragpill.backends._types import CaseGroupingHandle
+
+        yield CaseGroupingHandle(mode="session", session_id=case_id, case_trace_id=None)
+
+    def await_trace(self, trace_id, *, run_id=None, experiment_id=None, timeout_s=10.0, poll_interval_s=0.5):
+        raise RuntimeError("503 Service Unavailable")
+
+
+class _FakeSpan:
+    span_id = "s"
+    trace_id = "t"
+
+    def set_attribute(self, *a, **k):
+        pass
+
+    def set_inputs(self, *a, **k):
+        pass
+
+    def set_outputs(self, *a, **k):
+        pass
+
+
+@pytest.fixture
+def _use_raising_backend():
+    configure_backend(_RaisingTraceBackend)
+    try:
+        yield
+    finally:
+        reset_backend()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_transient_trace_error_does_not_destroy_run(_use_raising_backend, anyio_backend):
+    ran = []
+
+    async def task(q):
+        ran.append(q)
+        return f"ans:{q}"
+
+    ds = Dataset(cases=[Case(inputs="a", metadata=TestCaseMetadata()), Case(inputs="b", metadata=TestCaseMetadata())])
+    # capture_traces=True -> the fetch will raise, but the run must survive.
+    out = await execute_dataset(ds, task=task, capture_traces=True, tracking_uri="http://server")
+
+    assert ran == ["a", "b"]  # both cases ran despite the trace-store 503
+    assert len(out.cases) == 2
+    for case in out.cases:
+        tr = case.task_runs[0]
+        assert tr.output == f"ans:{case.inputs}"  # output preserved
+        assert tr.trace_status == "unavailable"  # recorded, not lost
+        assert tr.trace is None
+
+
+# ---------------------------------------------------------------------------
+# F2 — task_timeout_s must work for sync (thread-offloaded) tasks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_sync_task_timeout_is_effective(anyio_backend):
+    def blocking(_q):
+        time.sleep(2.0)
+        return "done"
+
+    ds = Dataset(cases=[Case(inputs="q", metadata=TestCaseMetadata())])
+    t0 = time.perf_counter()
+    out = await execute_dataset(ds, task=blocking, capture_traces=False, task_timeout_s=0.1)
+    elapsed = time.perf_counter() - t0
+
+    tr = out.cases[0].task_runs[0]
+    assert elapsed < 1.0  # released at the deadline, not after the full 2 s
+    assert tr.error is not None and "TimeoutError" in tr.error
+
+
+# ---------------------------------------------------------------------------
+# F3 — identity guard must not reject valid saved runs for non-str inputs
+# ---------------------------------------------------------------------------
+
+
+class _StructuredInput:
+    def __init__(self, q):
+        self.q = q
+
+    # No stable __repr__/__eq__ on purpose: str() embeds the memory address.
+
+
+@pytest.mark.anyio
+async def test_identity_guard_tolerates_unstable_str_inputs():
+    ev = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check="x")
+    # The run was captured with one instance; "another process" reconstructs an
+    # equivalent instance whose str() differs (different address).
+    captured = _StructuredInput("hello")
+    reconstructed = _StructuredInput("hello")
+    dataset_run = DatasetRunOutput(
+        cases=[
+            CaseRunOutput(
+                case_name="c",
+                inputs=captured,
+                expected_output=None,
+                metadata={"attributes": {}, "tags": [], "expected": None, "repeat": None, "threshold": None},
+                base_input_key=default_input_to_key(captured),
+                trace=None,
+                trace_id="",
+                task_runs=[TaskRunOutput(run_index=0, input_key="k_0", output="out", duration=0.01)],
+            )
+        ]
+    )
+    testset = Dataset(cases=[Case(inputs=reconstructed, metadata=TestCaseMetadata(), evaluators=[ev])])
+    # Must NOT raise: the key was never stable, so identity verification is skipped.
+    out = await evaluate_results(dataset_run, testset)
+    assert len(out.case_results) == 1
+
+
+# ---------------------------------------------------------------------------
+# F5 — to_unix_nano(NaT) must be None, not int64-min
+# ---------------------------------------------------------------------------
+
+
+def test_to_unix_nano_handles_nat():
+    assert to_unix_nano(pd.NaT) is None
+    assert to_unix_nano(None) is None
+    ts = pd.Timestamp("2024-01-01T00:00:00Z")
+    assert to_unix_nano(ts) == ts.value
+
+
+# ---------------------------------------------------------------------------
+# F7/F8 — partial outage: the case and per-evaluator surfaces agree
+# ---------------------------------------------------------------------------
+
+
+def _span(span_id, parent_id, kind=SpanKind.CHAIN):
+    return Span(
+        span_id=span_id, parent_id=parent_id, trace_id="t", name=span_id, kind=kind, start_time_ns=0, end_time_ns=0
+    )
+
+
+@pytest.mark.anyio
+async def test_partial_outage_surfaces_agree():
+    ev = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check="anything")
+    # 3 repeats: run 0 has a trace whose subtree is present (evaluator errors on
+    # empty retrieval -> value False is a real verdict here). To model the F7
+    # partial outage, give run 0 a usable trace and runs 1..2 unavailable traces.
+    runs = []
+    for i in range(3):
+        tr = TaskRunOutput(run_index=i, input_key=f"k_{i}", output="out", duration=0.01, run_span_id=f"run-{i}")
+        if i == 0:
+            # Trace present with a retriever span containing the pattern -> passes.
+            retr = _span("ret", "run-0", SpanKind.RETRIEVER)
+            retr.documents = []  # no docs -> Sources returns False (a real verdict)
+            tr.trace = Trace(trace_id="t", spans=[_span("run-0", None), retr])
+            tr.trace_status = "ok"
+        else:
+            tr.trace_status = "unavailable"
+        runs.append(tr)
+    case_run = CaseRunOutput(
+        case_name="c",
+        inputs="q",
+        expected_output=None,
+        metadata={"attributes": {}, "tags": [], "expected": None, "repeat": 3, "threshold": None},
+        base_input_key=default_input_to_key("q"),
+        trace=None,
+        trace_id="",
+        task_runs=runs,
+    )
+    testset = Dataset(cases=[Case(inputs="q", metadata=TestCaseMetadata(repeat=3, threshold=0.8), evaluators=[ev])])
+    out = await evaluate_results(DatasetRunOutput(cases=[case_run]), testset)
+    cr = out.case_results[0]
+
+    # Only run 0 was evaluable (produced a verdict); runs 1..2 are error-state and
+    # excluded from every denominator.
+    assert cr.aggregated.error_counts  # the outage is surfaced, not hidden
+    # The case pass_rate and the evaluator's pass_rate use the same (evaluable)
+    # denominator, so they agree rather than one green + one red.
+    ev_name = next(iter(cr.aggregated.per_evaluator_pass_rates))
+    ev_rate = cr.aggregated.per_evaluator_pass_rates[ev_name]
+    agg_passed = ev_rate >= cr.aggregated.threshold
+    assert cr.aggregated.passed == agg_passed
+
+
+@pytest.mark.anyio
+async def test_full_outage_is_not_green():
+    ev = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check="x")
+    tr = TaskRunOutput(run_index=0, input_key="k_0", output="out", duration=0.01, run_span_id="run-0")
+    tr.trace_status = "unavailable"
+    case_run = CaseRunOutput(
+        case_name="c",
+        inputs="q",
+        expected_output=None,
+        metadata={"attributes": {}, "tags": [], "expected": None, "repeat": None, "threshold": None},
+        base_input_key=default_input_to_key("q"),
+        trace=None,
+        trace_id="",
+        task_runs=[tr],
+    )
+    testset = Dataset(cases=[Case(inputs="q", metadata=TestCaseMetadata(), evaluators=[ev])])
+    out = await evaluate_results(DatasetRunOutput(cases=[case_run]), testset)
+    cr = out.case_results[0]
+    # A full trace outage must not read as a passing case.
+    assert cr.aggregated.passed is False
+    assert cr.run_results[0].is_error_state is True
+
+
+def test_incomplete_trace_status_raises_before_scoring():
+    ev = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check="foo")
+    # Root span only present (child retriever spans still in an un-flushed batch)
+    # with trace_status="incomplete" -> must raise, not score False.
+    trace = Trace(trace_id="t", spans=[_span("run-0", None)])
+    ctx: EvaluatorContext = EvaluatorContext(
+        name="c",
+        inputs="i",
+        metadata=None,
+        expected_output=None,
+        output="o",
+        duration=0.0,
+        trace=trace,
+        run_span_id="run-0",
+        trace_status="incomplete",
+    )
+    with pytest.raises(TraceUnavailableError):
+        ev.get_trace(ctx)

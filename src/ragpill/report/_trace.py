@@ -78,7 +78,8 @@ def render_spans(
     for sp in spans:
         children.setdefault(sp.parent_id, []).append(sp)
     for kids in children.values():
-        kids.sort(key=lambda s: s.start_time_ns)
+        # None start times (unknown) sort last, deterministically.
+        kids.sort(key=lambda s: (s.start_time_ns is None, s.start_time_ns or 0))
 
     if root_span_id is not None:
         roots = [s for s in spans if s.span_id == root_span_id]
@@ -153,10 +154,13 @@ def _span_kept(span: Span, type_filter: set[str] | None) -> bool:
 
 def _format_span_header(span: Span) -> str:
     span_type = str(span.kind)
-    duration_ms = (
-        max(0, (span.end_time_ns - span.start_time_ns) // 1_000_000) if span.end_time_ns and span.start_time_ns else 0
-    )
-    return f"{span.name} ({span_type}, {duration_ms}ms)"
+    if span.end_time_ns and span.start_time_ns:
+        duration = f"{max(0, (span.end_time_ns - span.start_time_ns) // 1_000_000)}ms"
+    else:
+        # A missing start/end time means the backend couldn't provide real
+        # timing (e.g. an in-flight span) — say so rather than claim 0ms.
+        duration = "duration unknown"
+    return f"{span.name} ({span_type}, {duration})"
 
 
 def _format_span_body(span: Span, redact_compiled: list[re.Pattern[str]], per_span_chars: int) -> list[str]:

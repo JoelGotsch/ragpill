@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from ragpill.trace import Trace as NeutralTrace
 
-from ragpill.backends._common import logger, poll_for_trace
+from ragpill.backends._common import RemoteQueryMixin, logger
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle, RunHandle
 
 # MLflow restricts metric names to alphanumerics, `_`, `.`, `/`, space and `-`;
@@ -77,13 +77,17 @@ _active_session_id: ContextVar[str | None] = ContextVar("ragpill_mlflow_active_s
 _active_session_metadata: ContextVar[dict[str, str]] = ContextVar("ragpill_mlflow_active_session_metadata", default={})
 
 
-class MLflowBackend:
+class MLflowBackend(RemoteQueryMixin):
     """Adapter forwarding to ``mlflow.*``.
 
     Implements ``TraceCaptureBackend``, ``TraceQueryBackend``,
     ``ResultsBackend``, and ``LifecycleBackend``. The combined ``Backend``
     protocol is the natural shape.
     """
+
+    # MLflow's by-id lookup returns the full span tree at once, so the shared
+    # await_trace polls without the span-set-stability check.
+    _stable_span_set = False
 
     # MLflow can track to a local SQLite store, so the execution layer may
     # synthesize a temp-directory URI when no destination is given.
@@ -215,28 +219,6 @@ class MLflowBackend:
         if not native:
             return None
         return from_mlflow_trace(native)
-
-    def await_trace(
-        self,
-        trace_id: str,
-        *,
-        run_id: str | None = None,
-        experiment_id: str | None = None,
-        timeout_s: float = 10.0,
-        poll_interval_s: float = 0.5,
-    ) -> NeutralTrace | None:
-        # MLflow's by-id lookup is the authoritative readiness check — it
-        # returns the trace with its full span tree only once exported, so no
-        # span-set stability check is needed. run_id / experiment_id are part
-        # of the protocol for backends whose readiness query needs them;
-        # MLflow's by-id lookup does not.
-        del run_id, experiment_id
-        return poll_for_trace(
-            lambda: self.get_trace(trace_id),
-            timeout_s=timeout_s,
-            poll_interval_s=poll_interval_s,
-            stable_span_set=False,
-        )
 
     def delete_traces(self, experiment_id: str, trace_ids: list[str]) -> None:
         if not trace_ids:

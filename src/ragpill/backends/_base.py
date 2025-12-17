@@ -170,7 +170,7 @@ class TraceQueryBackend(Protocol):
         experiment_id: str | None = None,
         timeout_s: float = 10.0,
         poll_interval_s: float = 0.5,
-    ) -> NeutralTrace | None:
+    ) -> tuple[NeutralTrace | None, bool]:
         """Fetch ``trace_id`` as a neutral ``ragpill.trace.Trace``, polling until exported.
 
         Backends flush spans to their store asynchronously, so a fetch issued
@@ -179,10 +179,14 @@ class TraceQueryBackend(Protocol):
         for the trace to become available, converting the native trace to the
         neutral model before returning.
 
-        Returns the trace with its full span tree once available, or ``None``
-        on timeout. It MUST NOT fall back to a different trace: a miss returns
-        ``None``, never the wrong trace. ``run_id`` / ``experiment_id`` are
-        accepted for backends whose readiness query needs them.
+        Returns ``(trace, stable)``. ``stable`` is ``True`` only when the trace
+        was confirmed complete before the deadline; when the deadline is hit
+        first it returns whatever was fetched (possibly partial or ``None``)
+        with ``stable=False``, so the execution layer records the run as
+        ``incomplete``/``unavailable`` rather than trusting a half-exported
+        trace. It MUST NOT fall back to a *different* trace. ``run_id`` /
+        ``experiment_id`` are accepted for backends whose readiness query needs
+        them.
         """
         ...
 

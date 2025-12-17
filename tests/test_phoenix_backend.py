@@ -254,6 +254,7 @@ def test_await_trace_waits_for_span_set_to_stabilize():
     backend = PhoenixBackend()
     partial, full = _trace(1), _trace(3)
     with patch.object(PhoenixBackend, "get_trace", side_effect=[partial, full, full]) as mock_get:
-        got = backend.await_trace("t", timeout_s=5.0, poll_interval_s=0.01)
+        got, stable = backend.await_trace("t", timeout_s=5.0, poll_interval_s=0.01)
     assert got is not None and len(got.spans) == 3
+    assert stable is True
     assert mock_get.call_count == 3

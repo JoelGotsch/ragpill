@@ -25,6 +25,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -32,7 +33,7 @@ import time
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import anyio.to_thread
@@ -51,6 +52,15 @@ from ragpill.trace import filter_to_subtree, trace_from_dict, trace_to_dict
 if TYPE_CHECKING:
     from ragpill.trace import Trace
 
+logger = logging.getLogger("ragpill.execution")
+
+# Trace-availability of a run, recorded so downstream evaluators/reporting can
+# distinguish an infrastructure failure from a real result. "ok" = complete
+# trace; "incomplete" = a trace was read but the export was still settling at
+# the fetch deadline (possibly missing spans); "unavailable" = no trace at all
+# (fetch timed out empty, backend errored, or the run's subtree was absent).
+TraceStatus = Literal["ok", "incomplete", "unavailable"]
+
 
 def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:
     """Mark every dataset-level (global) evaluator as global."""
@@ -58,9 +68,10 @@ def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> Non
         evaluator.is_global = True
 
 
-# Run-JSON schema version. v2 stores the vendor-neutral ragpill.trace.Trace
-# (v1 stored mlflow.entities.Trace JSON). No v1 migrator — see ADR-0014.
-_RUN_JSON_SCHEMA_VERSION = 2
+# Run-JSON schema version. v3 adds per-run trace_status; v2 stored the
+# vendor-neutral ragpill.trace.Trace (v1 stored mlflow.entities.Trace JSON).
+# No back-migration — see ADR-0014.
+_RUN_JSON_SCHEMA_VERSION = 3
 
 TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
 
@@ -105,6 +116,11 @@ class TaskRunOutput:
     run_span_id: str = ""
     trace_id: str = ""
     error: str | None = None
+    # Availability of this run's captured trace. "ok" unless a fetch was
+    # attempted and did not yield a complete trace. When tracing is disabled
+    # there is nothing to fetch, so it stays "ok" (there is no trace to be
+    # "unavailable"); span-based evaluators still raise on a missing trace.
+    trace_status: TraceStatus = "ok"
 
 
 @dataclass
@@ -157,7 +173,7 @@ class DatasetRunOutput:
         """Serialize this output to a JSON string.
 
         Traces are serialized via the neutral ``ragpill.trace`` model
-        (``schema_version`` 2). Other fields are preserved as-is.
+        (``schema_version`` 3). Other fields are preserved as-is.
 
         Returns:
             A JSON string that ``from_json`` can round-trip back into an
@@ -246,6 +262,7 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
         "run_span_id": tr.run_span_id,
         "trace_id": tr.trace_id,
         "error": tr.error,
+        "trace_status": tr.trace_status,
     }
 
 
@@ -261,6 +278,7 @@ def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
         run_span_id=d.get("run_span_id", ""),
         trace_id=d.get("trace_id", ""),
         error=d.get("error"),
+        trace_status=d.get("trace_status", "ok"),
     )
 
 
@@ -307,9 +325,9 @@ def _dataset_run_from_dict(d: dict[str, Any]) -> DatasetRunOutput:
     if version != _RUN_JSON_SCHEMA_VERSION:
         raise ValueError(
             f"Unsupported run-JSON schema_version {version!r}; this build reads "
-            f"v{_RUN_JSON_SCHEMA_VERSION}. v1 files store mlflow-shaped traces and are not "
-            "migrated (the trace model changed in 0.5.0 — see CHANGELOG / ADR-0014). "
-            "Re-run the evaluation to produce a v2 file."
+            f"v{_RUN_JSON_SCHEMA_VERSION}. Older files are not migrated (the trace model "
+            "changed in 0.5.0; v3 adds per-run trace_status — see CHANGELOG / ADR-0014). "
+            "Re-run the evaluation to produce a current file."
         )
     return DatasetRunOutput(
         cases=[_case_run_from_dict(c) for c in d.get("cases", [])],
@@ -401,24 +419,34 @@ def _fetch_trace(
     *,
     timeout_s: float,
     poll_interval_s: float,
-) -> Trace | None:
-    """Fetch the trace ``parent_trace_id`` and return it as a neutral ``Trace``.
+) -> tuple[Trace | None, bool]:
+    """Fetch ``parent_trace_id`` as a neutral ``Trace``; return ``(trace, stable)``.
 
-    Spans flush to the backend asynchronously, so a fetch issued right after
-    the case grouping context closes can miss a trace still in flight. The
-    backend polls by id and returns ``None`` (never a different trace) on
-    timeout — a miss leaves the SpanBaseEvaluators without a trace rather than
-    silently scoring the wrong one. ``await_trace`` returns the vendor-neutral
-    ``ragpill.trace.Trace`` (the backend converts its own native trace), so
-    nothing here is MLflow-specific.
+    Backends now *raise* on transport/auth/server errors (rather than swallowing
+    them as a miss). Catch that here — a trace-store blip must not destroy the
+    whole run: the task output is already captured. On error we log once and
+    return ``(None, False)`` so the run is recorded as trace-unavailable and the
+    other cases proceed. ``stable`` is ``True`` only when the backend confirmed
+    a complete trace before the deadline. Runs in a worker thread, so anyio /
+    asyncio cancellation (a ``BaseException``) is not caught here — only
+    ``Exception`` — and propagates as normal.
     """
-    return get_backend().await_trace(
-        parent_trace_id,
-        run_id=run_id,
-        experiment_id=experiment_id,
-        timeout_s=timeout_s,
-        poll_interval_s=poll_interval_s,
-    )
+    try:
+        return get_backend().await_trace(
+            parent_trace_id,
+            run_id=run_id,
+            experiment_id=experiment_id,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Trace fetch failed for %s (%s: %s); recording run as trace-unavailable.",
+            parent_trace_id,
+            type(exc).__name__,
+            exc,
+        )
+        return None, False
 
 
 async def _execute_case_runs(
@@ -487,7 +515,7 @@ async def _execute_case_runs(
             # synchronous polling call, so it is offloaded to a worker thread
             # (via anyio, portable across asyncio and trio) rather than blocking
             # the event loop.
-            case_trace = await anyio.to_thread.run_sync(
+            case_trace, case_stable = await anyio.to_thread.run_sync(
                 functools.partial(
                     _fetch_trace,
                     tracing.experiment_id,
@@ -497,17 +525,24 @@ async def _execute_case_runs(
                     poll_interval_s=tracing.trace_fetch_poll_interval_s,
                 )
             )
-            if case_trace is not None:
-                for tr in task_runs:
-                    if tr.run_span_id:
-                        tr.trace = filter_to_subtree(case_trace, tr.run_span_id)
+            for tr in task_runs:
+                if case_trace is None:
+                    tr.trace_status = "unavailable"
+                    continue
+                subtree = filter_to_subtree(case_trace, tr.run_span_id) if tr.run_span_id else None
+                if subtree is None:
+                    # The run's spans aren't in the fetched trace (still in flight).
+                    tr.trace_status = "unavailable"
+                else:
+                    tr.trace = subtree
+                    tr.trace_status = "ok" if case_stable else "incomplete"
         elif grouping_mode == "session":
             # Session mode: each repeat already produced its own trace; fetch
             # them individually by the trace_id captured at span open. The
             # fetches are independent, so they run concurrently — worst case
             # is one timeout, not one per repeat.
             pending = [tr for tr in task_runs if tr.trace_id]
-            fetched: list[Trace | None] = [None] * len(pending)
+            fetched: list[tuple[Trace | None, bool]] = [(None, False)] * len(pending)
 
             async def _fetch_into(idx: int, tid: str) -> None:
                 fetched[idx] = await anyio.to_thread.run_sync(
@@ -524,8 +559,12 @@ async def _execute_case_runs(
             async with anyio.create_task_group() as tg:
                 for i, tr in enumerate(pending):
                     tg.start_soon(_fetch_into, i, tr.trace_id)
-            for tr, trace in zip(pending, fetched):
+            for tr, (trace, stable) in zip(pending, fetched):
                 tr.trace = trace
+                if trace is None:
+                    tr.trace_status = "unavailable"
+                else:
+                    tr.trace_status = "ok" if stable else "incomplete"
 
     return CaseRunOutput(
         case_name=case.name or str(case.inputs),
@@ -571,18 +610,24 @@ async def _execute_single_run(
             # client (e.g. a ``requests``-based RAG call) doesn't stall the event
             # loop and the tracking exporters running on it. anyio keeps this
             # portable across the asyncio and trio backends.
-            result = await anyio.to_thread.run_sync(call, case.inputs)
+            #
+            # abandon_on_cancel=True so a ``task_timeout_s`` deadline actually
+            # releases the awaiting side: without it, run_sync waits for the
+            # thread to finish even after the enclosing fail_after cancels,
+            # making the timeout a no-op for exactly the blocking tasks the
+            # offload exists for. Python cannot kill a thread, so the worker
+            # keeps running in the background (it still occupies a pool slot);
+            # the run is recorded as a TimeoutError regardless.
+            result = await anyio.to_thread.run_sync(call, case.inputs, abandon_on_cancel=True)
         if inspect.isawaitable(result):
             return await result
         return result
 
     async def _invoke() -> Any:
         # Timeouts are opt-in and caller-specified: ragpill imposes no default
-        # budget on the client's task. ``None`` means no timeout.
-        if task_timeout_s is not None:
-            with anyio.fail_after(task_timeout_s):
-                return await _call()
-        return await _call()
+        # budget on the client's task. ``fail_after(None)`` means no timeout.
+        with anyio.fail_after(task_timeout_s):
+            return await _call()
 
     if capture_traces:
         try:
@@ -666,7 +711,11 @@ async def execute_dataset(
         task_timeout_s: Optional per-task wall-clock timeout in seconds. ``None``
             (default) imposes no timeout — the client owns its latency budget. A
             task exceeding the budget is recorded as a ``TimeoutError`` run and
-            execution continues with the next repeat/case.
+            execution continues with the next repeat/case. Caveat for
+            *synchronous* tasks: Python cannot kill a worker thread, so on
+            timeout the awaiting side is released but the task's thread is
+            *abandoned*, not stopped — a truly hung thread keeps occupying a
+            thread-pool slot until it returns on its own.
 
     Note:
         Cases and repeats run sequentially during capture: trace correctness
