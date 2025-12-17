@@ -219,14 +219,86 @@ def _extract_quotes(lines: list[str], depth: int = 0) -> list[tuple[list[str], s
     return all_quotes
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text for comparison (whitespace + Unicode NFKC).
+# Compiled once at module load. Applied symmetrically to both the agent's
+# quote and the source ``page_content`` so the canonical forms match.
+_SUBSCRIPT_TILDE_RE = re.compile(r"~([0-9A-Za-z]{1,10})~")
+_SUPERSCRIPT_CARET_RE = re.compile(r"\^([0-9A-Za-z]{1,10})\^")
+# LaTeX subscript/superscript braces: ``_{6}``, ``^{2}``.
+_LATEX_BRACE_RE = re.compile(r"[_^]\{([0-9A-Za-z]{1,10})\}")
+# Compact LaTeX braces around identifiers: ``${uf}``. Restricted to
+# letter-first identifiers so regex quantifiers like ``\d{3}`` (which
+# also flow through ``_normalize_text`` in the regex evaluators) keep
+# their meaning.
+_LATEX_IDENT_BRACE_RE = re.compile(r"\{([A-Za-z][0-9A-Za-z]{0,9})\}")
+# LaTeX math wrapper: keep the inner text, drop the delimiters.
+_LATEX_MATH_RE = re.compile(r"\$([^$]{1,80})\$")
+# Pandoc-escaped meta chars: ``\[ \] \_ \* \( \) \# \- \\``.
+_PANDOC_ESCAPE_RE = re.compile(r"\\([\[\]_\*\(\)\#\-\\])")
+# Markdown emphasis: ``**bold**``, ``*italic*``, ``__bold__``, ``_italic_``.
+_MD_EMPHASIS_RE = re.compile(r"(\*\*|__)(.+?)\1|(\*|_)(.+?)\3")
+# Dashed table separator rows.
+_TABLE_SEP_RE = re.compile(r"^[\s\-\|\=\+\:]+$", re.MULTILINE)
+# Inline attribution markers that LLMs sometimes inline into quote text.
+_INLINE_CITATION_RE = re.compile(
+    r"\((?:referenced\s+file|file|source|skill|para(?:graph)?)\s*:[^)]*\)",
+    re.IGNORECASE,
+)
+# Trailing punctuation tolerated at the very end of a quote. Kept narrow
+# (period + whitespace) to avoid mangling regex patterns ending in escaped
+# meta chars such as ``\?`` or ``\!`` that flow through this function via
+# the regex evaluators' ``from_csv_line``.
+_TRAIL_PUNCT = ". "
 
-    Useful for aligning visually identical text such as ``UF₆`` vs ``UF6``.
+# Dash and zero-width / NBSP variants that NFKC does not collapse.
+_DASH_TRANSLATIONS: dict[int, int | None] = {
+    0x2010: 0x2D,  # hyphen
+    0x2011: 0x2D,  # non-breaking hyphen
+    0x2012: 0x2D,  # figure dash
+    0x2013: 0x2D,  # en dash
+    0x2014: 0x2D,  # em dash
+    0x2212: 0x2D,  # minus sign
+    0x00AD: None,  # soft hyphen — delete
+    0x200B: None,  # zero-width space — delete
+    0x00A0: 0x20,  # non-breaking space — space
+}
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for citation comparison.
+
+    Idempotent and symmetric: applying it to both the rubric quote and the
+    source ``page_content`` brings them to the same canonical form for
+    substring/regex comparison.
+
+    Aligns visually similar but byte-different text: ``UF₆`` vs ``UF6``,
+    ``${uf}_{6}$`` vs ``uf6``, en-dashes vs hyphens, pandoc-escaped
+    brackets, bold/italic markdown, and inline ``(File: …)`` markers.
     """
-    # Strip single-tilde markdown subscripts (e.g., UF~6~ -> UF6) with a tight, short payload to avoid altering other tilde uses
-    text = re.sub(r"~([0-9A-Za-z]{1,10})~", r"\1", text)
+    # 1. Pandoc/LaTeX math + subscripts BEFORE NFKC (NFKC folds some of these).
+    text = _SUBSCRIPT_TILDE_RE.sub(r"\1", text)
+    text = _SUPERSCRIPT_CARET_RE.sub(r"\1", text)
+    text = _LATEX_BRACE_RE.sub(r"\1", text)
+    text = _LATEX_MATH_RE.sub(r"\1", text)
+    text = _LATEX_IDENT_BRACE_RE.sub(r"\1", text)
+    # 2. Unescape pandoc-escaped meta characters.
+    text = _PANDOC_ESCAPE_RE.sub(r"\1", text)
+    # 3. Strip markdown emphasis but keep the inner text.
+    text = _MD_EMPHASIS_RE.sub(lambda m: m.group(2) or m.group(4) or "", text)
+    # 4. Remove dashed table separator rows.
+    text = _TABLE_SEP_RE.sub("", text)
+    # 5. Remove inline citation markers.
+    text = _INLINE_CITATION_RE.sub("", text)
+    # 6. Dash and space variants NFKC does not handle.
+    text = text.translate(_DASH_TRANSLATIONS)
+    # 7. NFKC + casefold.
     normalized = unicodedata.normalize("NFKC", text).casefold()
+    # 8. Collapse whitespace, including pandoc soft-wrap newlines.
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # 8b. Collapse whitespace adjacent to brackets so ``X[Y]`` and ``X [Y]``
+    # canonicalize the same way — pandoc-escaped ``\[`` (which loses any
+    # surrounding space when unescaped) lines up with the agent's ``[``.
+    normalized = re.sub(r"\s*\[\s*", " [", normalized)
+    normalized = re.sub(r"\s*\]\s*", "] ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     # Normalize all quote-like characters to straight single quote:
     # - Straight double quote: " (U+0022)
@@ -239,18 +311,48 @@ def _normalize_text(text: str) -> str:
     normalized = re.sub(
         r'["\u201C\u201D\u201E\'\u2018\u2019\u201A\u00AB\u00BB\u2039\u203A\u2032\u2033`\u00B4]', "'", normalized
     )
-    # Strip trailing punctuation (periods) for comparison
-    normalized = normalized.strip(".")
-    return f"{normalized}"
+    # Strip trailing soft punctuation, not just periods.
+    return normalized.strip(_TRAIL_PUNCT)
+
+
+# Bracketed elision / gloss markers an agent inserts inside a blockquote.
+# Cases handled:
+#   "..."           ellipsis           -> .*
+#   ".."            two dots           -> .*
+#   "[...]"         bracketed ellipsis -> .*
+#   "[..]"          bracketed two dots -> .*
+#   "[.*]"          author elision     -> .*
+#   "[ ... ]"       padded             -> .*
+#   "[and]" "[note: ...]" "[edited]"  -> .*  (any bracketed gloss <= 80 chars)
+_AGENT_ELISION_RE = re.compile(
+    r"""
+    \s* \[[\s\.\*]{1,5}\] \s*      # bracketed dots / asterisks (with whitespace)
+    |
+    \s* \[[^\[\]]{1,80}\] \s*      # any bracketed gloss <= 80 chars
+    |
+    \s* \.{2,} \s*                 # ASCII ellipsis or two+ dots
+    """,
+    re.VERBOSE,
+)
+# Stray leading/trailing quote-like chars that survive the recursive cleanup
+# in ``_clean_quote_text`` (most commonly a single ``'`` or backtick).
+_STRAY_LEADING_QUOTE = "'\"`"
+_STRAY_TRAILING_QUOTE = "'\"`,;:"
 
 
 def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # pyright: ignore[reportUnusedFunction]
-    """Extract and normalizes markdown quotes and their file references from output.
+    """Extract and normalize markdown quotes and their file references from output.
 
-    Only lines that start with '>' (after leading whitespace) are considered markdown quotes.
-    Regular quoted text is ignored. Quotation marks are stripped from the extracted quotes.
-    Quote text is normalized with ``unicodedata.normalize("NFKC")`` and ``casefold``
-    so visually similar bytecode/Unicode sequences compare equal (e.g., ``UF₆`` → ``uf6``).
+    Only lines that start with '>' (after leading whitespace) are considered
+    markdown quotes. Regular quoted text is ignored. Quotation marks are
+    stripped from the extracted quotes. Quote text is normalized with
+    ``_normalize_text`` (NFKC + casefold + pandoc/LaTeX/dash cleanup) so
+    visually similar but byte-different text compares equal.
+
+    Bracketed paraphrase markers an agent might insert (``[and]``, ``[.*]``,
+    ``[...]``, ``[note: …]``) are converted to a regex ``.*`` placeholder so
+    the matcher in :class:`~ragpill.evaluators.LiteralQuoteEvaluator` can
+    accept the elision.
 
     Args:
         output: The text to extract quotes from
@@ -265,10 +367,11 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # py
     found_quotes = _extract_quotes(lines)
     for quote_lines, source, _, _ in found_quotes:
         quote_text = " ".join(quote_lines).strip() if quote_lines else ""
-        # clean quote_text:
-        # whitespace normalization (collapse multiple spaces/newlines into single space, trim) + lowercase + Unicode NFKC normalization:
         quote_text = _normalize_text(quote_text)
-        quote_text = re.sub(r"\.{2,}", ".*", quote_text)  # normalize ellipsis to be flexible for matching
+        # Defensive trim of stray quote chars that survived recursive cleanup.
+        quote_text = quote_text.lstrip(_STRAY_LEADING_QUOTE).rstrip(_STRAY_TRAILING_QUOTE)
+        # Convert ellipsis / bracketed elisions / glosses to regex ``.*``.
+        quote_text = _AGENT_ELISION_RE.sub(".*", quote_text)
         quotes.append((quote_text, source))
     return quotes
 
