@@ -54,6 +54,12 @@ def __getattr__(name: str) -> Any:
     return getattr(importlib.import_module(module_path), name)
 
 
+def __dir__() -> list[str]:
+    # PEP 562 companion to __getattr__ so the lazily-exported backend classes
+    # (advertised in __all__) show up in dir(ragpill.backends) / autocomplete.
+    return sorted(set(globals()) | set(__all__))
+
+
 __all__ = [
     "Assessment",
     "Backend",

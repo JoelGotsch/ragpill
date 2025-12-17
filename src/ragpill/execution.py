@@ -218,7 +218,15 @@ class DatasetRunOutput:
                 f.write(run_output.to_json())
             ```
         """
-        return json.dumps(_dataset_run_to_dict(self), default=_json_fallback)
+        return json.dumps(self.to_dict(), default=_json_fallback)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe ``dict`` (the building block of :meth:`to_json`).
+
+        Public so other layers (e.g. ``EvaluationOutput`` serialization) can nest
+        a run without reaching for a private helper.
+        """
+        return _dataset_run_to_dict(self)
 
     @classmethod
     def from_json(cls, s: str) -> DatasetRunOutput:
@@ -237,7 +245,12 @@ class DatasetRunOutput:
                 run_output = DatasetRunOutput.from_json(f.read())
             ```
         """
-        return _dataset_run_from_dict(json.loads(s))
+        return cls.from_dict(json.loads(s))
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DatasetRunOutput:
+        """Inverse of :meth:`to_dict`."""
+        return _dataset_run_from_dict(d)
 
     def to_llm_text(
         self,

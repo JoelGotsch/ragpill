@@ -420,23 +420,21 @@ def _case_result_from_dict(d: dict[str, Any]) -> CaseResult:
 
 
 def _evaluation_output_to_dict(eo: EvaluationOutput) -> dict[str, Any]:
-    from ragpill.execution import _dataset_run_to_dict  # pyright: ignore[reportPrivateUsage]
-
     return {
         "runs": _df_to_json(eo.runs),
         "cases": _df_to_json(eo.cases),
         "case_results": [_case_result_to_dict(cr) for cr in eo.case_results],
-        "dataset_run": _dataset_run_to_dict(eo.dataset_run) if eo.dataset_run is not None else None,
+        "dataset_run": eo.dataset_run.to_dict() if eo.dataset_run is not None else None,
     }
 
 
 def _evaluation_output_from_dict(d: dict[str, Any]) -> EvaluationOutput:
-    from ragpill.execution import _dataset_run_from_dict  # pyright: ignore[reportPrivateUsage]
+    from ragpill.execution import DatasetRunOutput
 
     dataset_run_dict = d.get("dataset_run")
     return EvaluationOutput(
         runs=_df_from_json(d["runs"]),
         cases=_df_from_json(d["cases"]),
         case_results=[_case_result_from_dict(cr) for cr in d.get("case_results", [])],
-        dataset_run=_dataset_run_from_dict(dataset_run_dict) if dataset_run_dict is not None else None,
+        dataset_run=DatasetRunOutput.from_dict(dataset_run_dict) if dataset_run_dict is not None else None,
     )
