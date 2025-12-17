@@ -30,7 +30,15 @@ from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
-from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
+from ragpill.backends._common import (
+    NoopResultsMixin,
+    SyntheticRunMixin,
+    is_http_not_found,
+    logger,
+    poll_for_trace,
+    require_extra,
+    to_unix_nano,
+)
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle
 from ragpill.trace.model import Span as RagpillSpan, SpanKind as IngestSpanKind, Trace as RagpillTrace
 
@@ -65,10 +73,7 @@ _OBS_TYPE_TO_KIND: dict[str, IngestSpanKind] = {
 
 
 def _require_langfuse() -> None:
-    try:
-        import langfuse  # noqa: F401
-    except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise RuntimeError(_INSTALL_HINT) from exc
+    require_extra("langfuse", _INSTALL_HINT)
 
 
 class _SpanHandle:
@@ -306,14 +311,21 @@ def _observation_to_span(obs: Any, trace_id: str) -> RagpillSpan:
         output_tokens=usage_details.get("output"),
         total_tokens=usage_details.get("total"),
     )
+    # Langfuse exposes start/end as datetimes and a level (DEFAULT/WARNING/ERROR).
+    start = getattr(obs, "start_time", None)
+    end = getattr(obs, "end_time", None)
+    level = str(getattr(obs, "level", "") or "").upper()
+    status = "ERROR" if level == "ERROR" else "OK"
     return RagpillSpan(
         span_id=str(getattr(obs, "id", "") or ""),
         parent_id=(str(getattr(obs, "parent_observation_id", None) or "") or None),
         trace_id=trace_id,
         name=str(getattr(obs, "name", "") or ""),
         kind=_OBS_TYPE_TO_KIND.get(obs_type, IngestSpanKind.UNKNOWN),
-        start_time_ns=0,
-        end_time_ns=0,
+        start_time_ns=to_unix_nano(start),
+        end_time_ns=to_unix_nano(end),
+        status=status,
+        status_message=(str(getattr(obs, "status_message", "") or "") or None),
         inputs=getattr(obs, "input", None),
         outputs=getattr(obs, "output", None),
         model=getattr(obs, "model", None),

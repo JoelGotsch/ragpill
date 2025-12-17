@@ -6,10 +6,19 @@ pre-1.0, so minor versions may carry breaking changes.
 
 ## [Unreleased]
 
-Phases 1–5 of the review follow-up: correctness blockers, honest failure
-attribution, a backend-neutral API clean break, concurrency foundations, and
-upload robustness. Backwards compatibility is a non-goal pre-1.0, so the renames
-below have no deprecated aliases.
+Phases 1–6 of the review follow-up: correctness blockers, honest failure
+attribution, a backend-neutral API clean break, concurrency foundations, upload
+robustness, and backend data fidelity. Backwards compatibility is a non-goal
+pre-1.0, so the renames below have no deprecated aliases.
+
+### Fixed
+
+- **Langfuse and Phoenix traces now carry real span timestamps and status.**
+  Both adapters previously hard-coded `start_time`/`end_time` to `0`, so every
+  span rendered as `0ms` and time-ordering was arbitrary. They now lift the real
+  timestamps (and Langfuse maps its level to a span status).
+- **Phoenix trace reads are filtered with a vectorized mask** instead of
+  iterating and dict-converting every span in the project on each poll.
 
 ### Added
 

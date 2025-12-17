@@ -13,7 +13,7 @@ import logging
 import time
 import warnings
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ragpill.backends._types import RunHandle
 
@@ -23,6 +23,59 @@ if TYPE_CHECKING:
     from ragpill.trace import Trace as NeutralTrace
 
 logger = logging.getLogger("ragpill.backends")
+
+
+def require_extra(import_name: str, install_hint: str) -> None:
+    """Import-probe an optional SDK, raising ``install_hint`` if it's missing.
+
+    Shared by the remote adapters so each ``_require_*`` isn't a copy of the
+    same try/except.
+    """
+    import importlib
+
+    try:
+        importlib.import_module(import_name)
+    except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        raise RuntimeError(install_hint) from exc
+
+
+def to_text(value: object) -> str:
+    """Best-effort string form of a value (str as-is; else JSON with ``str``
+    fallback). Shared span-I/O stringify for the remote adapters."""
+    import json
+
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def to_unix_nano(val: object) -> int:
+    """Coerce a timestamp to Unix nanoseconds, or ``0`` when absent.
+
+    Handles the shapes the remote adapters see: a pandas ``Timestamp`` (has an
+    integer ``.value`` in nanos), a ``datetime`` (has ``.timestamp()`` in
+    seconds), and missing values (``None`` / ``NaN``). Keeps real span timing in
+    the neutral model instead of the old hard-coded ``0`` that made every span
+    render as ``0ms`` and broke time ordering.
+    """
+    if val is None:
+        return 0
+    # pandas Timestamp: .value is integer nanoseconds since the epoch.
+    value = getattr(val, "value", None)
+    if isinstance(value, int):
+        return value
+    # datetime / anything exposing .timestamp() in seconds.
+    ts = getattr(val, "timestamp", None)
+    if callable(ts):
+        try:
+            seconds: Any = ts()
+            return int(seconds * 1_000_000_000)
+        except Exception:
+            return 0
+    return 0
 
 
 def is_http_not_found(exc: BaseException) -> bool:

@@ -26,7 +26,16 @@ from collections.abc import Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
-from ragpill.backends._common import NoopResultsMixin, SyntheticRunMixin, is_http_not_found, logger, poll_for_trace
+from ragpill.backends._common import (
+    NoopResultsMixin,
+    SyntheticRunMixin,
+    is_http_not_found,
+    logger,
+    poll_for_trace,
+    require_extra,
+    to_text,
+    to_unix_nano,
+)
 from ragpill.backends._types import Assessment, CaptureSpanKind, CaseGroupingHandle
 
 if TYPE_CHECKING:
@@ -54,10 +63,7 @@ _SPAN_KIND_TO_OI: dict[CaptureSpanKind, str] = {
 
 
 def _require_phoenix() -> None:
-    try:
-        import phoenix.otel  # noqa: F401
-    except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise RuntimeError(_INSTALL_HINT) from exc
+    require_extra("phoenix.otel", _INSTALL_HINT)
 
 
 class _SpanHandle:
@@ -79,21 +85,10 @@ class _SpanHandle:
         self._span.set_attribute(key, value)
 
     def set_inputs(self, value: Any) -> None:
-        self._span.set_attribute("input.value", _as_text(value))
+        self._span.set_attribute("input.value", to_text(value))
 
     def set_outputs(self, value: Any) -> None:
-        self._span.set_attribute("output.value", _as_text(value))
-
-
-def _as_text(value: Any) -> str:
-    import json
-
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, default=str)
-    except (TypeError, ValueError):
-        return str(value)
+        self._span.set_attribute("output.value", to_text(value))
 
 
 class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
@@ -194,7 +189,7 @@ class PhoenixBackend(SyntheticRunMixin, NoopResultsMixin):
                 span.set_attribute("openinference.span.kind", "CHAIN")
                 span.set_attribute("session.id", case_id)
                 if inputs is not None:
-                    span.set_attribute("input.value", _as_text(inputs))
+                    span.set_attribute("input.value", to_text(inputs))
                 for k, v in (attributes or {}).items():
                     span.set_attribute(k, v)
                 trace_id_hex = format(span.get_span_context().trace_id, "032x")
@@ -348,8 +343,10 @@ def _row_to_span_dict(span_id: str, row: Mapping[str, Any]) -> dict[str, Any]:
         "span_id": span_id,
         "parent_span_id": (str(row["parent_id"]) if _present(row.get("parent_id")) else None),
         "name": str(row.get("name", "") or ""),
-        "start_time_unix_nano": 0,
-        "end_time_unix_nano": 0,
+        # Phoenix carries real start/end times — lift them so spans order and
+        # render with their true durations instead of a false 0ms.
+        "start_time_unix_nano": to_unix_nano(row.get("start_time")),
+        "end_time_unix_nano": to_unix_nano(row.get("end_time")),
         "attributes": attributes,
         "events": [],
         "status": {"code": str(row.get("status_code", "UNSET") or "UNSET"), "message": None},
@@ -377,9 +374,9 @@ def _trace_from_spans_dataframe(df: pd.DataFrame, trace_id: str) -> NeutralTrace
 
 
 def _rows_for_trace(df: pd.DataFrame, trace_id: str) -> list[tuple[str, Mapping[str, Any]]]:
-    out: list[tuple[str, Mapping[str, Any]]] = []
-    for span_id, row in df.iterrows():
-        record: dict[str, Any] = dict(row)
-        if str(record.get("context.trace_id", "")) == trace_id:
-            out.append((str(span_id), record))
-    return out
+    # Filter with a vectorized mask before materializing dicts, rather than
+    # iterating (and dict-converting) every span in the project on each poll.
+    if "context.trace_id" not in df.columns:
+        return []
+    subset = df[df["context.trace_id"].astype(str) == trace_id]
+    return [(str(span_id), dict(row)) for span_id, row in subset.iterrows()]
