@@ -322,20 +322,33 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
             The evaluation result with a custom reason message.
         """
         documents = self.get_documents(ctx)
-        # Distinguish "the trace was fine but retrieval returned nothing" from
-        # "the pattern was absent from retrieved content" — the same courtesy
-        # LiteralQuoteEvaluator gives. (Trace-unavailability already raised in
-        # get_documents -> get_trace, so reaching here with no documents means a
-        # genuine empty retrieval, not an infra failure.)
+        # Always run the user-supplied evaluation function, even when retrieval
+        # returned nothing: a predicate may legitimately pass on an empty list
+        # (vacuous checks like ``len(docs) <= 5``, negative checks like "no
+        # forbidden source retrieved"), and short-circuiting above this
+        # extension point would silently flip its verdict.
+        result = self.evaluation_function(documents)
         if not documents:
+            # Distinguish "the trace was fine but retrieval returned nothing"
+            # from "the pattern was absent from retrieved content" — the same
+            # courtesy LiteralQuoteEvaluator gives — but only annotate a False
+            # verdict; a pass on empty input is a real pass and must not carry
+            # a failure-flavoured reason. (Trace-unavailability already raised
+            # in get_documents -> get_trace, so reaching here with no documents
+            # means a genuine empty retrieval, not an infra failure.)
+            if result:
+                return EvaluationReason(
+                    value=True,
+                    reason="No documents were retrieved; the evaluation function passed on the empty input.",
+                )
             return EvaluationReason(
                 value=False,
                 reason=(
                     "No documents were retrieved (the trace was available but contained no "
-                    "retriever/tool/reranker output), so the source check could not match."
+                    "retriever/tool/reranker output), so the source check could not match. "
+                    f"{self.custom_reason_false}"
                 ),
             )
-        result = self.evaluation_function(documents)
         return EvaluationReason(
             value=result,
             reason=self.custom_reason_true if result else self.custom_reason_false,

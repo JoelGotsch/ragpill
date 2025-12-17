@@ -6,7 +6,7 @@ import pytest
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
-from ragpill.evaluators import RegexInSourcesEvaluator
+from ragpill.evaluators import RegexInSourcesEvaluator, SourcesBaseEvaluator
 from ragpill.trace import Document
 
 
@@ -174,6 +174,11 @@ async def test_empty_documents_list():
         ctx = create_test_context("some input", "some output")
         result = await evaluator.run(ctx)
         assert result.value is False
+        # Empty retrieval stays distinguishable from "pattern absent from
+        # retrieved content": the distinct no-documents text prefixes the
+        # evaluator's own failure reason.
+        assert "no documents were retrieved" in result.reason.lower()
+        assert "not found" in result.reason.lower()
 
 
 @pytest.mark.anyio
@@ -200,6 +205,49 @@ async def test_pattern_in_last_document(sample_documents):
         ctx = create_test_context("some input", "some output")
         result = await evaluator.run(ctx)
         assert result.value is True
+
+
+# ---------------------------------------------------------------------------
+# SourcesBaseEvaluator on empty retrieval — the user predicate decides
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_predicate_passing_on_empty_retrieval_keeps_true_verdict():
+    # A predicate that legitimately holds on zero documents (a vacuous check)
+    # must not be short-circuited to False before it runs.
+    evaluator = SourcesBaseEvaluator(evaluation_function=lambda docs: len(docs) <= 5)
+    with patch.object(evaluator, "get_documents", return_value=[]):
+        ctx = create_test_context("some input", "some output")
+        result = await evaluator.run(ctx)
+    assert result.value is True
+    # A pass must not carry the failure-flavoured no-documents text.
+    assert "could not match" not in result.reason
+
+
+@pytest.mark.anyio
+async def test_expected_false_on_empty_retrieval_is_not_greenwashed():
+    # With expected=False, a predicate that returns True on empty input must
+    # yield a final False after polarity inversion (True == False). A canned
+    # False from a pre-predicate guard would invert into a bogus PASS.
+    evaluator = SourcesBaseEvaluator(
+        evaluation_function=lambda docs: len(docs) <= 5,
+        expected=False,
+    )
+    with patch.object(evaluator, "get_documents", return_value=[]):
+        ctx = create_test_context("some input", "some output")
+        result = await evaluator.evaluate(ctx)
+    assert result.value is False
+
+
+@pytest.mark.anyio
+async def test_predicate_failing_on_empty_retrieval_gets_distinct_reason():
+    evaluator = SourcesBaseEvaluator(evaluation_function=lambda docs: len(docs) > 0)
+    with patch.object(evaluator, "get_documents", return_value=[]):
+        ctx = create_test_context("some input", "some output")
+        result = await evaluator.run(ctx)
+    assert result.value is False
+    assert "no documents were retrieved" in result.reason.lower()
 
 
 # ---------------------------------------------------------------------------
