@@ -370,3 +370,52 @@ async def test_concurrent_traced_runs_are_serialized(anyio_backend):
         reset_backend()
 
     assert _DepthTrackingBackend._max == 1  # never two traced runs active at once
+
+
+# ---------------------------------------------------------------------------
+# F16 — max_concurrency parallelizes evaluators *within* a run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_max_concurrency_overlaps_evaluators_within_a_run(anyio_backend):
+    import anyio as _anyio
+
+    from ragpill.base import BaseEvaluator
+    from ragpill.eval_types import EvaluationReason
+
+    class _SlowEval(BaseEvaluator):
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return f"Slow{id(cls) % 1000}"
+
+        async def run(self, ctx: EvaluatorContext) -> EvaluationReason:  # type: ignore[type-arg]
+            await _anyio.sleep(0.1)
+            return EvaluationReason(value=True, reason="ok")
+
+    # Distinct classes so their assertion names differ.
+    evs = [type(f"S{i}", (_SlowEval,), {})(expected=True, tags=set()) for i in range(4)]
+    case = Case(inputs="q", metadata=TestCaseMetadata(), evaluators=evs)
+    testset = Dataset(cases=[case])
+    run = DatasetRunOutput(
+        cases=[
+            CaseRunOutput(
+                case_name="q",
+                inputs="q",
+                expected_output=None,
+                metadata={"attributes": {}, "tags": [], "expected": None, "repeat": None, "threshold": None},
+                base_input_key=default_input_to_key("q"),
+                trace=None,
+                trace_id="",
+                task_runs=[TaskRunOutput(run_index=0, input_key="k_0", output="out", duration=0.0)],
+            )
+        ]
+    )
+
+    t0 = time.perf_counter()
+    out = await evaluate_results(run, testset, max_concurrency=4)
+    elapsed = time.perf_counter() - t0
+    # 4 evaluators * 0.1s each: overlapped they finish in ~0.1s, not ~0.4s.
+    assert elapsed < 0.3
+    assert len(out.case_results[0].run_results[0].assertions) == 4

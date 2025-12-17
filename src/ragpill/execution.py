@@ -64,8 +64,34 @@ TraceStatus = Literal["ok", "incomplete", "unavailable"]
 # Serializes traced ``execute_dataset`` calls: capture mutates process-global
 # tracking state (the active tracking URI / MLflow session), so two concurrent
 # traced runs would cross-tag each other's traces or corrupt the destination.
-# anyio.Lock is portable across asyncio and trio. Non-traced runs skip it.
-_capture_lock = anyio.Lock()
+# anyio synchronization primitives bind to the running event loop, so we key one
+# lock per loop (a process normally has exactly one; test suites create a fresh
+# loop per test). Cross-loop serialization is meaningless anyway.
+_capture_locks: dict[Any, anyio.Lock] = {}
+
+
+def _get_capture_lock() -> anyio.Lock:
+    import sniffio
+
+    try:
+        lib = sniffio.current_async_library()
+    except sniffio.AsyncLibraryNotFoundError:
+        key: Any = "none"
+    else:
+        if lib == "asyncio":
+            import asyncio
+
+            key = id(asyncio.get_running_loop())
+        elif lib == "trio":
+            import trio
+
+            key = id(trio.lowlevel.current_trio_token())
+        else:  # pragma: no cover - only asyncio/trio are supported by anyio
+            key = lib
+    lock = _capture_locks.get(key)
+    if lock is None:
+        lock = _capture_locks[key] = anyio.Lock()
+    return lock
 
 
 def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:
@@ -808,9 +834,10 @@ async def execute_dataset(
     if not capture_traces:
         return await _run()
     # Traced: serialize against other traced runs (shared global tracking state).
-    if _capture_lock.locked():
+    capture_lock = _get_capture_lock()
+    if capture_lock.locked():
         logger.info("execute_dataset: another traced run holds the tracking backend; waiting for it to finish.")
-    async with _capture_lock:
+    async with capture_lock:
         return await _run()
 
 

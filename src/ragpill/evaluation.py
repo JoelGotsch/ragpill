@@ -18,6 +18,7 @@ import re
 import traceback
 import warnings
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -161,39 +162,10 @@ def _source_for(evaluator: BaseEvaluator) -> EvaluatorSource:
     )
 
 
-async def _evaluate_single_run(
-    case: Case[Any, Any, Any],
-    task_run: TaskRunOutput,
-    case_run: CaseRunOutput,
-    evaluators: list[BaseEvaluator],
-) -> RunResult:
-    """Run every evaluator against one :class:`TaskRunOutput`."""
-    eval_names = _assign_unique_names(evaluators)
-
-    # Task error short-circuits all evaluators to failure.
-    if task_run.error is not None:
-        assertions: dict[str, EvaluationResult] = {}
-        for evaluator, eval_name in zip(evaluators, eval_names):
-            assertions[eval_name] = EvaluationResult(
-                name=eval_name,
-                value=False,
-                reason=f"Task execution failed: {task_run.error}",
-                source=_source_for(evaluator),
-            )
-        return RunResult(
-            run_index=task_run.run_index,
-            input_key=task_run.input_key,
-            run_span_id=task_run.run_span_id,
-            trace_id=task_run.trace_id,
-            output=None,
-            duration=task_run.duration,
-            assertions=assertions,
-            evaluator_failures=[],
-            error=RuntimeError(task_run.error),
-        )
-
-    # Successful run — build a context and run evaluators.
-    ctx: EvaluatorContext[Any, Any, Any] = EvaluatorContext(
+def _build_ctx(
+    case: Case[Any, Any, Any], task_run: TaskRunOutput, case_run: CaseRunOutput
+) -> EvaluatorContext[Any, Any, Any]:
+    return EvaluatorContext(
         name=case.name,
         inputs=case.inputs,
         metadata=case.metadata,
@@ -207,37 +179,52 @@ async def _evaluate_single_run(
         trace_status=task_run.trace_status,
     )
 
-    assertions = {}
-    evaluator_failures: list[EvaluatorFailureInfo] = []
 
-    for evaluator, eval_name in zip(evaluators, eval_names):
-        try:
-            result = await evaluator.evaluate(ctx)
-            assertions[eval_name] = EvaluationResult(
-                name=eval_name,
-                value=result.value,
-                reason=result.reason,
-                source=_source_for(evaluator),
-            )
-        except Exception as e:
-            evaluator_failures.append(
-                EvaluatorFailureInfo(
-                    name=eval_name,
-                    error_message=str(e),
-                    error_stacktrace=traceback.format_exc(),
-                )
-            )
+async def _run_one_evaluator(
+    evaluator: BaseEvaluator, eval_name: str, ctx: EvaluatorContext[Any, Any, Any]
+) -> tuple[EvaluationResult | None, EvaluatorFailureInfo | None]:
+    """Run a single evaluator; return either its result or a failure record.
 
-    return RunResult(
-        run_index=task_run.run_index,
-        input_key=task_run.input_key,
-        run_span_id=task_run.run_span_id,
-        trace_id=task_run.trace_id,
-        output=task_run.output,
-        duration=task_run.duration,
-        assertions=assertions,
-        evaluator_failures=evaluator_failures,
-    )
+    This is the unit of concurrency: the dominant latency (LLM judges) is one
+    ``evaluate`` call, so parallelizing at this granularity — not just per run —
+    is what makes ``max_concurrency`` speed up judge-heavy testsets.
+    """
+    try:
+        result = await evaluator.evaluate(ctx)
+        return (
+            EvaluationResult(name=eval_name, value=result.value, reason=result.reason, source=_source_for(evaluator)),
+            None,
+        )
+    except Exception as e:
+        return None, EvaluatorFailureInfo(name=eval_name, error_message=str(e), error_stacktrace=traceback.format_exc())
+
+
+@dataclass
+class _RunSlot:
+    """Mutable accumulator for one ``(case, run)`` while its evaluators run."""
+
+    cpos: int
+    task_run: TaskRunOutput
+    eval_names: list[str]
+    assertions: dict[str, EvaluationResult] = field(default_factory=dict)
+    failures: list[EvaluatorFailureInfo] = field(default_factory=list)
+    error: Exception | None = None
+
+    def to_run_result(self) -> RunResult:
+        # Rebuild assertions in the evaluators' declared order so output is
+        # deterministic regardless of the order concurrent workers finished in.
+        ordered = {name: self.assertions[name] for name in self.eval_names if name in self.assertions}
+        return RunResult(
+            run_index=self.task_run.run_index,
+            input_key=self.task_run.input_key,
+            run_span_id=self.task_run.run_span_id,
+            trace_id=self.task_run.trace_id,
+            output=None if self.error is not None else self.task_run.output,
+            duration=self.task_run.duration,
+            assertions=ordered,
+            evaluator_failures=self.failures,
+            error=self.error,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -479,41 +466,51 @@ async def evaluate_results(
         _, threshold = resolve_repeat(case_metadata, _settings)
         per_case.append((case_run, case, evaluators, case_metadata, threshold))
 
-    # Flatten to a job list, remembering each job's owning case, so results
-    # regroup by case regardless of completion order.
-    jobs: list[tuple[int, Case[Any, Any, Any], TaskRunOutput, Any, list[BaseEvaluator]]] = []
+    # Build one slot per (case, run) and flatten to a per-evaluator job list.
+    # Task-error runs short-circuit every evaluator to failure with no jobs.
+    slots: list[_RunSlot] = []
+    jobs: list[tuple[_RunSlot, BaseEvaluator, str, EvaluatorContext[Any, Any, Any]]] = []
     for cpos, (case_run, case, evaluators, _cm, _th) in enumerate(per_case):
+        eval_names = _assign_unique_names(evaluators)
         for task_run in case_run.task_runs:
-            jobs.append((cpos, case, task_run, case_run, evaluators))
+            slot = _RunSlot(cpos=cpos, task_run=task_run, eval_names=eval_names)
+            if task_run.error is not None:
+                slot.error = RuntimeError(task_run.error)
+                for evaluator, eval_name in zip(evaluators, eval_names):
+                    slot.assertions[eval_name] = EvaluationResult(
+                        name=eval_name,
+                        value=False,
+                        reason=f"Task execution failed: {task_run.error}",
+                        source=_source_for(evaluator),
+                    )
+            else:
+                ctx = _build_ctx(case, task_run, case_run)
+                for evaluator, eval_name in zip(evaluators, eval_names):
+                    jobs.append((slot, evaluator, eval_name, ctx))
+            slots.append(slot)
 
-    results: list[RunResult | None] = [None] * len(jobs)
-    if max_concurrency <= 1:
-        # Sequential — identical to the pre-concurrency behaviour and free of any
-        # event-loop-specific primitives (portable across asyncio/trio).
-        for i, (_cpos, case, task_run, case_run, evaluators) in enumerate(jobs):
-            results[i] = await _evaluate_single_run(case, task_run, case_run, evaluators)
-    else:
-        # Bounded concurrency via anyio so it works on both async backends.
-        limiter = anyio.CapacityLimiter(max_concurrency)
+    # Run every evaluator job bounded by ``max_concurrency`` (one shared limiter,
+    # so per-run evaluators overlap too). ``max_concurrency=1`` runs one at a
+    # time; slots collect results by name, so output is order-independent.
+    limiter = anyio.CapacityLimiter(max(1, max_concurrency))
 
-        async def _worker(
-            i: int,
-            case: Case[Any, Any, Any],
-            task_run: TaskRunOutput,
-            case_run: CaseRunOutput,
-            evaluators: list[BaseEvaluator],
-        ) -> None:
-            async with limiter:
-                results[i] = await _evaluate_single_run(case, task_run, case_run, evaluators)
+    async def _worker(
+        slot: _RunSlot, evaluator: BaseEvaluator, eval_name: str, ctx: EvaluatorContext[Any, Any, Any]
+    ) -> None:
+        async with limiter:
+            result, failure = await _run_one_evaluator(evaluator, eval_name, ctx)
+        if result is not None:
+            slot.assertions[eval_name] = result
+        if failure is not None:
+            slot.failures.append(failure)
 
-        async with anyio.create_task_group() as tg:
-            for i, (_cpos, case, task_run, case_run, evaluators) in enumerate(jobs):
-                tg.start_soon(_worker, i, case, task_run, case_run, evaluators)
+    async with anyio.create_task_group() as tg:
+        for slot, evaluator, eval_name, ctx in jobs:
+            tg.start_soon(_worker, slot, evaluator, eval_name, ctx)
 
     runs_by_case: dict[int, list[RunResult]] = {i: [] for i in range(len(per_case))}
-    for (cpos, *_rest), rr in zip(jobs, results):
-        assert rr is not None
-        runs_by_case[cpos].append(rr)
+    for slot in slots:
+        runs_by_case[slot.cpos].append(slot.to_run_result())
 
     case_results: list[CaseResult] = []
     for cpos, (case_run, case, evaluators, case_metadata, threshold) in enumerate(per_case):
