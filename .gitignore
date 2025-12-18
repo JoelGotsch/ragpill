@@ -1,0 +1,7 @@
+.env
+.envrc
+uv.lock
+scribble**
+**/__pycache__/
+**/dist/
+**/site/

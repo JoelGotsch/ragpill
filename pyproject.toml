@@ -1,0 +1,67 @@
+[build-system]
+requires = ["uv_build>=0.9.22,<0.10.0"]
+build-backend = "uv_build"
+
+[project]
+name = "ragpill"
+version = "0.1.0"
+description = "This library allows for granular testing of llm-applications based on expert input."
+readme = "README.md"
+authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai>=1.39.1",
+    "mlflow>=3.8.1",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31.3",
+    "pytest>=8.3.3",
+    "pytest-pretty>=1.2.0",
+    "isort>=5.13.2",
+    "ruff>=0.8.0",
+]
+
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.26.0",
+    "mkdocs-jupyter>=0.25.0",
+    "mkdocs-autorefs>=1.2.0",
+    "mike>=2.1.3", # versioning documentation
+]
+build_docs = [
+    "qdrant-client>=1.12.0",
+]
+
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+extend-select = ["Q", "RUF", "C90", "UP", "I"]
+mccabe = { max-complexity = 18 }
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[too.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.basedpyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+reportUnnecessaryTypeIgnoreComment = true
+reportIgnoreCommentWithoutRule = true
+reportUnusedParameter = true
+reportIncompatibleUnannotatedOverride = true
+reportImplicitAbstractClass = true
+reportMissingTypeStubs = false
+reportMissingModuleSource = false
+include = ["src"]
+venv = ".venv"
