@@ -21,6 +21,8 @@ dev = [
     "pytest-pretty>=1.2.0",
     "isort>=5.13.2",
     "ruff>=0.8.0",
+    "pytest-cov>=6.0.0",
+    "coverage[toml]>=7.6.0",
 ]
 
 docs = [
@@ -47,7 +49,7 @@ mccabe = { max-complexity = 18 }
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[too.ruff.lint.isort]
+[tool.ruff.lint.isort]
 combine-as-imports = true
 
 [tool.ruff.format]
@@ -64,4 +66,65 @@ reportImplicitAbstractClass = true
 reportMissingTypeStubs = false
 reportMissingModuleSource = false
 include = ["src"]
-venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--tb=short",
+    "--cov=ragpill",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+
+[tool.coverage.run]
+source = ["ragpill"]
+branch = true
+omit = ["tests/*", "*/site-packages/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@overload",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.paths]
+source = ["src/ragpill", "*/site-packages/ragpill"]
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+requires =
+    tox>=4.23
+    tox-uv>=1.17
+min_version = 4.0
+env_list =
+    lint
+    type
+    py{311,312,313}-highest
+    py{311,312,313}-lowest
+
+[testenv]
+runner = uv-venv-runner
+dependency_groups = dev
+commands =
+    pytest {posargs}
+
+[testenv:py{311,312,313}-lowest]
+uv_resolution = lowest-direct
+
+[testenv:lint]
+skip_install = true
+dependency_groups = dev
+commands =
+    ruff check src tests
+    ruff format --check src tests
+
+[testenv:type]
+dependency_groups = dev
+commands =
+    basedpyright
+"""
