@@ -188,3 +188,182 @@ class MySharedConfigEvaluator(BaseEvaluator):
 # export MY_EVALUATOR_API_KEY=your_key
 # export MY_EVALUATOR_THRESHOLD=0.9
 ```
+
+### Pattern 2: JSON in check Column (for per-instance configuration)
+
+Use this when different test cases need different parameters (e.g., different regex patterns, metadata keys).
+
+```python
+import json
+from ragpill.base import BaseEvaluator, EvaluatorMetadata
+from ragpill.csv.testset import load_testset, default_evaluator_classes
+from pydantic_evals.evaluators import EvaluationReason
+from pydantic_evals.evaluators.context import EvaluatorContext
+
+class MyJsonConfigEvaluator(BaseEvaluator):
+    """Evaluator with per-instance configuration via JSON in check column."""
+    
+    pattern: str
+    metadata_key: str
+    
+    @classmethod
+    def from_csv_line(
+        cls,
+        expected: bool,
+        mandatory: bool,
+        tags: str,
+        check: str,
+        **kwargs: Any
+    ):
+        """Create evaluator from CSV row data.
+        
+        The 'check' parameter should be a JSON string with required parameters.
+        Example: {"pattern": ".*error.*", "metadata_key": "status"}
+        """
+        try:
+            check_dict = json.loads(check)
+            if not isinstance(check_dict, dict):
+                raise ValueError("check must be a JSON object")
+            
+            pattern = check_dict.get('pattern')
+            metadata_key = check_dict.get('metadata_key')
+            
+            if not pattern or not metadata_key:
+                raise ValueError("check must contain 'pattern' and 'metadata_key'")
+            
+        except json.JSONDecodeError:
+            raise ValueError(
+                f"MyJsonConfigEvaluator requires 'check' to be a JSON string "
+                f"with 'pattern' and 'metadata_key' keys. Got: {check}"
+            )
+        
+        return cls(
+            expected=expected,
+            mandatory=mandatory,
+            tags=tags,
+            attributes=kwargs,
+            pattern=pattern,
+            metadata_key=metadata_key,
+        )
+    
+    async def run(
+        self,
+        ctx: EvaluatorContext[object, object, EvaluatorMetadata],
+    ) -> EvaluationReason:
+        import re
+        # Use per-instance configuration
+        regex = re.compile(self.pattern)
+        matched = bool(regex.search(ctx.output))
+        
+        return EvaluationReason(
+            value=matched,
+            reason=f"Pattern '{self.pattern}' {'found' if matched else 'not found'}",
+        )
+
+# CSV example for this evaluator:
+# Question,test_type,expected,mandatory,tags,check
+# What is the status?,MyJsonConfig,true,true,test,"{\"pattern\": \".*success.*\", \"metadata_key\": \"status\"}"
+```
+
+### Using Custom Evaluators
+
+```python
+from ragpill.csv.testset import load_testset, default_evaluator_classes
+
+# Extend default evaluators with your custom evaluators
+dataset = load_testset(
+    csv_path="testset.csv",
+    evaluator_classes=default_evaluator_classes | {
+        'MySharedConfig': MySharedConfigEvaluator,
+        'MyJsonConfig': MyJsonConfigEvaluator,
+    },
+)
+```
+
+### When to Use Which Pattern
+
+- **Pattern 1 (Environment Variables)**: 
+  - API keys, base URLs, model names
+  - Global thresholds or limits
+  - Configuration shared across all test cases
+  - Example: `LLMJudge` uses this for model configuration
+
+- **Pattern 2 (JSON in check column)**:
+  - Different regex patterns per test case
+  - Different metadata keys to check
+  - Test-specific parameters
+  - Example: `RegexInDocumentMetadataEvaluator` uses this for pattern and key
+
+## Encoding Support
+
+The CSV adapter automatically handles different encodings:
+
+- UTF-8
+- UTF-8 with BOM
+- Latin-1
+- Windows-1252 (CP1252)
+
+You don't need to specify the encoding manually.
+
+## Best Practices
+
+### 1. Version Control
+
+Keep your CSV files in version control alongside your code:
+
+```
+project/
+├── src/
+├── tests/
+│   └── data/
+│       ├── testset.csv
+```
+
+### 2. Realistic Test Cases
+
+Use questions verbetim like a user would ask.
+
+```csv
+# Good
+capital of france?,Paris,...
+2+2,4,...
+```
+
+### 3. Meaningful Tags
+
+Use tags to organize and filter tests:
+
+```csv
+Question,test_type,expected,mandatory,tags,check
+...,"geography,european,capitals",...
+...,"math,arithmetic,basic",...
+...,"biology,science,photosynthesis",...
+```
+
+### 4. Separate Concerns
+
+Consider separate CSV files for different domains:
+
+```
+testsets/
+├── geography_tests.csv
+├── math_tests.csv
+└── science_tests.csv
+```
+
+### 5. Document Expected Values
+
+Be specific about what you expect:
+
+```csv
+# Good - specific rubric in check column
+check: "The answer should mention Paris as the capital city"
+
+# Too vague
+check: "Correct answer"
+```
+
+## See Also
+
+- [Loading TestSets Tutorial](../tutorials/loading-testsets.ipynb)
+- [CSV Module API](../api/csv.md)
