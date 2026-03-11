@@ -534,7 +534,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
 
 
 @dataclass(kw_only=True, repr=False)
-class LiteralQuotationTest(SourcesBaseEvaluator):
+class LiteralQuoteEvaluator(SourcesBaseEvaluator):
     """Verify that all markdown quotes in the output appear literally in source documents.
 
     This evaluator ensures citations are accurate by checking that any text quoted
@@ -560,10 +560,10 @@ class LiteralQuotationTest(SourcesBaseEvaluator):
 
     Example:
         ```python
-        from ragpill.evaluators import LiteralQuotationTest
+        from ragpill.evaluators import LiteralQuoteEvaluator
 
         # Create evaluator
-        evaluator = LiteralQuotationTest(
+        evaluator = LiteralQuoteEvaluator(
             expected=True,
             mandatory=True,
             tags={"quotation", "accuracy"}
@@ -628,8 +628,8 @@ class LiteralQuotationTest(SourcesBaseEvaluator):
     @classmethod
     def from_csv_line(
         cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "LiteralQuotationTest":
-        """Create a LiteralQuotationTest from a CSV line.
+    ) -> "LiteralQuoteEvaluator":
+        """Create a LiteralQuoteEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
         See [`load_testset`][ragpill.csv.testset.load_testset] for more details.
@@ -755,7 +755,7 @@ class HasQuotesEvaluator(BaseEvaluator):
         - Set expected=False to verify that quotes are NOT within the specified range
 
     See Also:
-        [`LiteralQuotationTest`][ragpill.evaluators.LiteralQuotationTest]:
+        [`LiteralQuoteEvaluator`][ragpill.evaluators.LiteralQuoteEvaluator]:
             Verifies quotes appear literally in source documents
         [`BaseEvaluator`][ragpill.base.BaseEvaluator]:
             Base class for all evaluators
