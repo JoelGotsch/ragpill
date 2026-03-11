@@ -45,7 +45,7 @@ class LLMJudge(BaseEvaluator):
     """
 
     rubric: str
-    model: models.Model = field(repr=False)
+    model: models.Model = field(repr=False, default_factory=_get_default_judge_llm)
     include_input: bool = field(default=False)
 
     @classmethod
