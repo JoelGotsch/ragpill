@@ -10,7 +10,7 @@ from pydantic_evals import Case, Dataset
 from ragpill.base import BaseEvaluator, TestCaseMetadata
 from ragpill.evaluators import (
     HasQuotesEvaluator,
-    LiteralQuotationTest,
+    LiteralQuoteEvaluator,
     LLMJudge,
     RegexInDocumentMetadataEvaluator,
     RegexInOutputEvaluator,
@@ -262,7 +262,7 @@ default_evaluator_classes: dict[str, type[BaseEvaluator]] = {
     "WrappedPydanticEvaluator": WrappedPydanticEvaluator,
     "RegexInSourcesEvaluator": RegexInSourcesEvaluator,
     "RegexInDocumentMetadata": RegexInDocumentMetadataEvaluator,
-    "LiteralQuotationTest": LiteralQuotationTest,
+    "LiteralQuoteEvaluator": LiteralQuoteEvaluator,
     "HasQuotesEvaluator": HasQuotesEvaluator,
     "RegexInOutputEvaluator": RegexInOutputEvaluator,
     # Add other default evaluator classes here as they are implemented:
