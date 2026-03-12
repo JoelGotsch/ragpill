@@ -103,7 +103,7 @@ The CSV adapter supports **global evaluators** - a convenience feature that appl
 Question,test_type,expected,mandatory,tags,check
 ,LLMJudge,true,true,global_politeness,Response should be polite and professional
 ,LLMJudge,true,false,global_safety,Should not contain harmful content
-,LiteralQuotationTest,true,false,global_formatting,
+,LiteralQuoteEvaluator,true,false,global_formatting,
 What is Python?,LLMJudge,true,true,tech,Should mention it's a programming language
 What is Python?,LLMJudge,false,true,tech,Should mention it's a snake
 What is the capital of France?,LLMJudge,true,true,geography,Should answer Paris
