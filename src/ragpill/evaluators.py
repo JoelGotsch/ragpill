@@ -106,10 +106,19 @@ class LLMJudge(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
-        if self.include_input:
-            grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
-        else:
-            grading_output = await judge_output(ctx.output, self.rubric, self.model)
+        # Wrap in an explicit span so that both the pydantic-ai and openai autolog
+        # integrations create child spans rather than competing root traces. Without this,
+        # the two integrations race to INSERT a root trace with the same request_id, which
+        # causes a UNIQUE constraint violation in MLflow's SQLite backend.
+        # The "ragpill_is_judge_trace" attribute lets _delete_llm_judge_traces identify
+        # and remove these traces after evaluation.
+        with mlflow.start_span(name="llm-judge-evaluation", span_type=SpanType.LLM) as span:
+            span.set_attribute("ragpill_is_judge_trace", True)
+            if self.include_input:
+                grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+            else:
+                grading_output = await judge_output(ctx.output, self.rubric, self.model)
+            span.set_outputs({"pass": grading_output.pass_, "reason": grading_output.reason})
         return EvaluationReason(
             value=grading_output.pass_,
             reason=grading_output.reason,
