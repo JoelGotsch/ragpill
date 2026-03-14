@@ -149,7 +149,7 @@ Full documentation is available at [your-docs-url] including:
 - [ ] Track git-commit hash
 - [ ] Tests with test-docker containers
 - [ ] Dependency injection for llm, input_to_key functions
-- [ ] pytest integration (mandatory throws errors, non-mandatory logs warnings)
+- [ ] pytest integration
 
 
 ## Contributing

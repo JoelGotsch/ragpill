@@ -194,7 +194,6 @@ def load_testset(
         - **Question**: The input question/prompt for the test case
         - **test_type**: Name of the evaluator class
         - **expected**: Boolean indicating expected pass/fail
-        - **mandatory**: Whether this check is mandatory
         - **tags**: Comma-separated tags
         - **check**: Evaluation criteria
 

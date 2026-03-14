@@ -52,7 +52,6 @@ class LLMJudge(BaseEvaluator):
     def from_csv_line(
         cls,
         expected: bool,
-        mandatory: bool,
         tags: set[str],
         check: str,
         get_llm: Callable[[], models.Model] = _get_default_judge_llm,
@@ -69,7 +68,6 @@ class LLMJudge(BaseEvaluator):
 
         Args:
             expected: Expected evaluation result
-            mandatory: Whether evaluation is mandatory
             tags: Comma-separated tags string
             check: Rubric text or JSON with 'rubric' key
             get_llm: Callable that returns a Model instance (defaults to get_default_judge_llm)
@@ -97,7 +95,6 @@ class LLMJudge(BaseEvaluator):
             rubric=rubric,
             model=model,
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
         )
@@ -139,7 +136,6 @@ class LLMJudge(BaseEvaluator):
         """
         return EvaluatorMetadata(
             expected=self.expected,
-            mandatory=self.mandatory,
             attributes=self.attributes,
             tags=self.tags,
             is_global_evaluator=self._is_global,
@@ -168,7 +164,6 @@ class WrappedPydanticEvaluator(BaseEvaluator):
         ragpill_evaluator = WrappedPydanticEvaluator(
             pydantic_evaluator=SomePydanticEvaluator(...),
             expected=True,
-            mandatory=False,
             tags={"tag1", "tag2"},
             attributes={"attr1": "value1"},
         )
@@ -362,7 +357,7 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "RegexInSourcesEvaluator":
         """Create a RegexInSourcesEvaluator from a CSV line.
 
@@ -371,7 +366,6 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
 
         Args:
             expected: Expected evaluation result
-            mandatory: Whether this evaluation is mandatory
             tags: Comma-separated tags string
             check: Regex pattern to search for in document contents
             **kwargs: Additional attributes for the evaluator
@@ -380,7 +374,6 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
         evaluation_function = _regex_in_any_document_content(pattern)
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             evaluation_function=evaluation_function,
             pattern=pattern,
@@ -437,7 +430,7 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "RegexInDocumentMetadataEvaluator":
         """Create a RegexInDocumentMetadataEvaluator from a CSV line.
 
@@ -446,7 +439,6 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
 
         Args:
             expected: Expected evaluation result
-            mandatory: Whether this evaluation is mandatory
             tags: Comma-separated tags string
             check: json with 2 keys: "pattern" and "key". Regex pattern to search for in document metadata key.
             **kwargs: Additional attributes for the evaluator
@@ -466,7 +458,6 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
         evaluation_function = _regex_in_doc_metadata(metadata_key, pattern)
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             evaluation_function=evaluation_function,
             metadata_key=metadata_key,
@@ -501,7 +492,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "RegexInOutputEvaluator":
         """Create a RegexInOutputEvaluator from a CSV line."""
         if not check or not check.strip():
@@ -520,7 +511,6 @@ class RegexInOutputEvaluator(BaseEvaluator):
         return cls(
             pattern=pattern,
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
         )
@@ -563,7 +553,6 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
 
     Args:
         expected: Expected evaluation result (default: True)
-        mandatory: Whether this evaluation is mandatory (default: True)
         tags: Set of tags for categorizing this evaluator
         attributes: Additional attributes for the evaluator
 
@@ -574,7 +563,6 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         # Create evaluator
         evaluator = LiteralQuoteEvaluator(
             expected=True,
-            mandatory=True,
             tags={"quotation", "accuracy"}
         )
 
@@ -618,7 +606,6 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
     def __init__(
         self,
         expected: bool = True,
-        mandatory: bool = True,
         tags: set[str] | None = None,
         attributes: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -626,7 +613,6 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         super().__init__(
             evaluation_function=lambda docs: True,  # Placeholder, actual logic is in run() for access to output
             expected=expected,
-            mandatory=mandatory,
             tags=tags or set(),
             attributes=attributes or {},
             custom_reason_true="All quotes found in source documents.",
@@ -636,7 +622,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "LiteralQuoteEvaluator":
         """Create a LiteralQuoteEvaluator from a CSV line.
 
@@ -645,14 +631,12 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
 
         Args:
             expected: Expected evaluation result
-            mandatory: Whether this evaluation is mandatory
             tags: Comma-separated tags string
             check: Not used for this evaluator (can be empty)
             **kwargs: Additional attributes for the evaluator
         """
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
         )
@@ -722,7 +706,6 @@ class HasQuotesEvaluator(BaseEvaluator):
         min_quotes: Minimum number of quotes required (default: 1)
         max_quotes: Maximum number of quotes allowed (default: -1, meaning no maximum)
         expected: Expected evaluation result (default: True)
-        mandatory: Whether this evaluation is mandatory (default: True)
         tags: Set of tags for categorizing this evaluator
         attributes: Additional attributes for the evaluator
 
@@ -734,7 +717,6 @@ class HasQuotesEvaluator(BaseEvaluator):
         evaluator = HasQuotesEvaluator(
             min_quotes=2,
             expected=True,
-            mandatory=True,
             tags={"quotation", "format"}
         )
 
@@ -743,7 +725,6 @@ class HasQuotesEvaluator(BaseEvaluator):
             min_quotes=2,
             max_quotes=5,
             expected=True,
-            mandatory=True,
             tags={"quotation", "format"}
         )
 
@@ -775,7 +756,7 @@ class HasQuotesEvaluator(BaseEvaluator):
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "HasQuotesEvaluator":
         """Create a HasQuotesEvaluator from a CSV line.
 
@@ -784,7 +765,6 @@ class HasQuotesEvaluator(BaseEvaluator):
 
         Args:
             expected: Expected evaluation result
-            mandatory: Whether this evaluation is mandatory
             tags: Comma-separated tags string
             check: Either an integer for min_quotes, or JSON with 'min_quotes' and optionally 'max_quotes'.
                    If empty, defaults to min_quotes=1, max_quotes=-1.
@@ -828,7 +808,6 @@ class HasQuotesEvaluator(BaseEvaluator):
             min_quotes=min_quotes,
             max_quotes=max_quotes,
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
         )

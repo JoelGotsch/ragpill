@@ -1,9 +1,8 @@
 import asyncio
 import concurrent.futures
-import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
-
+import inspect
 import mlflow
 import pandas as pd
 from mlflow.entities import AssessmentSource, Experiment, Feedback, SpanType, Trace
@@ -234,7 +233,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": eval_result.reason,
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -262,7 +260,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": f"Evaluator failed with error: {eval_fails.error_message}\n\n{eval_fails.error_stacktrace}",
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -299,11 +296,6 @@ def _upload_mlflow(
     df_valid = eval_result_df[eval_result_df["evaluator_result"].notna()]
     overall_accuracy = df_valid["evaluator_result"].mean()
     mlflow.log_metric("overall_accuracy", overall_accuracy)
-
-    # Calculate accuracy per mandatory class
-    accuracy_per_mandatory = df_valid.groupby("mandatory")["evaluator_result"].mean()
-    for mandatory_val, accuracy in accuracy_per_mandatory.items():
-        mlflow.log_metric(f"accuracy_mandatory_{mandatory_val}", accuracy)
 
     # Calculate accuracy per tag (expanding tags since case_tags is a list)
     df_exploded = df_valid.explode("tags")
@@ -353,7 +345,7 @@ async def evaluate_testset_with_mlflow(
 
     The function automatically:
 
-    - Logs overall accuracy and accuracy by mandatory status
+    - Logs overall accuracy
     - Logs accuracy per tag for granular analysis
     - Attaches feedback/assessments to each trace
     - Preserves trace IDs for later inspection
@@ -383,7 +375,6 @@ async def evaluate_testset_with_mlflow(
             - `evaluator_data`: Evaluator-specific data (e.g., rubric for LLMJudge)
             - `evaluator_reason`: Explanation for the result
             - `expected`: Whether pass was expected
-            - `mandatory`: Whether this evaluation is mandatory
             - `attributes`: JSON-encoded custom attributes
             - `tags`: Set of tags for categorization
             - `task_duration`: Time taken for task execution
@@ -426,7 +417,6 @@ async def evaluate_testset_with_mlflow(
 
         # Analyze results
         print(f"Overall accuracy: {results_df['evaluator_result'].mean():.2%}")
-        print(f"Mandatory accuracy: {results_df[results_df['mandatory']]['evaluator_result'].mean():.2%}")
         ```
 
     Note:
