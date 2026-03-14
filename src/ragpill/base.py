@@ -117,8 +117,15 @@ class BaseEvaluator(Evaluator):
 
     Attributes:
         evaluation_name: Unique identifier for this evaluator instance
-        expected: Whether we expect this check to pass (true/false)
-        mandatory: Whether this check is required to pass (true/false)
+        expected: Whether we expect this check to pass. Defaults to None, which means
+            the value is inherited from the case's TestCaseMetadata.expected at evaluation
+            time. If neither evaluator nor case metadata sets it, defaults to True.
+            For non-global evaluators, an explicit evaluator value takes precedence over
+            case metadata. For global evaluators, case metadata takes precedence.
+        mandatory: Whether this check is required to pass. Defaults to None, which means
+            the value is inherited from the case's TestCaseMetadata.mandatory at evaluation
+            time. If neither evaluator nor case metadata sets it, defaults to True.
+            Follows the same precedence rules as expected.
         attributes: Dictionary for additional metadata (populated from extra CSV columns)
         tags: List of tags for organization and filtering
         _is_global: Whether this evaluator applies to all test cases
@@ -135,8 +142,8 @@ class BaseEvaluator(Evaluator):
     evaluation_name: uuid.UUID = field(
         default_factory=uuid.uuid4
     )  # this is used by pydantic-ai to create the name of the reportcase.assertion
-    expected: bool = field(default=True)
-    mandatory: bool = field(default=True)
+    expected: bool | None = field(default=None)
+    mandatory: bool | None = field(default=None)
     attributes: dict[str, Any] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
     _is_global: bool = field(default=False)
@@ -172,14 +179,18 @@ class BaseEvaluator(Evaluator):
                Good for regex patterns, specific values, test-specific thresholds.
 
         Args:
-            expected: Whether we expect this check to pass (true/false).
+            expected: Whether we expect this check to pass.
                      Set to `true` for normal tests (e.g., "answer should mention Paris").
                      Set to `false` for negative tests (e.g., "answer should NOT hallucinate links").
                      The evaluation result is compared against this expectation.
-            mandatory: Whether this check is mandatory (true/false).
+                     When constructing evaluators programmatically (not via CSV), you can
+                     omit this to inherit the value from case metadata at evaluation time.
+            mandatory: Whether this check is mandatory.
                       Used to calculate two accuracy metrics: mandatory-only and overall.
                       Set to `true` for critical checks that must pass.
                       Set to `false` for optional checks that provide additional insights.
+                      When constructing evaluators programmatically (not via CSV), you can
+                      omit this to inherit the value from case metadata at evaluation time.
             tags: Comma-separated tags string from CSV for categorization and filtering.
             check: Evaluator-specific configuration data. Can be JSON string or plain text.
                    For JSON: Will be parsed and passed as **check_params to the evaluator.
