@@ -31,7 +31,6 @@ While the column names can be customized, by default the CSV adapter expects the
 
 ### Optional Columns
 
-- **mandatory**: Whether this check is mandatory (`true`/`false`, defaults to `true`)
 - **tags**: Comma separated tags
 
 ### Understanding Column Mapping
@@ -42,9 +41,9 @@ For **LLMJudge** evaluator:
 
 Example:
 ```csv
-Question,test_type,expected,mandatory,tags,check
-What is Python?,LLMJudge,true,true,tech,Should mention it's a programming language
-What is Python?,LLMJudge,false,true,tech,Mentions snakes or reptiles
+Question,test_type,expected,tags,check
+What is Python?,LLMJudge,true,tech,Should mention it's a programming language
+What is Python?,LLMJudge,false,tech,Mentions snakes or reptiles
 ```
 
 In the second row, `expected=false` means we're checking that the output does NOT contain something (negative test).
@@ -52,11 +51,11 @@ In the second row, `expected=false` means we're checking that the output does NO
 ### Example CSV
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
-What is the capital of France?,LLMJudge,true,true,"geography,factual",The capital of France is Paris
-What is 2+2?,LLMJudge,true,true,"math,arithmetic",The answer should be 4
-What is 2+2?,LLMJudge,false,true,"math,hallucination",Mentions calculus or complex mathematics
-Name a primary color,LLMJudge,true,true,"art,colors",Should name red blue or yellow
+Question,test_type,expected,tags,check
+What is the capital of France?,LLMJudge,true,"geography,factual",The capital of France is Paris
+What is 2+2?,LLMJudge,true,"math,arithmetic",The answer should be 4
+What is 2+2?,LLMJudge,false,"math,hallucination",Mentions calculus or complex mathematics
+Name a primary color,LLMJudge,true,"art,colors",Should name red blue or yellow
 ```
 
 Note the third row uses `expected=false` to check that the output does NOT contain something (negative test for hallucinations).
@@ -87,10 +86,10 @@ print(f"Loaded {len(dataset.cases)} test cases")
 You can attach multiple evaluators to the same question by adding multiple rows:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
-Explain photosynthesis,LLMJudge,true,true,"biology,science",Should mention sunlight
-Explain photosynthesis,LLMJudge,true,false,"biology,quality",Should be clear and understandable
-Explain photosynthesis,LLMJudge,false,true,"biology,accuracy",contain scientific errors
+Question,test_type,expected,tags,check
+Explain photosynthesis,LLMJudge,true,"biology,science",Should mention sunlight
+Explain photosynthesis,LLMJudge,true,"biology,quality",Should be clear and understandable
+Explain photosynthesis,LLMJudge,false,"biology,accuracy",contain scientific errors
 ```
 
 This creates a single test case with three evaluators.
@@ -100,13 +99,13 @@ This creates a single test case with three evaluators.
 The CSV adapter supports **global evaluators** - a convenience feature that applies specific evaluators to ALL test cases. Define them by leaving the `Question` column empty:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
-,LLMJudge,true,true,global_politeness,Response should be polite and professional
-,LLMJudge,true,false,global_safety,Should not contain harmful content
-,LiteralQuoteEvaluator,true,false,global_formatting,
-What is Python?,LLMJudge,true,true,tech,Should mention it's a programming language
-What is Python?,LLMJudge,false,true,tech,Should mention it's a snake
-What is the capital of France?,LLMJudge,true,true,geography,Should answer Paris
+Question,test_type,expected,tags,check
+,LLMJudge,true,global_politeness,Response should be polite and professional
+,LLMJudge,true,global_safety,Should not contain harmful content
+,LiteralQuoteEvaluator,true,global_formatting,
+What is Python?,LLMJudge,true,tech,Should mention it's a programming language
+What is Python?,LLMJudge,false,tech,Should mention it's a snake
+What is the capital of France?,LLMJudge,true,geography,Should answer Paris
 ```
 
 In this example:
@@ -154,8 +153,7 @@ class MySharedConfigEvaluator(BaseEvaluator):
     def from_csv_line(
         cls,
         expected: bool,
-        mandatory: bool,
-        tags: str,
+        tags: set[str],
         check: str,
         **kwargs: Any
     ):
@@ -166,7 +164,6 @@ class MySharedConfigEvaluator(BaseEvaluator):
         """
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
             settings=MyEvaluatorSettings(),
@@ -210,8 +207,7 @@ class MyJsonConfigEvaluator(BaseEvaluator):
     def from_csv_line(
         cls,
         expected: bool,
-        mandatory: bool,
-        tags: str,
+        tags: set[str],
         check: str,
         **kwargs: Any
     ):
@@ -239,7 +235,6 @@ class MyJsonConfigEvaluator(BaseEvaluator):
         
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
             pattern=pattern,
@@ -261,8 +256,8 @@ class MyJsonConfigEvaluator(BaseEvaluator):
         )
 
 # CSV example for this evaluator:
-# Question,test_type,expected,mandatory,tags,check
-# What is the status?,MyJsonConfig,true,true,test,"{\"pattern\": \".*success.*\", \"metadata_key\": \"status\"}"
+# Question,test_type,expected,tags,check
+# What is the status?,MyJsonConfig,true,test,"{\"pattern\": \".*success.*\", \"metadata_key\": \"status\"}"
 ```
 
 ### Using Custom Evaluators
@@ -334,7 +329,7 @@ capital of france?,Paris,...
 Use tags to organize and filter tests:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
+Question,test_type,expected,tags,check
 ...,"geography,european,capitals",...
 ...,"math,arithmetic,basic",...
 ...,"biology,science,photosynthesis",...

@@ -207,12 +207,11 @@ class MyEvaluator(BaseEvaluator):
     def __init__(
         self,
         expected: bool,
-        mandatory: bool,
         tags: str,
         check: str,
         custom_param: str,
     ):
-        super().__init__(expected, mandatory, tags, check)
+        super().__init__(expected, tags, check)
         self.custom_param = custom_param
     
     async def evaluate(self, input_val: str, output: str) -> EvalOutput:

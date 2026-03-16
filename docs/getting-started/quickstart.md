@@ -9,9 +9,9 @@ Get started with ragpill in just a few minutes!
 Create a CSV file with your test cases. Here's a simple example:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
-capital of france?,LLMJudge,true,true,geography,The answer is Paris
-2+2?,LLMJudge,true,true,math,The answer should be 4
+Question,test_type,expected,tags,check
+capital of france?,LLMJudge,true,geography,The answer is Paris
+2+2?,LLMJudge,true,math,The answer should be 4
 ```
 
 For more details on the csv structure, see [csv-adapter](../guide/csv-adapter.md#csv-format)
@@ -92,7 +92,6 @@ Your CSV file should have these columns:
 | `Question` | The input question/prompt | Yes |
 | `test_type` | Type of evaluator (e.g., LLMJudge) | Yes |
 | `expected` | Boolean (true/false) - should this check pass? | Yes |
-| `mandatory` | Whether this check is mandatory (true/false) | No (defaults to true) |
 | `tags` | Comma-separated tags | No |
 | `check` | Evaluation criteria (for LLMJudge: the rubric text) | Yes |
 
@@ -101,9 +100,9 @@ Your CSV file should have these columns:
 You can add multiple rows with the same question to apply multiple evaluators:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check
-What is the capital of France?,LLMJudge,true,true,"geography,factual",Should mention Paris
-What is the capital of France?,LLMJudge,false,false,quality,Should NOT mention historical irrelevant details
+Question,test_type,expected,tags,check
+What is the capital of France?,LLMJudge,true,"geography,factual",Should mention Paris
+What is the capital of France?,LLMJudge,false,quality,Should NOT mention historical irrelevant details
 ```
 
 ## Next Steps

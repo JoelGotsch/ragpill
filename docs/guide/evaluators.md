@@ -30,8 +30,7 @@ class MyEvaluator(BaseEvaluator):
     def from_csv_line(
         cls,
         expected: bool,
-        mandatory: bool,
-        tags: str,
+        tags: set[str],
         check: str,
         **kwargs: Any
     ):
@@ -43,7 +42,6 @@ class MyEvaluator(BaseEvaluator):
         """
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
         )
@@ -91,10 +89,9 @@ class LengthEvaluator(BaseEvaluator):
     settings: LengthEvaluatorSettings
     
     @classmethod
-    def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, **kwargs: Any):
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any):
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
             settings=LengthEvaluatorSettings(),
@@ -130,7 +127,7 @@ class RegexEvaluator(BaseEvaluator):
     pattern: str
     
     @classmethod
-    def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, **kwargs: Any):
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any):
         """Parse pattern from check column (plain text or JSON)."""
         try:
             check_dict = json.loads(check)
@@ -144,7 +141,6 @@ class RegexEvaluator(BaseEvaluator):
         
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,
             pattern=pattern,
@@ -166,11 +162,11 @@ class RegexEvaluator(BaseEvaluator):
 
 # CSV examples:
 # Plain text pattern:
-# Question,test_type,expected,mandatory,tags,check
-# What is Python?,RegexEvaluator,true,true,tech,programming language
+# Question,test_type,expected,tags,check
+# What is Python?,RegexEvaluator,true,tech,programming language
 #
 # JSON pattern with additional config:
-# What is Python?,RegexEvaluator,true,true,tech,"{\"pattern\": \".*programming.*\"}"
+# What is Python?,RegexEvaluator,true,tech,"{\"pattern\": \".*programming.*\"}"
 ```
 
 ### Real-World Example: Built-in Evaluator
@@ -180,7 +176,7 @@ See the built-in `RegexInDocumentMetadataEvaluator` for a complete example that 
 ```python
 # From evaluators.py
 @classmethod
-def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, **kwargs: Any):
+def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any):
     """Create evaluator from CSV with JSON in check column."""
     try:
         check_dict = json.loads(check)
@@ -197,7 +193,6 @@ def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, *
     
     return cls(
         expected=expected,
-        mandatory=mandatory,
         tags=tags,
         attributes=kwargs,
         pattern=pattern,
@@ -205,8 +200,8 @@ def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, *
     )
 
 # CSV usage:
-# Question,test_type,expected,mandatory,tags,check
-# Query docs,RegexInDocumentMetadata,true,true,retrieval,"{\"pattern\": \".*2024.*\", \"key\": \"date\"}"
+# Question,test_type,expected,tags,check
+# Query docs,RegexInDocumentMetadata,true,retrieval,"{\"pattern\": \".*2024.*\", \"key\": \"date\"}"
 ```
 
 ## Custom Attributes
@@ -214,9 +209,9 @@ def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, *
 You can add custom attributes to evaluators by adding columns to your CSV:
 
 ```csv
-Question,test_type,expected,mandatory,tags,check,priority,category
-What is X?,LLMJudge,true,true,factual,answer_correctness,high,science
-What is Y?,RegexEvaluator,false,false,format,email_format,low,validation
+Question,test_type,expected,tags,check,priority,category
+What is X?,LLMJudge,true,factual,answer_correctness,high,science
+What is Y?,RegexEvaluator,false,format,email_format,low,validation
 ```
 
 These custom columns (like `priority` and `category`) are automatically:
@@ -241,10 +236,9 @@ dataset = load_testset(
 # Access attributes in your evaluator
 class MyEvaluator(BaseEvaluator):
     @classmethod
-    def from_csv_line(cls, expected: bool, mandatory: bool, tags: str, check: str, **kwargs: Any):
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any):
         return cls(
             expected=expected,
-            mandatory=mandatory,
             tags=tags,
             attributes=kwargs,  # Contains {priority: "high", category: "science"}
         )
@@ -266,6 +260,31 @@ case = Case(
         LLMJudge(...),  # Check correctness
         LengthEvaluator(...),  # Check length
         RegexEvaluator(...),  # Check format
+    ],
+)
+```
+
+### expected Inheritance
+
+When constructing evaluators programmatically, `expected` defaults
+to `None`. At evaluation time it is resolved via
+[`merge_metadata`](../api/base.md):
+
+- **Non-global evaluators**: evaluator value wins; if `None`, falls back to case metadata.
+- **Global evaluators**: case metadata wins; if `None`, falls back to evaluator value.
+- If both are `None`, the final default is `True`.
+
+This lets you set a case-wide default and override it only where needed:
+
+```python
+Case(
+    inputs="How many r's are in 'strawberry'?",
+    metadata=TestCaseMetadata(expected=False),  # default for all evaluators
+    evaluators=[
+        RegexInOutputEvaluator(pattern="1"),              # inherits expected=False
+        RegexInOutputEvaluator(pattern="2"),              # inherits expected=False
+        RegexInOutputEvaluator(pattern="3", expected=True),  # overrides to True
+        RegexInOutputEvaluator(pattern="4"),              # inherits expected=False
     ],
 )
 ```
