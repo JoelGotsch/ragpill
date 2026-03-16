@@ -18,17 +18,13 @@ class TestCaseMetadata(BaseModel):
     """
     In general: For non-global evaluators the evaluator metadata takes precedence over case metadata.
     For global evaluators, the case metadata takes precedence over evaluator metadata.
-    This is to allow global evaluators to set default expected/mandatory values, which can be
+    This is to allow global evaluators to set default expected values, which can be
     overridden by case metadata.
     """
 
     expected: bool | None = Field(
         default=None,
         description="Expected evaluation result. Defaults to True. Set to False, if you want to assure a certain fact is NOT in the answer. Useful to check for hallucinations.",
-    )
-    mandatory: bool | None = Field(
-        default=None,
-        description="If True, this evaluation is considered mandatory. If False, it is considered optional and may not affect overall pass/fail status. Accuracy is calculated for both, mandatory and overall.",
     )
     attributes: dict[str, Any] = Field(default_factory=dict)
     tags: set[str] = Field(default_factory=set)
@@ -43,10 +39,6 @@ class EvaluatorMetadata(BaseModel):
     expected: bool | None = Field(
         default=None,
         description="Expected evaluation result. Defaults to True. Set to False, if you want to assure a certain fact is NOT in the answer. Useful to check for hallucinations.",
-    )
-    mandatory: bool | None = Field(
-        default=None,
-        description="If True, this evaluation is considered mandatory. If False, it is considered optional and may not affect overall pass/fail status.",
     )
     attributes: dict[str, Any] = Field(
         default_factory=dict,
@@ -80,20 +72,13 @@ def merge_metadata(
         merged_metadata.expected = (
             case_metadata.expected if case_metadata.expected is not None else merged_metadata.expected
         )
-        merged_metadata.mandatory = (
-            case_metadata.mandatory if case_metadata.mandatory is not None else merged_metadata.mandatory
-        )
     else:
         merged_metadata.attributes = case_metadata.attributes | merged_metadata.attributes
         merged_metadata.expected = (
             evaluator_metadata.expected if evaluator_metadata.expected is not None else case_metadata.expected
         )
-        merged_metadata.mandatory = (
-            evaluator_metadata.mandatory if evaluator_metadata.mandatory is not None else case_metadata.mandatory
-        )
 
     merged_metadata.expected = merged_metadata.expected if merged_metadata.expected is not None else True
-    merged_metadata.mandatory = merged_metadata.mandatory if merged_metadata.mandatory is not None else True
 
     merged_metadata.tags = merged_metadata.tags | case_metadata.tags
 
@@ -101,7 +86,7 @@ def merge_metadata(
 
 
 def dict_factory(x):
-    exclude_fields = ("id", "expected", "mandatory", "attributes", "tags", "_is_global", "model")
+    exclude_fields = ("id", "expected", "attributes", "tags", "_is_global", "model")
     return {k: v for (k, v) in x if ((v is not None) and (k not in exclude_fields))}
 
 
@@ -117,9 +102,12 @@ class BaseEvaluator(Evaluator):
 
     Attributes:
         evaluation_name: Unique identifier for this evaluator instance
-        expected: Whether we expect this check to pass (true/false)
-        mandatory: Whether this check is required to pass (true/false)
-        attributes: Dictionary for additional metadata (populated from extra CSV columns)
+        
+        expected: Whether we expect this check to pass. Defaults to None, which means
+            the value is inherited from the case's TestCaseMetadata.expected at evaluation
+            time. If neither evaluator nor case metadata sets it, defaults to True.
+            For non-global evaluators, an explicit evaluator value takes precedence over
+            case metadata. For global evaluators, case metadata takes precedence.        attributes: Dictionary for additional metadata (populated from extra CSV columns)
         tags: List of tags for organization and filtering
         _is_global: Whether this evaluator applies to all test cases
 
@@ -135,15 +123,14 @@ class BaseEvaluator(Evaluator):
     evaluation_name: uuid.UUID = field(
         default_factory=uuid.uuid4
     )  # this is used by pydantic-ai to create the name of the reportcase.assertion
-    expected: bool = field(default=True)
-    mandatory: bool = field(default=True)
+    expected: bool | None = field(default=None)
     attributes: dict[str, Any] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
     _is_global: bool = field(default=False)
 
     @classmethod
     def from_csv_line(
-        cls, expected: bool, mandatory: bool, tags: set[str], check: str, **kwargs: Any
+        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
     ) -> "BaseEvaluator":
         """Create an evaluator from a CSV line.
 
@@ -154,7 +141,7 @@ class BaseEvaluator(Evaluator):
 
         Custom Attributes:
             Any additional CSV columns beyond the standard ones (Question, test_type, expected,
-            mandatory, tags, check) will be passed as **kwargs and stored in the evaluator's
+            tags, check) will be passed as **kwargs and stored in the evaluator's
             attributes dict. These can be used for metadata tracking, filtering, or custom logic.
 
             If all evaluators for a question share the same attribute value, that attribute
@@ -172,14 +159,12 @@ class BaseEvaluator(Evaluator):
                Good for regex patterns, specific values, test-specific thresholds.
 
         Args:
-            expected: Whether we expect this check to pass (true/false).
+            expected: Whether we expect this check to pass.
                      Set to `true` for normal tests (e.g., "answer should mention Paris").
                      Set to `false` for negative tests (e.g., "answer should NOT hallucinate links").
                      The evaluation result is compared against this expectation.
-            mandatory: Whether this check is mandatory (true/false).
-                      Used to calculate two accuracy metrics: mandatory-only and overall.
-                      Set to `true` for critical checks that must pass.
-                      Set to `false` for optional checks that provide additional insights.
+                     When constructing evaluators programmatically (not via CSV), you can
+                     omit this to inherit the value from case metadata at evaluation time.
             tags: Comma-separated tags string from CSV for categorization and filtering.
             check: Evaluator-specific configuration data. Can be JSON string or plain text.
                    For JSON: Will be parsed and passed as **check_params to the evaluator.
@@ -206,7 +191,7 @@ class BaseEvaluator(Evaluator):
                 pattern: str
 
                 @classmethod
-                def from_csv_line(cls, expected: bool, mandatory: bool, tags: set[str],
+                def from_csv_line(cls, expected: bool, tags: set[str],
                                 check: str, **kwargs):
                     # Parse check parameter (JSON or plain text)
                     try:
@@ -217,7 +202,6 @@ class BaseEvaluator(Evaluator):
 
                     return cls(
                         expected=expected,
-                        mandatory=mandatory,
                         tags=tags,
                         attributes=kwargs,  # Contains custom CSV columns
                         pattern=pattern,
@@ -237,14 +221,13 @@ class BaseEvaluator(Evaluator):
                     f"Subclasses must implement from_csv_line to handle non-JSON check format: {check}"
                 )
 
-        return cls(expected=expected, mandatory=mandatory, tags=tags, attributes=kwargs, **check_params)
+        return cls(expected=expected, tags=tags, attributes=kwargs, **check_params)
 
     @property
     def metadata(self) -> EvaluatorMetadata:
         """Build metadata from evaluator fields."""
         return EvaluatorMetadata(
             expected=self.expected,
-            mandatory=self.mandatory,
             attributes=self.attributes,
             tags=self.tags,
             is_global_evaluator=self._is_global,

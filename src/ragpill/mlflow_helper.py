@@ -65,7 +65,8 @@ def _setup_mlflow_experiment(mlflow_settings: MLFlowSettings):
     """Setup mlflow experiment with given settings."""
     mlflow.set_tracking_uri(mlflow_settings.ragpill_tracking_uri)
     mlflow.set_experiment(mlflow_settings.ragpill_experiment_name)
-    mlflow.autolog()  # should cover pydantic-ai and openai
+    # mlflow.autolog()  # should cover pydantic-ai and openai
+    mlflow.pydantic_ai.autolog()  # pydantic-ai and openai are racing each other
     mlflow.start_run(description=mlflow_settings.ragpill_run_description)
 
 
@@ -81,22 +82,14 @@ def _delete_llm_judge_traces(mlflow_settings: MLFlowSettings):
     df = mlflow.search_runs([experiment.experiment_id], order_by=["start_time DESC"])
     latest_run_id = df.iloc[0]["run_id"]
 
-    def filter_final_result(trace: Trace) -> bool:
-        return any(
-            isinstance(s.inputs, dict)
-            and "call" in s.inputs
-            and isinstance(s.inputs["call"], dict)
-            and s.inputs["call"].get("tool_name") == "final_result"
-            for s in trace.data.spans
-        )
-
     from mlflow import MlflowClient
 
     client = MlflowClient(tracking_uri=mlflow_settings.ragpill_tracking_uri)
     traces = mlflow.search_traces(locations=[experiment.experiment_id], run_id=latest_run_id, return_type="list")
     delete_traces = []
     for trace in traces:
-        if filter_final_result(trace):
+        root = trace.data._get_root_span()
+        if root and root.attributes.get("ragpill_is_judge_trace"):
             delete_traces.append(trace.info.trace_id)
     if delete_traces:
         client.delete_traces(experiment_id=experiment.experiment_id, trace_ids=delete_traces)
@@ -112,9 +105,12 @@ def _get_input_key_trace_id_map(experiment: Experiment, latest_run_id: str) -> d
         span = trace.data._get_root_span()
         if not span:
             continue
-        input_key = span.attributes.get("input_key") if span else None
+        input_key = span.attributes.get("input_key")
         if not input_key:
-            raise ValueError("No input_key attribute found in span.")
+            # Non-task traces (e.g. LLMJudge evaluation traces) have no input_key; skip them.
+            # _delete_llm_judge_traces should have removed these already, but we guard here
+            # in case deletion failed or a third-party trace ended up in the same run.
+            continue
         input_key_trace_map[input_key] = trace.info.trace_id
     return input_key_trace_map
 
@@ -237,7 +233,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": eval_result.reason,
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -265,7 +260,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": f"Evaluator failed with error: {eval_fails.error_message}\n\n{eval_fails.error_stacktrace}",
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -302,11 +296,6 @@ def _upload_mlflow(
     df_valid = eval_result_df[eval_result_df["evaluator_result"].notna()]
     overall_accuracy = df_valid["evaluator_result"].mean()
     mlflow.log_metric("overall_accuracy", overall_accuracy)
-
-    # Calculate accuracy per mandatory class
-    accuracy_per_mandatory = df_valid.groupby("mandatory")["evaluator_result"].mean()
-    for mandatory_val, accuracy in accuracy_per_mandatory.items():
-        mlflow.log_metric(f"accuracy_mandatory_{mandatory_val}", accuracy)
 
     # Calculate accuracy per tag (expanding tags since case_tags is a list)
     df_exploded = df_valid.explode("tags")
@@ -356,7 +345,7 @@ async def evaluate_testset_with_mlflow(
 
     The function automatically:
 
-    - Logs overall accuracy and accuracy by mandatory status
+    - Logs overall accuracy
     - Logs accuracy per tag for granular analysis
     - Attaches feedback/assessments to each trace
     - Preserves trace IDs for later inspection
@@ -386,7 +375,6 @@ async def evaluate_testset_with_mlflow(
             - `evaluator_data`: Evaluator-specific data (e.g., rubric for LLMJudge)
             - `evaluator_reason`: Explanation for the result
             - `expected`: Whether pass was expected
-            - `mandatory`: Whether this evaluation is mandatory
             - `attributes`: JSON-encoded custom attributes
             - `tags`: Set of tags for categorization
             - `task_duration`: Time taken for task execution
@@ -429,7 +417,6 @@ async def evaluate_testset_with_mlflow(
 
         # Analyze results
         print(f"Overall accuracy: {results_df['evaluator_result'].mean():.2%}")
-        print(f"Mandatory accuracy: {results_df[results_df['mandatory']]['evaluator_result'].mean():.2%}")
         ```
 
     Note:
