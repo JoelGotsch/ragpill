@@ -15,7 +15,7 @@ def create_test_context(inputs: str, output: str) -> EvaluatorContext:
     return EvaluatorContext(
         inputs=inputs,
         output=output,
-        metadata=EvaluatorMetadata(expected=True, mandatory=True),
+        metadata=EvaluatorMetadata(expected=True),
         name="test",
         expected_output=None,
         duration=0,
@@ -56,7 +56,6 @@ def evaluator():
     """Create a basic RegexInSourcesEvaluator instance."""
     return RegexInSourcesEvaluator.from_csv_line(
         expected=True,
-        mandatory=True,
         tags={"regex", "sources"},
         check="important",
     )
@@ -77,7 +76,7 @@ class TestRun:
         """Test when the regex pattern is not found in any document."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="nonexistent_pattern_xyz",
         )
@@ -91,7 +90,7 @@ class TestRun:
         """Test case-insensitive matching using inline flag."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="(?i)SECRET",
         )
@@ -107,7 +106,7 @@ class TestRun:
         # patterns still match content that originally spanned multiple lines.
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="line 2 with some data",
         )
@@ -120,7 +119,7 @@ class TestRun:
         """Test dotall matching using inline flag for multi-line content."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="(?s)multi-line.*final",
         )
@@ -133,7 +132,7 @@ class TestRun:
         """Test combining multiple inline flags."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="(?ims)MULTI-LINE.*SECRET",
         )
@@ -146,7 +145,7 @@ class TestRun:
         """Test regex with alternation (OR pattern)."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="safeguards|verification",
         )
@@ -159,7 +158,7 @@ class TestRun:
         """Test regex matching version numbers."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check=r"version \d+\.\d+\.\d+",
         )
@@ -172,7 +171,7 @@ class TestRun:
         """Test when there are no documents to check."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="anything",
         )
@@ -185,7 +184,7 @@ class TestRun:
         """Test that pattern is found when in the first document only."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="nuclear safeguards",
         )
@@ -198,7 +197,7 @@ class TestRun:
         """Test that pattern is found when in the last document only."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="model x-100",
         )
@@ -215,20 +214,20 @@ class TestFromCSVLine:
         """Test basic creation from CSV line."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=False,
+
             tags={"tag1"},
             check="pattern",
         )
         assert evaluator.pattern == "pattern"
         assert evaluator.expected is True
-        assert evaluator.mandatory is False
+
         assert evaluator.tags == {"tag1"}
 
     def test_from_csv_with_special_chars(self):
         """Test creating evaluator with special regex characters."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check=r"test\.pattern\?",
         )
@@ -238,7 +237,7 @@ class TestFromCSVLine:
         """Test creating evaluator with additional attributes."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=False,
-            mandatory=False,
+
             tags={"test"},
             check="pattern",
             custom_attr="custom_value",
@@ -252,7 +251,7 @@ class TestFromCSVLine:
         """Test that the pattern is normalized (unicode NFKC and lowercased)."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="UPPERCASE Pattern",
         )
@@ -263,7 +262,7 @@ class TestFromCSVLine:
         """Test creating evaluator with empty tags."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="pattern",
         )
@@ -273,7 +272,7 @@ class TestFromCSVLine:
         """Test creating evaluator with multiple tags."""
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags={"tag1", "tag2", "tag3"},
             check="pattern",
         )
@@ -293,7 +292,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="test content",
         )
@@ -310,7 +309,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="pattern",
         )
@@ -329,7 +328,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check=r"\$\d+\.\d{2}",
         )
@@ -348,7 +347,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="e=mc2",
         )
@@ -368,7 +367,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="very long sentence",
         )
@@ -387,7 +386,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check=r"\btest\b",
         )
@@ -406,7 +405,7 @@ class TestEdgeCases:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check=r"(\d{4})-(\d{2})-(\d{2})",
         )
@@ -429,7 +428,7 @@ class TestNormalization:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="multiple spaces here",
         )
@@ -448,7 +447,7 @@ class TestNormalization:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="uppercase text",
         )
@@ -467,7 +466,7 @@ class TestNormalization:
         ]
         evaluator = RegexInSourcesEvaluator.from_csv_line(
             expected=True,
-            mandatory=True,
+
             tags=set(),
             check="the director general contacted the new syrian minister of foreign affairs and expatriates, he mr asaad hassan al-shaybani, in a letter dated 14 january 2025, to convey the importance of continuing and reinforcing cooperation between syria and the agency to address unresolved safeguards issues related to syria’s past nuclear activities.",
         )

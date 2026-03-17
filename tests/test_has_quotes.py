@@ -14,7 +14,7 @@ def create_test_context(inputs: str, output: str) -> EvaluatorContext:
     return EvaluatorContext(
         inputs=inputs,
         output=output,
-        metadata=EvaluatorMetadata(expected=True, mandatory=True),
+        metadata=EvaluatorMetadata(expected=True),
         name="test",
         expected_output=None,
         duration=0,
@@ -30,7 +30,6 @@ def evaluator():
     return HasQuotesEvaluator(
         min_quotes=1,
         expected=True,
-        mandatory=True,
         tags={"quotation", "format"},
     )
 
@@ -54,7 +53,7 @@ End of text."""
 
     def test_has_more_than_minimum(self):
         """Test when output has more quotes than required."""
-        evaluator = HasQuotesEvaluator(min_quotes=2, expected=True, mandatory=True)
+        evaluator = HasQuotesEvaluator(min_quotes=2, expected=True)
         output = """Multiple quotes:
 > First quote
 
@@ -72,7 +71,7 @@ End of text."""
 
     def test_insufficient_quotes(self):
         """Test when output has fewer quotes than required."""
-        evaluator = HasQuotesEvaluator(min_quotes=3, expected=True, mandatory=True)
+        evaluator = HasQuotesEvaluator(min_quotes=3, expected=True)
         output = """Only one quote:
 > Just this one
 """
@@ -87,7 +86,7 @@ End of text."""
 
     def test_zero_minimum_always_passes(self):
         """Test that min_quotes=0 always passes."""
-        evaluator = HasQuotesEvaluator(min_quotes=0, expected=True, mandatory=True)
+        evaluator = HasQuotesEvaluator(min_quotes=0, expected=True)
         output = "No quotes here."
         
         ctx = create_test_context("input", output)
@@ -105,14 +104,12 @@ class TestFromCSVLine:
         """Test creating evaluator from CSV with specific minimum."""
         evaluator = HasQuotesEvaluator.from_csv_line(
             expected=True,
-            mandatory=False,
             tags={"tag1", "tag2"},
             check="5",
         )
-        
+
         assert evaluator.min_quotes == 5
         assert evaluator.expected is True
-        assert evaluator.mandatory is False
         assert evaluator.tags == {"tag1", "tag2"}
 
 
@@ -124,7 +121,6 @@ class TestExpectedFalse:
         evaluator = HasQuotesEvaluator(
             min_quotes=1,
             expected=False,  # Expect the check to fail (no quotes)
-            mandatory=True,
         )
         output = "No quotes in this text."
         
