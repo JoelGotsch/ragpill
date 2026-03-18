@@ -1,5 +1,7 @@
 # RAGPill
 
+![Coverage](docs/coverage-badge.svg)
+
 Opinionated but customizable wrappers around [pydantic-ai's evaluation framework](https://ai.pydantic.dev/evals/) using [MLflow tracing](https://mlflow.org/docs/latest/genai/tracing/) for testing LLM systems. Follow best practices while maintaining flexibility.
 
 ## What is RAGPill?
