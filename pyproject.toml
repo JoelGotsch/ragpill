@@ -21,6 +21,7 @@ dev = [
     "pytest-pretty>=1.2.0",
     "isort>=5.13.2",
     "ruff>=0.8.0",
+    "anyio[trio]>=4.9.0",
     "pytest-cov>=6.0.0",
     "coverage[toml]>=7.6.0",
     "genbadge[coverage]>=1.1.3",

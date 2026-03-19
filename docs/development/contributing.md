@@ -29,15 +29,17 @@ uv run pytest
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (coverage is enabled by default via pyproject.toml)
 uv run pytest
-
-# Run with coverage
-uv run pytest --cov=ragpill --cov-report=html
 
 # Run specific test file
 uv run pytest tests/test_clean_quote_text.py
+
+# Regenerate the coverage badge after running tests
+uv run genbadge coverage -i coverage.xml -o docs/coverage-badge.svg
 ```
+
+The coverage badge in the README is generated from `coverage.xml` (produced automatically by pytest). Please regenerate it before committing if coverage changed.
 
 ### Code Quality
 
@@ -166,6 +168,7 @@ refactor: simplify testset loading logic
 - [ ] No linting errors (`uv run ruff check`)
 - [ ] Commit messages follow conventions
 - [ ] All commands use `uv run` prefix
+- [ ] Coverage badge regenerated if coverage changed
 
 ## Project Structure
 
