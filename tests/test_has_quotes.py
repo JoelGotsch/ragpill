@@ -83,6 +83,17 @@ End of text."""
         assert "Found only 1 quote(s)" in result.reason
         assert "3 required" in result.reason
 
+    def test_no_quotes_when_required(self):
+        """Test when no quotes are present but they are required."""
+        evaluator = HasQuotesEvaluator(min_quotes=1, expected=True)
+        output = "This text has no quotes at all."
+        
+        ctx = create_test_context("input", output)
+        result = asyncio.run(evaluator.run(ctx))
+        
+        assert result.value is False
+        assert "Found only 0 quote(s)" in result.reason
+        assert "1 required" in result.reason
 
     def test_zero_minimum_always_passes(self):
         """Test that min_quotes=0 always passes."""
@@ -107,10 +118,23 @@ class TestFromCSVLine:
             tags={"tag1", "tag2"},
             check="5",
         )
-
+        
         assert evaluator.min_quotes == 5
         assert evaluator.expected is True
         assert evaluator.tags == {"tag1", "tag2"}
+
+
+    def test_from_csv_line_with_attributes(self):
+        """Test creating evaluator from CSV with additional attributes."""
+        evaluator = HasQuotesEvaluator.from_csv_line(
+            expected=False,
+            tags={"verification"},
+            check="2",
+            custom_attr="custom_value",
+        )
+        
+        assert evaluator.min_quotes == 2
+        assert evaluator.attributes["custom_attr"] == "custom_value"
 
 
 class TestExpectedFalse:
@@ -129,5 +153,38 @@ class TestExpectedFalse:
         
         # The evaluator returns False (not enough quotes), which matches expected=False
         assert result.value is False
+
+    def test_expected_false_with_quotes_fails(self):
+        """Test that expected=False fails when quotes are present."""
+        evaluator = HasQuotesEvaluator(
+            min_quotes=1,
+            expected=False,  # Expect the check to fail
+        )
+        output = "> This has a quote"
+        
+        ctx = create_test_context("input", output)
+        result = asyncio.run(evaluator.run(ctx))
+        
+        # The evaluator returns True (has quotes), which doesn't match expected=False
+        assert result.value is True
+
+
+class TestEdgeCases:
+    """Test edge cases and special scenarios."""
+
+    def test_only_quote_markers(self):
+        """Test output with only > markers but no content."""
+        evaluator = HasQuotesEvaluator(min_quotes=1, expected=True)
+        output = """>
+>
+>
+"""
+        
+        ctx = create_test_context("input", output)
+        result = asyncio.run(evaluator.run(ctx))
+        
+        assert result.value is False
+        assert "Found only 0 quote(s)" in result.reason
+
 
 
