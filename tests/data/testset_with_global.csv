@@ -1,0 +1,7 @@
+Question,test_type,tags,expected,check
+,LLMJudge,global_politeness,TRUE,Response should be polite and professional
+,LLMJudge,global_formatting,TRUE,Should not use offensive language
+What is Python?,LLMJudge,tech,TRUE,Should mention it's a programming language
+What is Python?,LLMJudge,tech,FALSE,Mentions snakes or reptiles
+What is the capital of France?,LLMJudge,geography,TRUE,Should answer Paris
+How do I write a for loop?,LLMJudge,programming,TRUE,Should provide code example

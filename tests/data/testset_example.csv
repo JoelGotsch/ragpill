@@ -1,0 +1,5 @@
+Question,test_type,tags,expected,check,importance,category
+Tell me about Washington,LLMJudge,"Ambiguity,Critical",TRUE,Should ask for clarification,high,factual
+Tell me about Washington,LLMJudge,"Ambiguity,Style",TRUE,Should be professional,high,factual
+What is water?,LLMJudge,Chemistry,TRUE,Should mention H2O,medium,factual
+What is water?,LLMJudge,Chemistry,TRUE,Should be concise,high,style
