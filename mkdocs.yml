@@ -87,6 +87,16 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+  - Guide:
+    - Overview: guide/overview.md
+    - Evaluators: guide/evaluators.md
+    - Test Sets: guide/testsets.md
+    - CSV Adapter: guide/csv-adapter.md
+  - How-To:
+    - Custom Evaluator: how-to/custom-evaluator.ipynb
+    - Custom Type Evaluator: how-to/custom-type-evaluator.ipynb
+  - Tutorials:
+    - Full Tutorial: tutorials/full.ipynb
   - API Reference:
     - Base Classes: api/base.md
     - Evaluators: api/evaluators.md
