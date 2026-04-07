@@ -1,11 +1,12 @@
 """Test LLMJudge initialization via environment variables."""
+
 import os
 from unittest.mock import patch
 
-import pytest
 from pydantic_ai.models.openai import OpenAIChatModel
 
 from ragpill.evaluators import LLMJudge
+
 
 def test_init_with_env_vars_sets_rubric():
     """LLMJudge(rubric=...) stores the rubric correctly when env vars are set."""

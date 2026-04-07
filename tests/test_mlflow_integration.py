@@ -8,8 +8,8 @@ import os
 
 import pandas as pd
 import pytest
-from pydantic_evals import Case, Dataset
 from dotenv import load_dotenv
+from pydantic_evals import Case, Dataset
 
 from ragpill import evaluate_testset_with_mlflow, evaluate_testset_with_mlflow_sync
 from ragpill.base import TestCaseMetadata

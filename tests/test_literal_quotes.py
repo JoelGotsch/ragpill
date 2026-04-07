@@ -1,4 +1,5 @@
 """Test LiteralQuoteEvaluator"""
+
 import asyncio
 from unittest.mock import patch
 
@@ -31,21 +32,21 @@ def sample_documents():
     return [
         Document(
             page_content="'no longer outstanding at this stage' does not mean 'resolved'.",
-            metadata={"source": "31-May-2025_GOV-2025-25.txt"}
+            metadata={"source": "31-May-2025_GOV-2025-25.txt"},
         ),
         Document(
             page_content="Another document with different content about nuclear verification processes.",
-            metadata={"source": "other-document.txt"}
+            metadata={"source": "other-document.txt"},
         ),
         Document(
             page_content="""This document contains the phrase exact match test for validation purposes. This is a very long quote
 that spans multiple lines with Different CAPITALIZATION.""",
-            metadata={"source": "test-doc.txt"}
+            metadata={"source": "test-doc.txt"},
         ),
         Document(
             page_content="7.  Following the change of Government in Syria towards the end of 2024,\n\n    the Director General contacted the new Syrian Minister of Foreign\n\n    Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter\n\n    dated 14 January 2025, to convey the importance of continuing and\n\n    reinforcing cooperation between Syria and the Agency to address\n\n    unresolved safeguards issues related to Syria's past nuclear\n\n    activities.\n8.  Syria, in its reply dated 30 April 2025, invited the Director\n\n    General to visit Syria in early June 2025 and indicated that it had\n\n    no objection to the Agency's request to conduct an \"exceptional\n\n    visit\" to one of the three locations, as specified by the Agency.",
-            metadata={"source": "syria-report.txt"}
-        )
+            metadata={"source": "syria-report.txt"},
+        ),
     ]
 
 
@@ -58,7 +59,6 @@ def evaluator():
     )
 
 
-
 class TestEvaluatorRun:
     """Test the main evaluator run method."""
 
@@ -67,9 +67,9 @@ class TestEvaluatorRun:
         output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
-        
+
         # Mock get_documents to return sample_documents
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -79,7 +79,7 @@ class TestEvaluatorRun:
         output = """The report states:
 > '"No longer outstanding at this stage" does not mean "Resolved".'
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -89,9 +89,9 @@ class TestEvaluatorRun:
         output = """The report states:
 > "'No longer outstanding at this stage' does not mean 'Resolved'."
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
-        
+
         # Mock get_documents to return sample_documents
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -101,20 +101,19 @@ class TestEvaluatorRun:
         output = """The report includes the following statement:
 > "this is a very long quote that spans multiple lines with Different capitalization."
 (File: [test-doc.txt](link))"""
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
-
 
     def test_quote_from_wrong_source(self, evaluator, sample_documents):
         """Test when a quote is from the wrong source. But still evaluates to True."""
         output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
 (File: [fake.txt](link), Paragraph: 38)"""
-        
+
         # Mock get_documents to return sample_documents
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -125,9 +124,9 @@ class TestEvaluatorRun:
 > "this is a very long Quote 
 > that spans Multiple Lines with different capitalization."
 (File: [test-doc.txt](link))"""
-        
+
         # Mock get_documents to return sample_documents
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -137,8 +136,8 @@ class TestEvaluatorRun:
         output = """The report claims:
 > "This quote does not exist in any document."
 (File: [nonexistent.txt](link))"""
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is False
@@ -153,8 +152,8 @@ class TestEvaluatorRun:
 Second quote:
 > "This quote is not in any document."
 (File: [fake.txt](link))"""
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is False
@@ -163,17 +162,16 @@ Second quote:
     def test_syria_quote(self, evaluator, sample_documents):
         """Test a real quote from the Syria report."""
         output = "The Director General highlighted in his letter to Syria's new Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, dated 14 January 2025, the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\n\n> \"The Director General contacted the new Syrian Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter dated 14 January 2025, to convey the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\"\n(File: 01-september-2025_gov-2025-52.txt, Para: 7)"
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
-        
 
     def test_no_quotes_in_output(self, evaluator, sample_documents):
         """Test when there are no quotes in the output."""
         output = "This is just regular text without any quotes."
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -184,8 +182,8 @@ Second quote:
         output = """The report states:
 > "... document with different ... verification processes..."
 (File: [other-document.txt](link))"""
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -195,8 +193,8 @@ Second quote:
         output = """Quote with different whitespace:
 >   \t"Another     document\t with different Content"
 """
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -213,8 +211,8 @@ Second quote (missing):
 Third quote (missing without file):
 > "Another fake quote"
 """
-        
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is False
@@ -233,7 +231,7 @@ class TestFromCSVLine:
             tags={"tag1", "tag2"},
             check="",  # Not used for this evaluator
         )
-        
+
         assert evaluator.expected is True
         assert evaluator.tags == {"tag1", "tag2"}
 
@@ -245,7 +243,7 @@ class TestFromCSVLine:
             check="",
             custom_attr="custom_value",
         )
-        
+
         assert evaluator.expected is False
         assert evaluator.attributes["custom_attr"] == "custom_value"
 
@@ -258,33 +256,28 @@ class TestEdgeCases:
         output = """Quote:
 > "Some quote"
 """
-        
-        with patch.object(evaluator, 'get_documents', return_value=[]):
+
+        with patch.object(evaluator, "get_documents", return_value=[]):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is False
 
     def test_quote_with_special_characters(self, evaluator):
         """Test quotes containing special characters."""
-        docs = [
-            Document(
-                page_content="The formula is E=mc² and π≈3.14159.",
-                metadata={"source": "science.txt"}
-            )
-        ]
-        
+        docs = [Document(page_content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
+
         output = """Scientific quote:
 > "E=mc² and π≈3.14159"
 """
-        
-        with patch.object(evaluator, 'get_documents', return_value=docs):
+
+        with patch.object(evaluator, "get_documents", return_value=docs):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
 
     def test_empty_output(self, evaluator, sample_documents):
         """Test with empty output."""
-        with patch.object(evaluator, 'get_documents', return_value=sample_documents):
+        with patch.object(evaluator, "get_documents", return_value=sample_documents):
             ctx = create_test_context("some input", "")
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
@@ -295,10 +288,10 @@ class TestEdgeCases:
         docs = [
             Document(
                 page_content="51. No new information was provided by Iran with respect to the issue of\n\n    testing of centrifuges using nuclear material until October 2003. In\n\n    its letter of 21 October 2003, Iran acknowledged that, in order to\n\n    ensure the performance of centrifuge machines, a limited number of\n\n    tests using small amounts of UF~6~ imported in 1991 had been carried\n\n    out at the Kalaye Electric Company. According to Iran, the first\n\n    test of the centrifuges was conducted in 1998 using an inert gas\n\n    (xenon). Series of tests using UF~6~ were performed between 1999\n\n    and 2002. In the course of the last series of tests, an enrichment\n\n    level of 1.2% U-235 was achieved.",
-                metadata={"source": "science.txt"}
+                metadata={"source": "science.txt"},
             )
         ]
-        
+
         output = """The first known use of uranium hexafluoride (UF₆) by Iran occurred between **1999 and 2002**, as confirmed by Iran itself in its letter to the IAEA on 21 October 2003. During this period, Iran conducted a series of tests using UF₆ at the Kalaye Electric Company in Tehran, following earlier tests with inert gases (xenon) in 1998. These tests achieved an enrichment level of 1.2% U-235.
 
 > "According to Iran, the first test of the centrifuges was conducted in 1998 using an inert gas (xenon). Series of tests using UF~6~ were performed between 1999 and 2002. In the course of the last series of tests, an enrichment level of 1.2% U-235 was achieved."  
@@ -306,12 +299,12 @@ class TestEdgeCases:
 
 This marks the earliest documented use of UF₆ in Irans nuclear program. While Iran had imported UF₆ as early as 1991, the first actual testing of centrifuges with UF₆ began in 1999.
 """
-        
-        with patch.object(evaluator, 'get_documents', return_value=docs):
+
+        with patch.object(evaluator, "get_documents", return_value=docs):
             ctx = create_test_context("some input", output)
             result = asyncio.run(evaluator.run(ctx))
             assert result.value is True
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

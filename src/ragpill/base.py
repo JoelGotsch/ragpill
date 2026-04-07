@@ -6,10 +6,10 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.evaluators.evaluator import EvaluationReason, Evaluator, InputsT, OutputT
+from pydantic_evals.evaluators.evaluator import EvaluationReason, Evaluator
 
 
-def default_input_to_key(input: InputsT) -> str:
+def default_input_to_key(input: Any) -> str:
     """Default function to convert input to a string key."""
     return hashlib.md5(str(input).encode()).hexdigest()
 
@@ -30,7 +30,7 @@ class TestCaseMetadata(BaseModel):
     tags: set[str] = Field(default_factory=set)
 
 
-CaseMetadataT = TypeVar("MetadataT", bound=TestCaseMetadata)
+CaseMetadataT = TypeVar("CaseMetadataT", bound=TestCaseMetadata)
 
 
 class EvaluatorMetadata(BaseModel):
@@ -58,7 +58,6 @@ class EvaluatorMetadata(BaseModel):
     )
 
 
-EvaluatorMetadataT = TypeVar("EvaluatorMetadataT", bound=EvaluatorMetadata)
 
 
 def merge_metadata(
@@ -85,8 +84,8 @@ def merge_metadata(
     return merged_metadata
 
 
-def dict_factory(x):
-    exclude_fields = ("id", "expected", "attributes", "tags", "_is_global", "model")
+def dict_factory(x: list[tuple[str, Any]]) -> dict[str, Any]:
+    exclude_fields = ("id", "expected", "attributes", "tags", "is_global", "model")
     return {k: v for (k, v) in x if ((v is not None) and (k not in exclude_fields))}
 
 
@@ -102,14 +101,14 @@ class BaseEvaluator(Evaluator):
 
     Attributes:
         evaluation_name: Unique identifier for this evaluator instance
-        
+
         expected: Whether we expect this check to pass. Defaults to None, which means
             the value is inherited from the case's TestCaseMetadata.expected at evaluation
             time. If neither evaluator nor case metadata sets it, defaults to True.
             For non-global evaluators, an explicit evaluator value takes precedence over
             case metadata. For global evaluators, case metadata takes precedence.        attributes: Dictionary for additional metadata (populated from extra CSV columns)
         tags: List of tags for organization and filtering
-        _is_global: Whether this evaluator applies to all test cases
+        is_global: Whether this evaluator applies to all test cases
 
     Note:
         The 'check' parameter is only used in from_csv_line() to pass configuration
@@ -126,12 +125,10 @@ class BaseEvaluator(Evaluator):
     expected: bool | None = field(default=None)
     attributes: dict[str, Any] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
-    _is_global: bool = field(default=False)
+    is_global: bool = field(default=False)
 
     @classmethod
-    def from_csv_line(
-        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "BaseEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "BaseEvaluator":
         """Create an evaluator from a CSV line.
 
         This class method is required for CSV integration with
@@ -210,7 +207,7 @@ class BaseEvaluator(Evaluator):
         """
 
         # Try to parse check as JSON, if it fails treat as plain text
-        check_params = {}
+        check_params: dict[str, Any] = {}
         if check:
             try:
                 check_params = json.loads(check)
@@ -230,27 +227,27 @@ class BaseEvaluator(Evaluator):
             expected=self.expected,
             attributes=self.attributes,
             tags=self.tags,
-            is_global_evaluator=self._is_global,
+            is_global_evaluator=self.is_global,
             other_evaluator_data=str(asdict(self, dict_factory=dict_factory)),
         )
 
     async def run(
         self,
-        ctx: EvaluatorContext[InputsT, OutputT, CaseMetadataT],
+        ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],  # pyright: ignore[reportUnusedParameter]  # ctx used by subclasses
     ) -> EvaluationReason:
         """
         The method to implement the evaluation logic. Overwrite this in subclasses.
 
-        :param ctx: Description
-        :type ctx: EvaluatorContext[InputsT, OutputT, CaseMetadataT]
-        :return: Description
+        :param ctx: The evaluator context
+        :type ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]
+        :return: The evaluation result with reason
         :rtype: EvaluationReason
         """
         raise NotImplementedError("Subclasses must implement the run method.")
 
     async def evaluate(
         self,
-        ctx: EvaluatorContext[InputsT, OutputT, EvaluatorMetadataT],
+        ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
         # handle common logic for expected:
         eval_result = await self.run(ctx)
@@ -258,6 +255,7 @@ class BaseEvaluator(Evaluator):
         # if eval_result.value is None:
         #     return eval_result
         assert isinstance(eval_result.value, bool), "Evaluator must return a boolean value."
+        assert isinstance(ctx.metadata, TestCaseMetadata), "Expected TestCaseMetadata from context."
         merged_metadata = merge_metadata(case_metadata=ctx.metadata, evaluator_metadata=self.metadata)
         eval_result.value = eval_result.value == merged_metadata.expected
         return eval_result

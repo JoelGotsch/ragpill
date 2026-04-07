@@ -1,12 +1,12 @@
 """Test HasQuotesEvaluator."""
+
 import asyncio
-from unittest.mock import patch
 
 import pytest
+from pydantic_evals.evaluators import EvaluatorContext
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.evaluators import HasQuotesEvaluator
-from pydantic_evals.evaluators import EvaluatorContext
 
 
 def create_test_context(inputs: str, output: str) -> EvaluatorContext:
@@ -43,10 +43,10 @@ class TestEvaluatorRun:
 > "This is a quote."
 Other text without quotes.
 End of text."""
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is True
         assert "Found 1 quote(s)" in result.reason
         assert "minimum required: 1" in result.reason
@@ -61,10 +61,10 @@ End of text."""
 
 > Third quote
 """
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is True
         assert "Found 3 quote(s)" in result.reason
         assert "minimum required: 2" in result.reason
@@ -75,10 +75,10 @@ End of text."""
         output = """Only one quote:
 > Just this one
 """
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is False
         assert "Found only 1 quote(s)" in result.reason
         assert "3 required" in result.reason
@@ -87,10 +87,10 @@ End of text."""
         """Test when no quotes are present but they are required."""
         evaluator = HasQuotesEvaluator(min_quotes=1, expected=True)
         output = "This text has no quotes at all."
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is False
         assert "Found only 0 quote(s)" in result.reason
         assert "1 required" in result.reason
@@ -99,10 +99,10 @@ End of text."""
         """Test that min_quotes=0 always passes."""
         evaluator = HasQuotesEvaluator(min_quotes=0, expected=True)
         output = "No quotes here."
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is True
         assert "Found 0 quote(s)" in result.reason
         assert "minimum required: 0" in result.reason
@@ -118,11 +118,10 @@ class TestFromCSVLine:
             tags={"tag1", "tag2"},
             check="5",
         )
-        
+
         assert evaluator.min_quotes == 5
         assert evaluator.expected is True
         assert evaluator.tags == {"tag1", "tag2"}
-
 
     def test_from_csv_line_with_attributes(self):
         """Test creating evaluator from CSV with additional attributes."""
@@ -132,7 +131,7 @@ class TestFromCSVLine:
             check="2",
             custom_attr="custom_value",
         )
-        
+
         assert evaluator.min_quotes == 2
         assert evaluator.attributes["custom_attr"] == "custom_value"
 
@@ -147,10 +146,10 @@ class TestExpectedFalse:
             expected=False,  # Expect the check to fail (no quotes)
         )
         output = "No quotes in this text."
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         # The evaluator returns False (not enough quotes), which matches expected=False
         assert result.value is False
 
@@ -161,10 +160,10 @@ class TestExpectedFalse:
             expected=False,  # Expect the check to fail
         )
         output = "> This has a quote"
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         # The evaluator returns True (has quotes), which doesn't match expected=False
         assert result.value is True
 
@@ -179,12 +178,9 @@ class TestEdgeCases:
 >
 >
 """
-        
+
         ctx = create_test_context("input", output)
         result = asyncio.run(evaluator.run(ctx))
-        
+
         assert result.value is False
         assert "Found only 0 quote(s)" in result.reason
-
-
-

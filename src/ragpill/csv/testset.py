@@ -53,7 +53,7 @@ def _group_rows_by_question(rows: list[dict[str, str]], question_column: str) ->
     Returns:
         Dictionary mapping questions to their rows
     """
-    question_to_rows = defaultdict(list)
+    question_to_rows: defaultdict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         question = row[question_column]
         question_to_rows[question].append(row)
@@ -85,7 +85,7 @@ def _parse_row_data(
     check = row.get(check_column, "")
 
     # Collect tags for this row
-    row_tags = set()
+    row_tags: set[str] = set()
     if tags:
         row_tags = {tag.strip() for tag in tags.split(",") if tag.strip()}
 
@@ -108,16 +108,16 @@ def _find_common_tags_and_attributes(
         Tuple of (common_tags, common_attributes)
     """
     # Find common tags (present in ALL rows)
-    case_tags = set.intersection(*all_row_tags) if all_row_tags else set()
+    case_tags: set[str] = all_row_tags[0].intersection(*all_row_tags[1:]) if all_row_tags else set()
 
     # Find common attributes (same key-value in ALL rows)
-    case_attributes = {}
+    case_attributes: dict[str, Any] = {}
     if all_row_attributes:
         # Start with first row's attributes
         potential_common = all_row_attributes[0].copy()
         # Check if each key-value pair exists in all other rows
         for attr_dict in all_row_attributes[1:]:
-            keys_to_remove = []
+            keys_to_remove: list[str] = []
             for key, value in potential_common.items():
                 if key not in attr_dict or attr_dict[key] != value:
                     keys_to_remove.append(key)
@@ -175,9 +175,7 @@ def create_evaluator_from_row(
     # Create evaluator using from_csv_line class method
     # All dependencies (model, settings, etc.) are expected to be injected
     # or provided via the check column as JSON
-    evaluator = evaluator_class.from_csv_line(
-        expected=expected, tags=row_tags, check=check, **additional_attrs
-    )
+    evaluator = evaluator_class.from_csv_line(expected=expected, tags=row_tags, check=check, **additional_attrs)
 
     return evaluator, row_tags, additional_attrs
 
@@ -209,9 +207,9 @@ def _create_case_from_rows(
     Returns:
         Case object, or None if all evaluators were skipped
     """
-    evaluators = []
-    all_row_tags = []
-    all_row_attributes = []
+    evaluators: list[BaseEvaluator] = []
+    all_row_tags: list[set[str]] = []
+    all_row_attributes: list[dict[str, Any]] = []
 
     for row in rows:
         test_type = row[test_type_column]
@@ -245,7 +243,9 @@ def _create_case_from_rows(
 
     # Create Case with metadata
     return Case(
-        inputs=question, evaluators=evaluators, metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags)
+        inputs=question,
+        evaluators=evaluators,  # pyright: ignore[reportArgumentType]
+        metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags),
     )
 
 
@@ -363,7 +363,7 @@ def load_testset(
     standard_columns = {question_column, test_type_column, expected_column, tags_column, check_column}
 
     # Extract global evaluators (rows with empty questions)
-    global_evaluators = []
+    global_evaluators: list[BaseEvaluator] = []
     global_rows = question_to_rows.pop("", None)
     if global_rows:
         for row in global_rows:
@@ -384,7 +384,7 @@ def load_testset(
             global_evaluators.append(evaluator)
 
     # Create cases
-    cases = []
+    cases: list[Case[str, str, TestCaseMetadata]] = []
     for question, question_rows in question_to_rows.items():
         case = _create_case_from_rows(
             question=question,

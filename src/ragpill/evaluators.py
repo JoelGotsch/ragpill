@@ -8,17 +8,16 @@ import mlflow
 from mlflow.entities import Document, SpanType, Trace
 from pydantic_ai import models
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
-from pydantic_evals.evaluators.context import InputsT, OutputT
 from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output, judge_output
 
 from ragpill.base import BaseEvaluator, EvaluatorMetadata, default_input_to_key
 from ragpill.settings import LLMJudgeSettings, MLFlowSettings
-from ragpill.utils import _extract_markdown_quotes, _normalize_text, get_pydantic_ai_llm_model
+from ragpill.utils import _extract_markdown_quotes, _normalize_text, get_pydantic_ai_llm_model  # pyright: ignore[reportPrivateUsage]
 
 
 def _get_default_judge_llm() -> models.Model:
     """Get default LLMJudge settings instance."""
-    settings = LLMJudgeSettings()
+    settings = LLMJudgeSettings()  # pyright: ignore[reportCallIssue]
     if not settings.api_key or not settings.base_url or not settings.model_name:
         raise ValueError(
             "LLMJudgeSettings must have api_key, base_url, and model_name set to get default LLM model. Set them via environment variables RAGPILL_LLMJUDGE_API_KEY, RAGPILL_LLMJUDGE_BASE_URL, and RAGPILL_LLMJUDGE_MODEL_NAME respectively."
@@ -81,14 +80,15 @@ class LLMJudge(BaseEvaluator):
 
         if not check:
             raise ValueError("LLMJudge requires a non-empty 'check' parameter for the rubric.")
+        rubric: str = check
         try:
-            check_obj = json.loads(check)
+            check_obj: Any = json.loads(check)
             if isinstance(check_obj, dict):
-                rubric = check_obj.pop("rubric", check)
-                kwargs.update(check_obj)
+                rubric = str(check_obj.pop("rubric", check))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                kwargs.update(check_obj)  # pyright: ignore[reportUnknownArgumentType]
         except json.JSONDecodeError:
             # Plain text - use as rubric
-            rubric = check
+            pass
         model = kwargs.pop("model", None) or get_llm()
 
         return cls(
@@ -138,7 +138,7 @@ class LLMJudge(BaseEvaluator):
             expected=self.expected,
             attributes=self.attributes,
             tags=self.tags,
-            is_global_evaluator=self._is_global,
+            is_global_evaluator=self.is_global,
             other_evaluator_data=self.rubric,
         )
 
@@ -175,7 +175,7 @@ class WrappedPydanticEvaluator(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
-        eval_output = await self.pydantic_evaluator.evaluate(ctx)
+        eval_output: Any = await self.pydantic_evaluator.evaluate(ctx)  # pyright: ignore[reportGeneralTypeIssues,reportUnknownVariableType]
         assert isinstance(eval_output, EvaluationReason), (
             "Wrapped pydantic evaluator did not return an EvaluationReason."
         )
@@ -221,39 +221,44 @@ class SpanBaseEvaluator(BaseEvaluator):
     _mlflow_settings: MLFlowSettings | None = None
     _mlflow_experiment_id: str | None = None
     _mlflow_run_id: str | None = None
-    inputs_to_key_function: Callable[[InputsT], str] = field(default=default_input_to_key, repr=False)
+    inputs_to_key_function: Callable[[Any], str] = field(default=default_input_to_key, repr=False)
 
     @property
     def mlflow_settings(self) -> MLFlowSettings:
         if self._mlflow_settings is None:
-            self._mlflow_settings = MLFlowSettings()
+            self._mlflow_settings = MLFlowSettings()  # pyright: ignore[reportCallIssue]
         return self._mlflow_settings
 
     @property
     def mlflow_experiment_id(self) -> str:
         if self._mlflow_experiment_id is None:
             experiment = mlflow.get_experiment_by_name(self.mlflow_settings.ragpill_experiment_name)
-            if not experiment:
+            if not experiment or not experiment.experiment_id:
                 raise ValueError(f"Experiment {self.mlflow_settings.ragpill_experiment_name} not found.")
             self._mlflow_experiment_id = experiment.experiment_id
-        return self._mlflow_experiment_id
+        result = self._mlflow_experiment_id
+        assert result is not None
+        return result
 
     @property
     def mlflow_run_id(self) -> str:
         if self._mlflow_run_id is None:
-            if (run := mlflow.active_run()) is None:
+            run = mlflow.active_run()
+            if run is None:
                 raise ValueError("No active mlflow run found.")
             self._mlflow_run_id = run.info.run_id
-        return self._mlflow_run_id
+        result = self._mlflow_run_id
+        assert result is not None
+        return result
 
-    def get_trace(self, inputs: InputsT) -> Trace:
+    def get_trace(self, inputs: Any) -> Trace:
         # find trace where root span has input_key
         # unforunately, this can't be cashed because for some stupid reason, pydantic-ai is running one input + its evaluators after another,
         # meaning every time this runs for a new input, there's new traces.
         # it could be cashed per input though, which only makes sense if there
         # are a lot of Span-based evaluators per input, which is not the common case, but could be in some scenarios.
         # For now, we keep it simple and don't cache.
-        traces = mlflow.search_traces(
+        traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
             locations=[self.mlflow_experiment_id],
             run_id=self.mlflow_run_id,
             # filter_string=f"span.attributes.input_key LIKE '{self.inputs_to_key_function(inputs)}'",
@@ -285,18 +290,18 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
     custom_reason_true: str = field(default="Evaluation function returned True.", repr=False)
     custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
-    def get_documents(self, inputs: InputsT) -> list[Document]:
+    def get_documents(self, inputs: Any) -> list[Document]:
         trace = self.get_trace(inputs)
-        retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)
-        tool_spans = trace.search_spans(span_type=SpanType.TOOL)
-        reranker_spans = trace.search_spans(span_type=SpanType.RERANKER)
-        all_documents = []
+        retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
+        tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
+        reranker_spans = trace.search_spans(span_type=SpanType.RERANKER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
+        all_documents: list[Document] = []
         for span in retriever_spans + tool_spans + reranker_spans:
-            if isinstance(span.outputs, list) and len(span.outputs) > 0:
+            if isinstance(span.outputs, list) and len(span.outputs) > 0:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 try:
                     docs = [
-                        Document(**output)
-                        for output in span.outputs
+                        Document(**output)  # pyright: ignore[reportUnknownArgumentType]
+                        for output in span.outputs  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
                         if isinstance(output, dict) and "page_content" in output and "metadata" in output
                     ]
                 except Exception:
@@ -306,7 +311,7 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
 
     async def run(
         self,
-        ctx: EvaluatorContext[InputsT, OutputT, EvaluatorMetadata],
+        ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
         documents = self.get_documents(ctx.inputs)
         result = self.evaluation_function(documents)
@@ -337,28 +342,38 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
     Evaluator to check if a regex pattern is found in any of the source document's content.
     The documents are retrieved from mlflow trace and include documents from retriever, tool, and reranker spans.
 
+    Both the pattern and document contents are normalized before matching via
+    ``_normalize_text``, which applies:
+
+    - **Case-folding** – all text is lowercased (``str.casefold``), so matching
+      is always case-insensitive. Using the ``(?i)`` flag is therefore redundant.
+    - **Unicode NFKC** – compatibility characters are unified
+      (e.g. ``UF₆`` ↔ ``UF6``).
+    - **Whitespace collapsing** – runs of whitespace become a single space.
+    - **Quote normalization** – curly quotes, guillemets, primes, etc. are
+      replaced with a straight single quote ``'``.
+    - **Markdown subscript stripping** – e.g. ``UF~6~`` → ``UF6``.
+    - **Trailing period stripping**.
+
     Tip: Use inline regex flags to modify matching behavior:
 
-    - `(?i)pattern` - Case-insensitive matching (e.g., `(?i)important` matches "Important", "IMPORTANT")
     - `(?s)pattern` - Dotall mode (`.` matches newlines, useful for multi-line content)
     - `(?m)pattern` - Multiline mode (`^` and `$` match line boundaries)
-    - `(?ims)pattern` - Combine multiple flags
+    - `(?ms)pattern` - Combine multiple flags
 
     Example:
         ```python
         # In CSV testset:
-        # check="(?i)section 1"  # Case-insensitive
+        # check="section 1"  # Already case-insensitive via normalization
         # check="(?s)start.*end"  # Match across newlines
-        # check="(?i)(?s)important.*conclusion"  # Both case-insensitive and dotall
+        # check="(?s)important.*conclusion"  # Dotall for multi-line matching
         ```
     """
 
     pattern: str
 
     @classmethod
-    def from_csv_line(
-        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "RegexInSourcesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInSourcesEvaluator":
         """Create a RegexInSourcesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -409,18 +424,21 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
     For creating from csv, requires 'check' to be a JSON string with 'pattern' and 'key' fields.
     Then checks if any document in the used sources has metadata[key] matching the regex pattern.
 
-    Patterns are normalized to be case-insensitive and Unicode NFKC-cleaned
-    by default (e.g., a pattern containing ``UF₆`` will match ``UF6`` in text).
+    Both the pattern and metadata values are normalized before matching via
+    ``_normalize_text``, which applies case-folding (``str.casefold``),
+    Unicode NFKC, whitespace collapsing, and quote normalization. Because text
+    is already case-folded, the ``(?i)`` flag is redundant.
+
     Inline regex flags still work:
 
     - `(?s)pattern` - Dotall mode (`.` matches newlines, useful for multi-line metadata values)
     - `(?m)pattern` - Multiline mode (`^` and `$` match line boundaries)
-    - `(?ims)pattern` - Combine multiple flags
+    - `(?ms)pattern` - Combine multiple flags
 
     Example:
         ```python
         # In CSV testset:
-        # check='{"pattern": "(?i)chapter.*", "key": "source"}'  # Case-insensitive match in 'source' metadata
+        # check='{"pattern": "chapter.*", "key": "source"}'  # Already case-insensitive via normalization
         # check='{"pattern": "(?s)start.*end", "key": "content"}'  # Match across newlines in 'content' metadata
         ```
     """
@@ -444,12 +462,12 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
             **kwargs: Additional attributes for the evaluator
         """
         try:
-            check_dict = json.loads(check)
+            check_dict: Any = json.loads(check)
             assert isinstance(check_dict, dict) and "pattern" in check_dict and "key" in check_dict, (
                 f"Check must be a JSON object with 'pattern' and 'key'. Got: {check}"
             )
-            pattern = check_dict["pattern"]
-            metadata_key = check_dict["key"]
+            pattern: str = str(check_dict["pattern"])  # pyright: ignore[reportUnknownArgumentType]
+            metadata_key: str = str(check_dict["key"])  # pyright: ignore[reportUnknownArgumentType]
         except json.JSONDecodeError:
             raise ValueError(
                 f"RegexInDocumentMetadataEvaluator requires 'check' to be a JSON string with 'pattern' and 'key'. But got: {check}"
@@ -472,14 +490,14 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
 class RegexInOutputEvaluator(BaseEvaluator):
     """Check whether a regex pattern matches the stringified output.
 
-    This evaluator runs the provided regex against ``str(ctx.output)``. Patterns
-    are normalized to be case-insensitive and Unicode NFKC-cleaned by default
-    (e.g., ``UF₆`` will match ``UF6``). Inline regex flags (e.g., ``(?s)``) are
-    supported by the standard ``re`` engine.
+    Both the pattern and the output are normalized before matching via
+    ``_normalize_text``, which applies case-folding (``str.casefold``),
+    Unicode NFKC, whitespace collapsing, and quote normalization.
+    Because text is already case-folded, the ``(?i)`` flag is redundant.
 
     CSV usage examples:
         - ``check="error|failure"``
-        - ``check='{"pattern": "(?i)success"}'``
+        - ``check='{"pattern": "success"}'``
     """
 
     pattern: str
@@ -491,16 +509,14 @@ class RegexInOutputEvaluator(BaseEvaluator):
             raise ValueError(f"Invalid regex pattern '{self.pattern}': {exc}") from exc
 
     @classmethod
-    def from_csv_line(
-        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "RegexInOutputEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInOutputEvaluator":
         """Create a RegexInOutputEvaluator from a CSV line."""
         if not check or not check.strip():
             raise ValueError("RegexInOutputEvaluator requires a non-empty 'check' pattern.")
 
         pattern: str = check
         try:
-            parsed = json.loads(check)
+            parsed: dict[str, Any] | str = json.loads(check)
             if isinstance(parsed, dict) and "pattern" in parsed:
                 pattern = str(parsed["pattern"])
             elif isinstance(parsed, str):
@@ -519,7 +535,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
         self,
         ctx: EvaluatorContext[object, object, EvaluatorMetadata],
     ) -> EvaluationReason:
-        output_str = str(ctx.output)
+        output_str = _normalize_text(str(ctx.output))
         matches = bool(self._compiled_pattern.search(output_str))
         reason = (
             f'Regex pattern "{self.pattern}" matched output.'
@@ -621,9 +637,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         )
 
     @classmethod
-    def from_csv_line(
-        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "LiteralQuoteEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "LiteralQuoteEvaluator":
         """Create a LiteralQuoteEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -643,7 +657,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
 
     async def run(
         self,
-        ctx: EvaluatorContext[InputsT, OutputT, EvaluatorMetadata],
+        ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
         """Override run to have access to both output and documents."""
         documents = self.get_documents(ctx.inputs)
@@ -662,7 +676,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         normalized_docs = [_normalize_text(doc.page_content) for doc in documents]
 
         # Check each quote
-        not_found = []
+        not_found: list[str] = []
         for quote, referenced_file in quotes:
             # Check if quote appears in any document
             # Use regex search if quote contains .* (from ellipsis conversion), otherwise use substring match
@@ -755,9 +769,7 @@ class HasQuotesEvaluator(BaseEvaluator):
     max_quotes: int = field(default=-1)
 
     @classmethod
-    def from_csv_line(
-        cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "HasQuotesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "HasQuotesEvaluator":
         """Create a HasQuotesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -780,12 +792,12 @@ class HasQuotesEvaluator(BaseEvaluator):
         if check and check.strip():
             # Try parsing as JSON first
             try:
-                check_dict = json.loads(check)
-                if isinstance(check_dict, dict):
-                    min_quotes = check_dict.get("min_quotes", min_quotes)
-                    max_quotes = check_dict.get("max_quotes", max_quotes)
-                elif isinstance(check_dict, (int, float)):
-                    min_quotes = int(check_dict)
+                check_parsed: Any = json.loads(check)
+                if isinstance(check_parsed, dict):
+                    min_quotes = int(check_parsed.get("min_quotes", min_quotes))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    max_quotes = int(check_parsed.get("max_quotes", max_quotes))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                elif isinstance(check_parsed, (int, float)):
+                    min_quotes = int(check_parsed)
                 else:
                     raise ValueError("JSON must be an object or number")
 

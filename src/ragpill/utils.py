@@ -2,7 +2,6 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from functools import reduce
-from pathlib import Path
 from typing import Any
 
 from httpx import AsyncClient
@@ -11,13 +10,12 @@ from pydantic_ai import models
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators.evaluator import InputsT, OutputT
 from pydantic_settings import BaseSettings
 
 from ragpill.base import BaseEvaluator, CaseMetadataT
 
 
-def _prefix_settings_key(input: tuple[BaseSettings | dict, str]) -> dict[str, Any]:
+def _prefix_settings_key(input: tuple[BaseSettings | dict[str, Any], str]) -> dict[str, Any]:
     setting, prefix = input
     if isinstance(setting, BaseSettings):
         setting_dict = setting.model_dump()
@@ -26,8 +24,7 @@ def _prefix_settings_key(input: tuple[BaseSettings | dict, str]) -> dict[str, An
     return {f"{prefix}_{k}": v for k, v in setting_dict.items()}
 
 
-
-def _clean_quote_text(text: str, depth=0, quote_char: str | None = None) -> tuple[str, str | None]:
+def _clean_quote_text(text: str, depth: int = 0, quote_char: str | None = None) -> tuple[str, str | None]:
     """
     Recursively clean quote text by detecting quote characters and ensuring proper nesting and alternation.
     Returns cleaned text and the detected quote char of the outermost level if any.
@@ -80,7 +77,7 @@ def _clean_quote_text(text: str, depth=0, quote_char: str | None = None) -> tupl
     # If quote_char is provided, normalize all quotes in the text
     if quote_char is not None:
         alt_quote = alternate_quote(quote_char)
-        result = []
+        result_chars: list[str] = []
         i = 0
         while i < len(text):
             if text[i] in QUOTES:
@@ -90,22 +87,22 @@ def _clean_quote_text(text: str, depth=0, quote_char: str | None = None) -> tupl
                     # Found a quoted section - recurse with alternating quote
                     inner_content = text[i + 1 : match_idx]
                     cleaned_inner, _ = _clean_quote_text(inner_content, depth + 1, alt_quote)
-                    result.append(quote_char)
-                    result.append(cleaned_inner)
-                    result.append(quote_char)
+                    result_chars.append(quote_char)
+                    result_chars.append(cleaned_inner)
+                    result_chars.append(quote_char)
                     i = match_idx + 1
                 else:
-                    result.append(text[i])
+                    result_chars.append(text[i])
                     i += 1
             else:
-                result.append(text[i])
+                result_chars.append(text[i])
                 i += 1
-        return "".join(result), quote_char
+        return "".join(result_chars), quote_char
 
     # No quote_char provided - detect and normalize to first found quote type
     if detected_quote is not None:
         alt_quote = alternate_quote(detected_quote)
-        result = []
+        result: list[str] = []
         i = 0
         while i < len(text):
             if text[i] in QUOTES:
@@ -139,7 +136,7 @@ def _get_source(line: str) -> str | None:
     return None
 
 
-def _extract_quotes(lines: list[str], depth=0) -> list[tuple[list[str], str | None, int, int]]:
+def _extract_quotes(lines: list[str], depth: int = 0) -> list[tuple[list[str], str | None, int, int]]:
     """Extract blocks of quoted text from lines (as lines), their source, the first line number and the last line number of that quote.
 
     Note: for nested quotes the last_line_num-first_line_num+1 is generally different from len(lines) because
@@ -147,7 +144,7 @@ def _extract_quotes(lines: list[str], depth=0) -> list[tuple[list[str], str | No
     """
 
     i = 0
-    all_quotes = []
+    all_quotes: list[tuple[list[str], str | None, int, int]] = []
     quote_chars = ['"', "'"]
     while i < len(lines):
         line = lines[i]
@@ -221,6 +218,7 @@ def _extract_quotes(lines: list[str], depth=0) -> list[tuple[list[str], str | No
 
     return all_quotes
 
+
 def _normalize_text(text: str) -> str:
     """Normalize text for comparison (whitespace + Unicode NFKC).
 
@@ -234,16 +232,19 @@ def _normalize_text(text: str) -> str:
     # - Straight double quote: " (U+0022)
     # - Curly double quotes: " " (U+201C, U+201D)
     # - Curly single quotes/apostrophes: ' ' (U+2018, U+2019)
-    # - Low quotes: „ ‚ (U+201E, U+201A)
-    # - Guillemets: « » ‹ › (U+00AB, U+00BB, U+2039, U+203A)
-    # - Prime symbols: ′ ″ (U+2032, U+2033)
-    # - Grave/acute accents: ` ´ (U+0060, U+00B4)
-    normalized = re.sub(r'["\u201C\u201D\u201E\'\u2018\u2019\u201A\u00AB\u00BB\u2039\u203A\u2032\u2033`\u00B4]', "'", normalized)
+    # - Low quotes: „ ‚ (U+201E, U+201A)  # noqa: RUF003
+    # - Guillemets: « » ‹ › (U+00AB, U+00BB, U+2039, U+203A)  # noqa: RUF003
+    # - Prime symbols: ′ ″ (U+2032, U+2033)  # noqa: RUF003
+    # - Grave/acute accents: ` ´ (U+0060, U+00B4)  # noqa: RUF003
+    normalized = re.sub(
+        r'["\u201C\u201D\u201E\'\u2018\u2019\u201A\u00AB\u00BB\u2039\u203A\u2032\u2033`\u00B4]', "'", normalized
+    )
     # Strip trailing punctuation (periods) for comparison
     normalized = normalized.strip(".")
     return f"{normalized}"
 
-def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:
+
+def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # pyright: ignore[reportUnusedFunction]
     """Extract and normalizes markdown quotes and their file references from output.
 
     Only lines that start with '>' (after leading whitespace) are considered markdown quotes.
@@ -258,7 +259,7 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:
         List of tuples: (quote_text_without_quotation_marks, referenced_filename_or_none)
     """
 
-    quotes = []
+    quotes: list[tuple[str, str | None]] = []
     lines = output.split("\n")
 
     found_quotes = _extract_quotes(lines)
@@ -272,9 +273,7 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:
     return quotes
 
 
-
-
-def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict, str]]) -> dict[str, Any]:
+def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, Any], str]]) -> dict[str, Any]:
     """
     Used to merge muliple pydantic settings into a single dict with prefixed keys to log in mlflow.
 
@@ -289,7 +288,7 @@ def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict, str]])
     return reduce(lambda x, y: x | y, map(_prefix_settings_key, settings_prefixes))
 
 
-def _fix_evaluator_global_flag(dataset: Dataset[InputsT, OutputT, CaseMetadataT]) -> None:
+def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> None:  # pyright: ignore[reportUnusedFunction]
     """Ensure that global evaluator metadata is marked correctly."""
     # for case in dataset.cases:
     #     for evaluator in case.evaluators:
@@ -298,7 +297,7 @@ def _fix_evaluator_global_flag(dataset: Dataset[InputsT, OutputT, CaseMetadataT]
     #                 evaluator.metadata.is_global_evaluator = False
     for evaluator in dataset.evaluators:
         if isinstance(evaluator, BaseEvaluator):
-            evaluator._is_global = True
+            evaluator.is_global = True
 
 
 def get_pydantic_ai_llm_model(base_url: str, api_key: str, model_name: str, temperature: float = 0.0) -> models.Model:
