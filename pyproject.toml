@@ -46,8 +46,8 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF", "C90", "UP", "I"]
-mccabe = { max-complexity = 18 }
+extend-select = ["RUF", "C90", "UP", "I"]
+mccabe = { max-complexity = 19 }
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

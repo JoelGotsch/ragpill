@@ -84,3 +84,32 @@ jobs:
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  mlflow-integration:
+    name: MLflow Integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
+
+      - name: Start MLflow tracking server
+        run: |
+          uv run mlflow server --host 127.0.0.1 --port 5000 --backend-store-uri sqlite:///mlflow.db &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/health && break
+            sleep 1
+          done
+
+      - name: Run MLflow integration tests
+        env:
+          RUN_MLFLOW_INTEGRATION_TESTS: "1"
+          EVAL_MLFLOW_TRACKING_URI: "http://127.0.0.1:5000"
+        run: tox -e py311-highest -- tests/test_mlflow_integration.py
