@@ -83,11 +83,14 @@ uv run isort .
 # Install docs dependencies
 uv sync --group docs
 
+# Convert notebooks to markdown (required before build/serve)
+uv run jupyter nbconvert --to markdown docs/how-to/*.ipynb docs/tutorials/*.ipynb
+
 # Serve docs locally
-uv run mkdocs serve
+uv run zensical serve
 
 # Build docs
-uv run mkdocs build
+uv run zensical build
 ```
 
 The docs will be available at http://localhost:8000
@@ -187,7 +190,7 @@ ragpill/
 ├── tests/                       # Test files
 ├── docs/                        # Documentation
 ├── pyproject.toml              # Project config
-└── mkdocs.yml                  # Docs config
+└── mkdocs.yml                  # Docs config (used by zensical)
 ```
 
 ## Adding New Features
@@ -230,7 +233,7 @@ class MyEvaluator(BaseEvaluator):
 ### Adding Documentation
 
 1. Add markdown files to `docs/`
-2. Update `mkdocs.yml` navigation
+2. Update `mkdocs.yml` navigation (zensical reads this file)
 3. Use autodoc for API references: `::: module.ClassName`
 4. Add examples and usage
 

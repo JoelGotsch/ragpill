@@ -1,7 +1,7 @@
 site_name: ragpill Documentation
 site_description: Opinionated, customizable wrappers around mlflow, pydantic-ai and other frameworks' evaluation and llm-testing implementations
 site_author: Joel Gotsch
-site_url: https://docs.joelgotsch.com/ragpill/
+site_url: https://joelgotsch.github.io/ragpill/
 
 repo_name: ragpill
 repo_url: https://github.com/JoelGotsch/ragpill
@@ -56,14 +56,6 @@ plugins:
             show_symbol_type_toc: true
             signature_crossrefs: true
             separate_signature: true
-  - mkdocs-jupyter:
-      include_source: true
-      execute: false
-      allow_errors: false
-  - mike:
-      alias_type: redirect
-      canonical_version: 'latest' # for better SEO
-  - offline
   # - optimize
 markdown_extensions:
   - pymdownx.highlight:
@@ -93,10 +85,10 @@ nav:
     - Test Sets: guide/testsets.md
     - CSV Adapter: guide/csv-adapter.md
   - How-To:
-    - Custom Evaluator: how-to/custom-evaluator.ipynb
-    - Custom Type Evaluator: how-to/custom-type-evaluator.ipynb
+    - Custom Evaluator: how-to/custom-evaluator.md
+    - Custom Type Evaluator: how-to/custom-type-evaluator.md
   - Tutorials:
-    - Full Tutorial: tutorials/full.ipynb
+    - Full Tutorial: tutorials/full.md
   - API Reference:
     - Base Classes: api/base.md
     - Evaluators: api/evaluators.md
@@ -108,10 +100,6 @@ nav:
     - Contributing: development/contributing.md
     - Roadmap: development/roadmap.md
 extra:
-  version:
-    provider: mike
-    default: latest
-    alias: true
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/JoelGotsch/ragpill
