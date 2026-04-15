@@ -106,6 +106,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
+          prune-cache: false
 
       - name: Install tox
         run: uv tool install tox --with tox-uv

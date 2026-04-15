@@ -82,7 +82,7 @@ addopts = [
 [tool.coverage.run]
 source = ["ragpill"]
 branch = true
-omit = ["tests/*", "*/site-packages/*"]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
