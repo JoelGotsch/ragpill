@@ -1,0 +1,40 @@
+<svg width="100%" viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="pill-clip">
+      <ellipse cx="340" cy="200" rx="130" ry="60"/>
+    </clipPath>
+  </defs>
+
+  <!-- Pill left half (red) -->
+  <ellipse cx="340" cy="200" rx="130" ry="60" fill="#c0392b"/>
+  <rect x="210" y="140" width="130" height="120" fill="#c0392b" clip-path="url(#pill-clip)"/>
+
+  <!-- Pill right half (dark/charcoal) -->
+  <rect x="340" y="140" width="130" height="120" fill="#2c2c2e" clip-path="url(#pill-clip)"/>
+  <ellipse cx="340" cy="200" rx="130" ry="60" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+
+  <!-- Dividing line -->
+  <line x1="340" y1="141" x2="340" y2="259" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Document lines on right (dark) half -->
+  <g clip-path="url(#pill-clip)">
+    <rect x="355" y="172" width="50" height="6" rx="2" fill="#555"/>
+    <rect x="355" y="184" width="38" height="6" rx="2" fill="#555"/>
+    <rect x="355" y="196" width="46" height="6" rx="2" fill="#555"/>
+    <rect x="355" y="208" width="30" height="6" rx="2" fill="#555"/>
+    <rect x="355" y="220" width="44" height="6" rx="2" fill="#555"/>
+  </g>
+
+  <!-- Checkmark on left (red) half -->
+  <g clip-path="url(#pill-clip)">
+    <polyline points="258,198 276,218 312,178" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="340" y="308" text-anchor="middle" font-family="Georgia, serif" font-size="52" font-weight="700">
+    <tspan fill="#c0392b">rag</tspan><tspan fill="#2c2c2e">pill</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="340" y="344" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#888" letter-spacing="2">SEE YOUR AI AS IT REALLY IS</text>
+</svg>
