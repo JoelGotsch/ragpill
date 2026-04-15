@@ -128,9 +128,9 @@ def _get_input_key_report_case_map(
     input_key_report_case_map: dict[str, ReportCase] = {}
     for case in testsetresults.cases:
         input_key = default_input_to_key(case.inputs)
-        assert (
-            input_key not in input_key_report_case_map
-        ), f"Duplicate input_key found: {input_key}. Please only create one Case Per Input."
+        assert input_key not in input_key_report_case_map, (
+            f"Duplicate input_key found: {input_key}. Please only create one Case Per Input."
+        )
         input_key_report_case_map[input_key] = case
     # handle task failures (error in task execution, not evaluation failure, those are handled in the assertions of each case and will have an assertion with value False and reason describing the error. here we want to catch cases where the task execution itself failed and no assertions were produced, so we can log those properly in mlflow as well.):
     # task failures should be handled such that all evaluators on it are marked as failed, the output
@@ -145,14 +145,14 @@ def _get_evaluation_id_eval_metadata_map(
     for case in testset.cases:
         input_key = default_input_to_key(case.inputs)
         for evaluator in case.evaluators:
-            assert isinstance(
-                evaluator, BaseEvaluator
-            ), "Only BaseEvaluator derived evaluators are supported in this logging script."
+            assert isinstance(evaluator, BaseEvaluator), (
+                "Only BaseEvaluator derived evaluators are supported in this logging script."
+            )
             eval_metadata_map[f"{input_key}_{evaluator.evaluation_name}"] = evaluator.metadata
         for evaluator in testset.evaluators:
-            assert isinstance(
-                evaluator, BaseEvaluator
-            ), "Only BaseEvaluator derived evaluators are supported in this logging script."
+            assert isinstance(evaluator, BaseEvaluator), (
+                "Only BaseEvaluator derived evaluators are supported in this logging script."
+            )
             eval_metadata_map[f"{input_key}_{evaluator.evaluation_name}"] = evaluator.metadata
 
     return eval_metadata_map
@@ -168,27 +168,27 @@ def _handle_task_failures(
         evaluators = failed_evaluators.get(input_key, [])
         assertions: dict[str, EvaluationResult] = {}
         for evaluator in evaluators:
-            assert isinstance(
-                evaluator, BaseEvaluator
-            ), "Only BaseEvaluator derived evaluators are supported in this logging script."
+            assert isinstance(evaluator, BaseEvaluator), (
+                "Only BaseEvaluator derived evaluators are supported in this logging script."
+            )
             evaluator_name = evaluator.get_serialization_name()
             if (
                 evaluator_name in assertions
             ):  # change to f"{evaluator_name}_{n+1}" where n is number of times this evaluator is in already
                 n = len([k for k in assertions.keys() if k.startswith(evaluator_name)])
                 evaluator_name = f"{evaluator_name}_{n + 1}"
-            assert (
-                evaluator_name not in assertions
-            ), f"Duplicate evaluator name found for failed case: {evaluator_name}. Please make sure each evaluator has a unique name."
+            assert evaluator_name not in assertions, (
+                f"Duplicate evaluator name found for failed case: {evaluator_name}. Please make sure each evaluator has a unique name."
+            )
             assertions[evaluator_name] = EvaluationResult(
                 name=evaluator_name,
                 value=False,
                 reason="Task execution failed, evaluation defaults to failed.",
                 source=EvaluatorSpec(name="CODE", arguments={"evaluation_name": evaluator.evaluation_name}),
             )
-        assert isinstance(
-            failed_case.metadata, TestCaseMetadata
-        ), "TestCaseMetadata is required in ReportCase metadata for task failure cases."
+        assert isinstance(failed_case.metadata, TestCaseMetadata), (
+            "TestCaseMetadata is required in ReportCase metadata for task failure cases."
+        )
         input_key_failed_report_case_map[input_key] = ReportCase(
             name=failed_case.name,
             inputs=failed_case.inputs,
@@ -447,9 +447,9 @@ async def evaluate_testset_with_mlflow(
     input_key_trace_map = _get_input_key_trace_id_map(experiment, latest_run_id)
     input_key_report_case_map = _get_input_key_report_case_map(testsetresults, testset)
     eval_metadata_map = _get_evaluation_id_eval_metadata_map(testset)
-    assert set(input_key_trace_map.keys()) == set(
-        input_key_report_case_map.keys()
-    ), "Input keys in traces and testsetresults do not match."
+    assert set(input_key_trace_map.keys()) == set(input_key_report_case_map.keys()), (
+        "Input keys in traces and testsetresults do not match."
+    )
     eval_result_df = _create_evaluation_dataframe(
         input_key_trace_map,
         input_key_report_case_map,
