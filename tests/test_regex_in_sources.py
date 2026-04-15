@@ -426,7 +426,7 @@ class TestComprehensiveNormalization:
             ("hello world", "hello   \t  world", True, "whitespace collapse in content"),
             ("hello   world", "hello world", True, "whitespace collapse in pattern"),
             # Quote normalization (curly → straight single quote)
-            ("he said 'hello'", 'he said \u201chello\u201d', True, "curly double quotes in content"),
+            ("he said 'hello'", "he said \u201chello\u201d", True, "curly double quotes in content"),
             ("he said \u201chello\u201d", "he said 'hello'", True, "curly double quotes in pattern"),
             # Markdown subscript stripping
             ("uf6", "UF~6~ gas", True, "tilde subscript in content"),

@@ -58,8 +58,6 @@ class EvaluatorMetadata(BaseModel):
     )
 
 
-
-
 def merge_metadata(
     case_metadata: TestCaseMetadata,
     evaluator_metadata: EvaluatorMetadata,

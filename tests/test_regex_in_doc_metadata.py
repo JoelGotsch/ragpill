@@ -40,15 +40,11 @@ class TestFromCSVLine:
 
     def test_missing_key_raises(self):
         with pytest.raises((ValueError, AssertionError)):
-            RegexInDocumentMetadataEvaluator.from_csv_line(
-                expected=True, tags=set(), check='{"pattern": "x"}'
-            )
+            RegexInDocumentMetadataEvaluator.from_csv_line(expected=True, tags=set(), check='{"pattern": "x"}')
 
     def test_invalid_json_raises(self):
         with pytest.raises(ValueError):
-            RegexInDocumentMetadataEvaluator.from_csv_line(
-                expected=True, tags=set(), check="not json"
-            )
+            RegexInDocumentMetadataEvaluator.from_csv_line(expected=True, tags=set(), check="not json")
 
     def test_kwargs_stored(self):
         evaluator = RegexInDocumentMetadataEvaluator.from_csv_line(
@@ -133,7 +129,7 @@ class TestComprehensiveNormalization:
             ("annual report", "annual   report", True, "whitespace collapse in metadata"),
             ("annual   report", "annual report", True, "whitespace collapse in pattern"),
             # Quote normalization (curly → straight single quote)
-            ("file 'a'", 'file \u201ca\u201d', True, "curly quotes in metadata"),
+            ("file 'a'", "file \u201ca\u201d", True, "curly quotes in metadata"),
             # Markdown subscript stripping
             ("h2o", "H~2~O", True, "tilde subscript in metadata"),
             # Trailing period stripping

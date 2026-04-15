@@ -12,7 +12,11 @@ from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output, judge_o
 
 from ragpill.base import BaseEvaluator, EvaluatorMetadata, default_input_to_key
 from ragpill.settings import LLMJudgeSettings, MLFlowSettings
-from ragpill.utils import _extract_markdown_quotes, _normalize_text, get_pydantic_ai_llm_model  # pyright: ignore[reportPrivateUsage]
+from ragpill.utils import (
+    _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
+    _normalize_text,  # pyright: ignore[reportPrivateUsage]
+    get_pydantic_ai_llm_model,
+)
 
 
 def _get_default_judge_llm() -> models.Model:
@@ -345,14 +349,14 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
     Both the pattern and document contents are normalized before matching via
     ``_normalize_text``, which applies:
 
-    - **Case-folding** – all text is lowercased (``str.casefold``), so matching
+    - **Case-folding** - all text is lowercased (``str.casefold``), so matching
       is always case-insensitive. Using the ``(?i)`` flag is therefore redundant.
-    - **Unicode NFKC** – compatibility characters are unified
+    - **Unicode NFKC** - compatibility characters are unified
       (e.g. ``UF₆`` ↔ ``UF6``).
-    - **Whitespace collapsing** – runs of whitespace become a single space.
-    - **Quote normalization** – curly quotes, guillemets, primes, etc. are
+    - **Whitespace collapsing** - runs of whitespace become a single space.
+    - **Quote normalization** - curly quotes, guillemets, primes, etc. are
       replaced with a straight single quote ``'``.
-    - **Markdown subscript stripping** – e.g. ``UF~6~`` → ``UF6``.
+    - **Markdown subscript stripping** - e.g. ``UF~6~`` → ``UF6``.
     - **Trailing period stripping**.
 
     Tip: Use inline regex flags to modify matching behavior:
