@@ -10,7 +10,7 @@ from pydantic_evals import Case, Dataset
 from ragpill.base import BaseEvaluator, TestCaseMetadata
 from ragpill.evaluators import (
     HasQuotesEvaluator,
-    LiteralQuotationTest,
+    LiteralQuoteEvaluator,
     LLMJudge,
     RegexInDocumentMetadataEvaluator,
     RegexInOutputEvaluator,
@@ -53,7 +53,7 @@ def _group_rows_by_question(rows: list[dict[str, str]], question_column: str) ->
     Returns:
         Dictionary mapping questions to their rows
     """
-    question_to_rows = defaultdict(list)
+    question_to_rows: defaultdict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         question = row[question_column]
         question_to_rows[question].append(row)
@@ -63,39 +63,36 @@ def _group_rows_by_question(rows: list[dict[str, str]], question_column: str) ->
 def _parse_row_data(
     row: dict[str, str],
     standard_columns: set[str],
-    mandatory_column: str,
     expected_column: str,
     tags_column: str,
     check_column: str,
-) -> tuple[bool, bool, str, str, set[str], dict[str, Any]]:
+) -> tuple[bool, str, str, set[str], dict[str, Any]]:
     """Parse data from a CSV row.
 
     Args:
         row: CSV row dictionary
         standard_columns: Set of column names that shouldn't be treated as attributes
-        mandatory_column: Name of mandatory column
         expected_column: Name of expected column
         tags_column: Name of tags column
         check_column: Name of check column
 
     Returns:
-        Tuple of (mandatory, expected, tags_str, check, row_tags_set, additional_attrs)
+        Tuple of (expected, tags_str, check, row_tags_set, additional_attrs)
     """
-    mandatory = row[mandatory_column].strip().upper() in ("TRUE", "1", "YES")
     expected = row[expected_column].strip().upper() in ("TRUE", "1", "YES")
 
     tags = row.get(tags_column, "")
     check = row.get(check_column, "")
 
     # Collect tags for this row
-    row_tags = set()
+    row_tags: set[str] = set()
     if tags:
         row_tags = {tag.strip() for tag in tags.split(",") if tag.strip()}
 
     # Collect additional attributes (all columns not in standard set)
     additional_attrs = {k: v for k, v in row.items() if k not in standard_columns and v}
 
-    return mandatory, expected, tags, check, row_tags, additional_attrs
+    return expected, tags, check, row_tags, additional_attrs
 
 
 def _find_common_tags_and_attributes(
@@ -111,16 +108,16 @@ def _find_common_tags_and_attributes(
         Tuple of (common_tags, common_attributes)
     """
     # Find common tags (present in ALL rows)
-    case_tags = set.intersection(*all_row_tags) if all_row_tags else set()
+    case_tags: set[str] = all_row_tags[0].intersection(*all_row_tags[1:]) if all_row_tags else set()
 
     # Find common attributes (same key-value in ALL rows)
-    case_attributes = {}
+    case_attributes: dict[str, Any] = {}
     if all_row_attributes:
         # Start with first row's attributes
         potential_common = all_row_attributes[0].copy()
         # Check if each key-value pair exists in all other rows
         for attr_dict in all_row_attributes[1:]:
-            keys_to_remove = []
+            keys_to_remove: list[str] = []
             for key, value in potential_common.items():
                 if key not in attr_dict or attr_dict[key] != value:
                     keys_to_remove.append(key)
@@ -154,7 +151,6 @@ def create_evaluator_from_row(
     row: dict[str, str],
     evaluator_class: type[BaseEvaluator],
     standard_columns: set[str],
-    mandatory_column: str,
     expected_column: str,
     tags_column: str,
     check_column: str,
@@ -165,7 +161,6 @@ def create_evaluator_from_row(
         row: CSV row dictionary
         evaluator_class: Evaluator class with from_csv_line() class method
         standard_columns: Columns that shouldn't be treated as attributes
-        mandatory_column: Name of mandatory column
         expected_column: Name of expected column
         tags_column: Name of tags column
         check_column: Name of check column
@@ -173,16 +168,14 @@ def create_evaluator_from_row(
     Returns:
         Tuple of (evaluator, row_tags, additional_attrs)
     """
-    mandatory, expected, _, check, row_tags, additional_attrs = _parse_row_data(
-        row, standard_columns, mandatory_column, expected_column, tags_column, check_column
+    expected, _, check, row_tags, additional_attrs = _parse_row_data(
+        row, standard_columns, expected_column, tags_column, check_column
     )
 
     # Create evaluator using from_csv_line class method
     # All dependencies (model, settings, etc.) are expected to be injected
     # or provided via the check column as JSON
-    evaluator = evaluator_class.from_csv_line(
-        expected=expected, mandatory=mandatory, tags=row_tags, check=check, **additional_attrs
-    )
+    evaluator = evaluator_class.from_csv_line(expected=expected, tags=row_tags, check=check, **additional_attrs)
 
     return evaluator, row_tags, additional_attrs
 
@@ -193,7 +186,6 @@ def _create_case_from_rows(
     evaluator_classes: dict[str, type[BaseEvaluator]],
     standard_columns: set[str],
     test_type_column: str,
-    mandatory_column: str,
     expected_column: str,
     tags_column: str,
     check_column: str,
@@ -207,7 +199,6 @@ def _create_case_from_rows(
         evaluator_classes: Dict mapping test_type to evaluator classes
         standard_columns: Columns that shouldn't be treated as attributes
         test_type_column: Name of test_type column
-        mandatory_column: Name of mandatory column
         expected_column: Name of expected column
         tags_column: Name of tags column
         check_column: Name of check column
@@ -216,9 +207,9 @@ def _create_case_from_rows(
     Returns:
         Case object, or None if all evaluators were skipped
     """
-    evaluators = []
-    all_row_tags = []
-    all_row_attributes = []
+    evaluators: list[BaseEvaluator] = []
+    all_row_tags: list[set[str]] = []
+    all_row_attributes: list[dict[str, Any]] = []
 
     for row in rows:
         test_type = row[test_type_column]
@@ -233,7 +224,7 @@ def _create_case_from_rows(
                 )
 
         evaluator, row_tags, additional_attrs = create_evaluator_from_row(
-            row, evaluator_class, standard_columns, mandatory_column, expected_column, tags_column, check_column
+            row, evaluator_class, standard_columns, expected_column, tags_column, check_column
         )
 
         evaluators.append(evaluator)
@@ -252,7 +243,9 @@ def _create_case_from_rows(
 
     # Create Case with metadata
     return Case(
-        inputs=question, evaluators=evaluators, metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags)
+        inputs=question,
+        evaluators=evaluators,  # pyright: ignore[reportArgumentType]
+        metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags),
     )
 
 
@@ -262,7 +255,7 @@ default_evaluator_classes: dict[str, type[BaseEvaluator]] = {
     "WrappedPydanticEvaluator": WrappedPydanticEvaluator,
     "RegexInSourcesEvaluator": RegexInSourcesEvaluator,
     "RegexInDocumentMetadata": RegexInDocumentMetadataEvaluator,
-    "LiteralQuotationTest": LiteralQuotationTest,
+    "LiteralQuoteEvaluator": LiteralQuoteEvaluator,
     "HasQuotesEvaluator": HasQuotesEvaluator,
     "RegexInOutputEvaluator": RegexInOutputEvaluator,
     # Add other default evaluator classes here as they are implemented:
@@ -277,7 +270,6 @@ def load_testset(
     skip_unknown_evaluators: bool = False,
     question_column: str = "Question",
     test_type_column: str = "test_type",
-    mandatory_column: str = "mandatory",
     expected_column: str = "expected",
     tags_column: str = "tags",
     check_column: str = "check",
@@ -285,7 +277,7 @@ def load_testset(
     """Create a Dataset from a CSV file with evaluator configurations.
 
     Each evaluator class must implement a from_csv_line() class method that accepts:
-    - Standard CSV columns: expected, mandatory, tags, check
+    - Standard CSV columns: expected, tags, check
     - Additional CSV columns as **kwargs (passed to evaluator.attributes)
 
     CSV Format:
@@ -293,7 +285,7 @@ def load_testset(
 
         - **Question**: The input question/prompt for the test case
         - **test_type**: Name of the evaluator class (must match key in evaluator_classes dict)
-        - **expected**, **mandatory**, **tags**, **check**: Standard evaluator parameters
+        - **expected**, **tags**, **check**: Standard evaluator parameters
 
         For detailed descriptions of these parameters, see
         [`ragpill.base.BaseEvaluator.from_csv_line`][ragpill.base.BaseEvaluator.from_csv_line].
@@ -307,9 +299,9 @@ def load_testset(
         Rows with empty questions are treated as global evaluators and will be added to ALL test cases:
 
         ```csv
-        Question,test_type,expected,mandatory,tags,check
-        ,LLMJudge,true,true,global,"response is polite"
-        What is X?,RegexEvaluator,true,false,factual,"X.*definition"
+        Question,test_type,expected,tags,check
+        ,LLMJudge,true,global,"response is polite"
+        What is X?,RegexEvaluator,true,factual,"X.*definition"
         ```
 
         The LLMJudge evaluator will be added to all cases, including the "What is X?" case.
@@ -318,9 +310,9 @@ def load_testset(
         You can add custom columns to track metadata:
 
         ```csv
-        Question,test_type,expected,mandatory,tags,check,priority,category
-        What is X?,LLMJudge,true,true,factual,"contains the fact, that x is ...",high,science
-        What is Y's email?,RegexEvaluator,true,false,"auth,contacts","y@example.com",low,validation
+        Question,test_type,expected,tags,check,priority,category
+        What is X?,LLMJudge,true,factual,"contains the fact, that x is ...",high,science
+        What is Y's email?,RegexEvaluator,true,"auth,contacts","y@example.com",low,validation
         ```
 
         These custom attributes (priority, category) are automatically:
@@ -336,7 +328,6 @@ def load_testset(
         skip_unknown_evaluators: If True, skip rows with unknown evaluator types instead of raising an error
         question_column: Name of the column containing questions (default: 'Question')
         test_type_column: Name of the column containing evaluator class names (default: 'test_type')
-        mandatory_column: Name of the column for mandatory flag (default: 'mandatory')
         expected_column: Name of the column for expected flag (default: 'expected')
         tags_column: Name of the column for comma-separated tags (default: 'tags')
         check_column: Name of the column for evaluator-specific check data (default: 'check')
@@ -369,10 +360,10 @@ def load_testset(
     question_to_rows = _group_rows_by_question(rows, question_column)
 
     # Standard columns
-    standard_columns = {question_column, test_type_column, mandatory_column, expected_column, tags_column, check_column}
+    standard_columns = {question_column, test_type_column, expected_column, tags_column, check_column}
 
     # Extract global evaluators (rows with empty questions)
-    global_evaluators = []
+    global_evaluators: list[BaseEvaluator] = []
     global_rows = question_to_rows.pop("", None)
     if global_rows:
         for row in global_rows:
@@ -388,12 +379,12 @@ def load_testset(
                     )
 
             evaluator, _, _ = create_evaluator_from_row(
-                row, evaluator_class, standard_columns, mandatory_column, expected_column, tags_column, check_column
+                row, evaluator_class, standard_columns, expected_column, tags_column, check_column
             )
             global_evaluators.append(evaluator)
 
     # Create cases
-    cases = []
+    cases: list[Case[str, str, TestCaseMetadata]] = []
     for question, question_rows in question_to_rows.items():
         case = _create_case_from_rows(
             question=question,
@@ -401,7 +392,6 @@ def load_testset(
             evaluator_classes=evaluator_classes,
             standard_columns=standard_columns,
             test_type_column=test_type_column,
-            mandatory_column=mandatory_column,
             expected_column=expected_column,
             tags_column=tags_column,
             check_column=check_column,

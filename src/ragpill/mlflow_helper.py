@@ -1,14 +1,15 @@
 import asyncio
 import concurrent.futures
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
-import inspect
+
 import mlflow
 import pandas as pd
 from mlflow.entities import AssessmentSource, Experiment, Feedback, SpanType, Trace
 from pydantic import TypeAdapter
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec, InputsT, OutputT
+from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorSpec
 from pydantic_evals.reporting import EvaluationReport, ReportCase
 
 from ragpill.base import (
@@ -20,14 +21,14 @@ from ragpill.base import (
     merge_metadata,
 )
 from ragpill.settings import MLFlowSettings
-from ragpill.utils import _fix_evaluator_global_flag
+from ragpill.utils import _fix_evaluator_global_flag  # pyright: ignore[reportPrivateUsage]
 
-TaskType = Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT]
+TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
 
 
 def _mlflow_runnable_wrapper(
     task: TaskType,
-    input_to_key: Callable[[InputsT], str] = default_input_to_key,
+    input_to_key: Callable[[Any], str] = default_input_to_key,
     # input_parent_span_id: dict | None = None,
 ) -> TaskType:
     """Wrap a function to be runnable asynchronously for mlflow tracing. Make sure that mlflow is logging (mlflow.autolog() or similar) and mlflow.set_experiment(<your-experiment-name>) are set before executing this wrapper."""
@@ -37,7 +38,7 @@ def _mlflow_runnable_wrapper(
 
     if inspect.iscoroutinefunction(task):
 
-        async def runnable(input: InputsT) -> OutputT:
+        async def async_runnable(input: Any) -> Any:
             with mlflow.start_span(name="test-span", span_type=SpanType.TASK) as span:
                 span.set_inputs(input)
                 input_key = input_to_key(input)
@@ -46,9 +47,11 @@ def _mlflow_runnable_wrapper(
                 output = await task(input)
                 span.set_outputs(output)
                 return output
+
+        return async_runnable
     else:
 
-        def runnable(input: InputsT) -> OutputT:
+        def sync_runnable(input: Any) -> Any:
             with mlflow.start_span(name="test-span", span_type=SpanType.TASK) as span:
                 span.set_inputs(input)
                 input_key = input_to_key(input)
@@ -58,18 +61,19 @@ def _mlflow_runnable_wrapper(
                 span.set_outputs(output)
                 return output
 
-    return runnable
+        return sync_runnable
 
 
-def _setup_mlflow_experiment(mlflow_settings: MLFlowSettings):
+def _setup_mlflow_experiment(mlflow_settings: MLFlowSettings) -> None:
     """Setup mlflow experiment with given settings."""
     mlflow.set_tracking_uri(mlflow_settings.ragpill_tracking_uri)
-    mlflow.set_experiment(mlflow_settings.ragpill_experiment_name)
-    mlflow.autolog()  # should cover pydantic-ai and openai
+    mlflow.set_experiment(mlflow_settings.ragpill_experiment_name)  # pyright: ignore[reportUnknownMemberType]
+    # mlflow.autolog()  # should cover pydantic-ai and openai
+    mlflow.pydantic_ai.autolog()  # pyright: ignore[reportPrivateImportUsage]  # pydantic-ai and openai are racing each other
     mlflow.start_run(description=mlflow_settings.ragpill_run_description)
 
 
-def _delete_llm_judge_traces(mlflow_settings: MLFlowSettings):
+def _delete_llm_judge_traces(mlflow_settings: MLFlowSettings) -> tuple[Experiment, str]:
     """
     LLMJudge produces traces for each evaluation, which clutters the mlflow tracing UI.
     We want only traces that relate to the actual task execution, not the evaluation of the outputs of the task-runs.
@@ -78,51 +82,50 @@ def _delete_llm_judge_traces(mlflow_settings: MLFlowSettings):
     :type mlflow_settings: MLFlowSettings
     """
     experiment = mlflow.get_experiment_by_name(mlflow_settings.ragpill_experiment_name)
-    df = mlflow.search_runs([experiment.experiment_id], order_by=["start_time DESC"])
-    latest_run_id = df.iloc[0]["run_id"]
-
-    def filter_final_result(trace: Trace) -> bool:
-        return any(
-            isinstance(s.inputs, dict)
-            and "call" in s.inputs
-            and isinstance(s.inputs["call"], dict)
-            and s.inputs["call"].get("tool_name") == "final_result"
-            for s in trace.data.spans
-        )
+    assert experiment is not None, f"Experiment '{mlflow_settings.ragpill_experiment_name}' not found."
+    experiment_id: str = str(experiment.experiment_id)  # pyright: ignore[reportUnknownArgumentType]
+    df: Any = mlflow.search_runs([experiment_id], order_by=["start_time DESC"])
+    latest_run_id: str = str(df.iloc[0]["run_id"])
 
     from mlflow import MlflowClient
 
     client = MlflowClient(tracking_uri=mlflow_settings.ragpill_tracking_uri)
-    traces = mlflow.search_traces(locations=[experiment.experiment_id], run_id=latest_run_id, return_type="list")
-    delete_traces = []
+    traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
+        locations=[experiment_id], run_id=latest_run_id, return_type="list"
+    )
+    delete_traces: list[str] = []
     for trace in traces:
-        if filter_final_result(trace):
+        root = trace.data._get_root_span()  # pyright: ignore[reportPrivateUsage]
+        if root and root.attributes.get("ragpill_is_judge_trace"):
             delete_traces.append(trace.info.trace_id)
     if delete_traces:
-        client.delete_traces(experiment_id=experiment.experiment_id, trace_ids=delete_traces)
+        client.delete_traces(experiment_id=experiment_id, trace_ids=delete_traces)
     return experiment, latest_run_id
 
 
 def _get_input_key_trace_id_map(experiment: Experiment, latest_run_id: str) -> dict[str, str]:
-    traces: list[Trace] = mlflow.search_traces(
+    traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
         locations=[experiment.experiment_id], run_id=latest_run_id, return_type="list"
     )
-    input_key_trace_map = {}
+    input_key_trace_map: dict[str, str] = {}
     for trace in traces:
-        span = trace.data._get_root_span()
+        span = trace.data._get_root_span()  # pyright: ignore[reportPrivateUsage]
         if not span:
             continue
-        input_key = span.attributes.get("input_key") if span else None
+        input_key = span.attributes.get("input_key")
         if not input_key:
-            raise ValueError("No input_key attribute found in span.")
+            # Non-task traces (e.g. LLMJudge evaluation traces) have no input_key; skip them.
+            # _delete_llm_judge_traces should have removed these already, but we guard here
+            # in case deletion failed or a third-party trace ended up in the same run.
+            continue
         input_key_trace_map[input_key] = trace.info.trace_id
     return input_key_trace_map
 
 
 def _get_input_key_report_case_map(
-    testsetresults: EvaluationReport, testset: Dataset[InputsT, OutputT, CaseMetadataT]
+    testsetresults: EvaluationReport, testset: Dataset[Any, Any, CaseMetadataT]
 ) -> dict[str, ReportCase]:
-    input_key_report_case_map = {}
+    input_key_report_case_map: dict[str, ReportCase] = {}
     for case in testsetresults.cases:
         input_key = default_input_to_key(case.inputs)
         assert input_key not in input_key_report_case_map, (
@@ -136,9 +139,9 @@ def _get_input_key_report_case_map(
 
 
 def _get_evaluation_id_eval_metadata_map(
-    testset: Dataset[InputsT, OutputT, CaseMetadataT],
+    testset: Dataset[Any, Any, CaseMetadataT],
 ) -> dict[str, EvaluatorMetadata]:
-    eval_metadata_map = {}
+    eval_metadata_map: dict[str, EvaluatorMetadata] = {}
     for case in testset.cases:
         input_key = default_input_to_key(case.inputs)
         for evaluator in case.evaluators:
@@ -156,14 +159,14 @@ def _get_evaluation_id_eval_metadata_map(
 
 
 def _handle_task_failures(
-    testsetresults: EvaluationReport, dataset: Dataset[InputsT, OutputT, CaseMetadataT]
+    testsetresults: EvaluationReport, dataset: Dataset[Any, Any, CaseMetadataT]
 ) -> dict[str, ReportCase]:
-    input_key_failed_report_case_map = {}
-    failed_evaluators = {default_input_to_key(c.inputs): c.evaluators for c in dataset.cases}
+    input_key_failed_report_case_map: dict[str, ReportCase] = {}
+    failed_evaluators: dict[str, list[Any]] = {default_input_to_key(c.inputs): c.evaluators for c in dataset.cases}
     for failed_case in testsetresults.failures:
         input_key = default_input_to_key(failed_case.inputs)
         evaluators = failed_evaluators.get(input_key, [])
-        assertions = {}
+        assertions: dict[str, EvaluationResult] = {}
         for evaluator in evaluators:
             assert isinstance(evaluator, BaseEvaluator), (
                 "Only BaseEvaluator derived evaluators are supported in this logging script."
@@ -190,7 +193,7 @@ def _handle_task_failures(
             name=failed_case.name,
             inputs=failed_case.inputs,
             output=f"Task execution failed with error: {failed_case.error_message}\n\n{failed_case.error_stacktrace}",
-            assertions=assertions,
+            assertions=assertions,  # pyright: ignore[reportArgumentType]
             metadata=failed_case.metadata,
             trace_id=failed_case.trace_id,
             span_id=failed_case.span_id,
@@ -199,7 +202,7 @@ def _handle_task_failures(
             metrics={},
             attributes={},
             scores={},
-            labels=failed_case.metadata.tags,
+            labels=failed_case.metadata.tags,  # pyright: ignore[reportArgumentType]
             task_duration=0.0,
             total_duration=0.0,
         )
@@ -215,14 +218,14 @@ def _create_evaluation_dataframe(
     input_key_trace_map: dict[str, str],
     input_key_report_case_map: dict[str, ReportCase],
     eval_metadata_map: dict[str, EvaluatorMetadata],
-) -> list[dict[str, Any]]:
-    df_rows: list[dict] = []
+) -> pd.DataFrame:
+    df_rows: list[dict[str, Any]] = []
     for input_key, trace_id in input_key_trace_map.items():
         reportcase = input_key_report_case_map[input_key]
         assert isinstance(reportcase.metadata, TestCaseMetadata), "ReportCase metadata is not of type TestCaseMetadata."
         for evaluator_name, eval_result in reportcase.assertions.items():
             evaluator_metadata = eval_metadata_map.get(
-                f"{input_key}_{eval_result.source.arguments.get('evaluation_name')}"
+                f"{input_key}_{eval_result.source.arguments.get('evaluation_name')}"  # pyright: ignore[reportOptionalMemberAccess,reportAttributeAccessIssue,reportUnknownMemberType]
             )
             assert isinstance(evaluator_metadata, EvaluatorMetadata), "Evaluator metadata not found for evaluator."
             # case_metadata =
@@ -237,7 +240,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": eval_result.reason,
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -253,7 +255,7 @@ def _create_evaluation_dataframe(
         # handle evaluator failures (errors in evaluation code)
         for eval_fails in reportcase.evaluator_failures:
             evaluator_metadata = eval_metadata_map.get(
-                f"{input_key}_{eval_fails.source.arguments.get('evaluation_name')}"
+                f"{input_key}_{eval_fails.source.arguments.get('evaluation_name')}"  # pyright: ignore[reportOptionalMemberAccess,reportAttributeAccessIssue,reportUnknownMemberType]
             )
             assert isinstance(evaluator_metadata, EvaluatorMetadata), "Evaluator metadata not found for evaluator."
             merged_metadata = merge_metadata(reportcase.metadata, evaluator_metadata)
@@ -265,7 +267,6 @@ def _create_evaluation_dataframe(
                     "evaluator_data": merged_metadata.other_evaluator_data,
                     "evaluator_reason": f"Evaluator failed with error: {eval_fails.error_message}\n\n{eval_fails.error_stacktrace}",
                     "expected": merged_metadata.expected,
-                    "mandatory": merged_metadata.mandatory,
                     "attributes": ta.dump_json(merged_metadata.attributes),
                     "tags": merged_metadata.tags,
                     "task_duration": reportcase.task_duration,
@@ -299,45 +300,43 @@ def _upload_mlflow(
 
     # Calculate overall accuracy (assuming evaluator_result is boolean or 0/1)
     # Filter out None/NaN values before calculating
-    df_valid = eval_result_df[eval_result_df["evaluator_result"].notna()]
-    overall_accuracy = df_valid["evaluator_result"].mean()
+    # pandas typing is incomplete; cast to Any for intermediate DataFrame operations
+    eval_df: Any = eval_result_df
+    df_valid = eval_df[eval_df["evaluator_result"].notna()]
+    overall_accuracy: float = float(df_valid["evaluator_result"].mean())
     mlflow.log_metric("overall_accuracy", overall_accuracy)
-
-    # Calculate accuracy per mandatory class
-    accuracy_per_mandatory = df_valid.groupby("mandatory")["evaluator_result"].mean()
-    for mandatory_val, accuracy in accuracy_per_mandatory.items():
-        mlflow.log_metric(f"accuracy_mandatory_{mandatory_val}", accuracy)
 
     # Calculate accuracy per tag (expanding tags since case_tags is a list)
     df_exploded = df_valid.explode("tags")
     accuracy_per_tag = df_exploded.groupby("tags")["evaluator_result"].mean()
     for tag, accuracy in accuracy_per_tag.items():
-        if pd.notna(tag):  # Skip NaN tags
-            mlflow.log_metric(f"accuracy_tag_{tag}", accuracy)
+        if pd.notna(tag):  # pyright: ignore[reportUnknownMemberType]
+            mlflow.log_metric(f"accuracy_tag_{tag}", float(accuracy))
 
     # for each row, log the feedback to mlflow:
     for _, row in eval_result_df.iterrows():
-        trace_id = row["trace_id"]
+        row_data: Any = row
+        trace_id: str = str(row_data["trace_id"])
         feedback = Feedback(
-            name=row["evaluator_name"],
-            value=row["evaluator_result"],
-            source=AssessmentSource(source_type=row["source_type"], source_id=row["source_id"]),
-            rationale=row["evaluator_reason"],
+            name=str(row_data["evaluator_name"]),
+            value=row_data["evaluator_result"],
+            source=AssessmentSource(source_type=str(row_data["source_type"]), source_id=str(row_data["source_id"])),
+            rationale=str(row_data["evaluator_reason"]),
         )
         mlflow.log_assessment(trace_id=trace_id, assessment=feedback)
 
     # for each reportcase:
     for input_key, reportcase in input_key_report_case_map.items():
-        trace_id = eval_result_df.loc[eval_result_df["input_key"] == input_key, "trace_id"].iloc[0]
+        trace_id = str(eval_df.loc[eval_df["input_key"] == input_key, "trace_id"].iloc[0])
         assert isinstance(reportcase.metadata, TestCaseMetadata), "ReportCase metadata is not of type TestCaseMetadata."
         for key, value in reportcase.metadata.attributes.items():
-            mlflow.set_trace_tag(trace_id, key, value)
+            mlflow.set_trace_tag(trace_id, key, str(value))
         for tag in reportcase.metadata.tags:
             mlflow.set_trace_tag(trace_id, f"tag_{tag}", "true")
 
 
 async def evaluate_testset_with_mlflow(
-    testset: Dataset[InputsT, OutputT, CaseMetadataT],
+    testset: Dataset[Any, Any, CaseMetadataT],
     task: TaskType,
     mlflow_settings: MLFlowSettings | None = None,
     model_params: dict[str, str] | None = None,
@@ -356,7 +355,7 @@ async def evaluate_testset_with_mlflow(
 
     The function automatically:
 
-    - Logs overall accuracy and accuracy by mandatory status
+    - Logs overall accuracy
     - Logs accuracy per tag for granular analysis
     - Attaches feedback/assessments to each trace
     - Preserves trace IDs for later inspection
@@ -386,7 +385,6 @@ async def evaluate_testset_with_mlflow(
             - `evaluator_data`: Evaluator-specific data (e.g., rubric for LLMJudge)
             - `evaluator_reason`: Explanation for the result
             - `expected`: Whether pass was expected
-            - `mandatory`: Whether this evaluation is mandatory
             - `attributes`: JSON-encoded custom attributes
             - `tags`: Set of tags for categorization
             - `task_duration`: Time taken for task execution
@@ -429,7 +427,6 @@ async def evaluate_testset_with_mlflow(
 
         # Analyze results
         print(f"Overall accuracy: {results_df['evaluator_result'].mean():.2%}")
-        print(f"Mandatory accuracy: {results_df[results_df['mandatory']]['evaluator_result'].mean():.2%}")
         ```
 
     Note:
@@ -442,7 +439,7 @@ async def evaluate_testset_with_mlflow(
         [`MLFlowSettings`][ragpill.settings.MLFlowSettings]:
             MLflow configuration settings
     """
-    mlflow_settings = mlflow_settings or MLFlowSettings()
+    mlflow_settings = mlflow_settings or MLFlowSettings()  # pyright: ignore[reportCallIssue]
     _setup_mlflow_experiment(mlflow_settings)
     _fix_evaluator_global_flag(testset)
     testsetresults = await testset.evaluate(_mlflow_runnable_wrapper(task))
@@ -465,7 +462,7 @@ async def evaluate_testset_with_mlflow(
 
 
 def evaluate_testset_with_mlflow_sync(
-    testset: Dataset[InputsT, OutputT, CaseMetadataT],
+    testset: Dataset[Any, Any, CaseMetadataT],
     task: TaskType,
     mlflow_settings: MLFlowSettings | None = None,
     model_params: dict[str, str] | None = None,

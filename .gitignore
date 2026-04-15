@@ -5,3 +5,11 @@ scribble**
 **/__pycache__/
 **/dist/
 **/site/
+coverage.xml
+.coverage
+
+# Generated notebook markdown (nbconvert output)
+docs/how-to/custom-evaluator.md
+docs/how-to/custom-type-evaluator.md
+docs/tutorials/full.md
+docs/tutorials/full_files/

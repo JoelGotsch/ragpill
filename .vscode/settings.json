@@ -1,0 +1,17 @@
+{
+  // Use Ruff for linting + formatting (replaces isort, black, autopep8)
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+
+  // Disable Pylance type-checking so it doesn't conflict with basedpyright
+  "python.analysis.typeCheckingMode": "off",
+
+  // Use basedpyright for type checking (matches CI)
+  "basedpyright.analysis.typeCheckingMode": "standard"
+}

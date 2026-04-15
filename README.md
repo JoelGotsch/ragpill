@@ -1,6 +1,24 @@
-# RAGPill
+<p align="center">
+  <img src="docs/assets/ragpill.svg" alt="ragpill logo" width="340">
+</p>
 
-Opinionated but customizable wrappers around [pydantic-ai's evaluation framework](https://ai.pydantic.dev/evals/) using [MLflow tracing](https://mlflow.org/docs/latest/genai/tracing/) for testing LLM systems. Follow best practices while maintaining flexibility.
+<p align="center">
+  <em>Stop believing your chatbot. Take the ragpill.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/JoelGotsch/ragpill/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JoelGotsch/ragpill/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="https://pypi.org/project/ragpill/"><img src="https://img.shields.io/pypi/v/ragpill?style=flat-square" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/ragpill/"><img src="https://img.shields.io/pypi/pyversions/ragpill?style=flat-square" alt="Python versions"></a>
+  <a href="https://codecov.io/gh/JoelGotsch/ragpill"><img src="https://img.shields.io/codecov/c/github/JoelGotsch/ragpill?style=flat-square&label=coverage" alt="Codecov"></a>
+  <a href="https://github.com/JoelGotsch/ragpill/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JoelGotsch/ragpill?style=flat-square" alt="License: MIT"></a>
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square" alt="Ruff"></a>
+  <img src="https://img.shields.io/badge/types-basedpyright-blue?style=flat-square" alt="basedpyright">
+</p>
+
+---
+
+**ragpill** is an evaluation framework for LLM agents and RAG pipelines. Define facts, sources, and tool call expectations — and find out what your AI actually does.
 
 ## What is RAGPill?
 
@@ -13,6 +31,7 @@ RAGPill helps you:
 
 It specializes in "offline" evaluation of LLM-based systems, meaning it's supposed to be part of your CI/CD pipeline or run as scheduled tests, not real-time monitoring.
 
+<!--
 ## Demo!
 
 TODO: this should be a video demo
@@ -42,6 +61,7 @@ Produces the following mlflow views:
 - The [pydantic-ai's evaluation framework](https://ai.pydantic.dev/evals/) only integrates with cloud-based logfire and it sucks for mlflow tracing (if you go the hassle and use mlflow opentelemetry endpoint as logfire backend, a lot of mlflow features are lost in translation). However, we like the core concepts and type-safety of pydantic-ai evals a lot, so we build on top of it.
 - additionally, it's not straightforward to test for example, if a regex pattern is found in retrieved sources or document metadata. Which is common enough in retrieval-augmented generation (RAG) systems.
 - [Langsmith evaluation](https://docs.langchain.com/langsmith/evaluation) doesn't support multiple tests per dataset item, nor custom evaluators easily. Also no mlflow integration.
+-->
 
 
 
@@ -111,24 +131,24 @@ As this library is built on pydantic-ai evals, please have a look [here](https:/
 
 ## Best Practices
 
-!!! tip "TDD Mindset"
-    Begin with defining a Test-Set with potential users before even starting to develop the solution. This enables clear expectation management and progress tracking.
+> [!TIP]
+> **TDD Mindset** — Begin with defining a Test-Set with potential users before even starting to develop the solution. This enables clear expectation management and progress tracking.
 
-!!! tip "Create Multiple Testsets"
-    It might make sense for you to have some core tests that run relatively quickly and inexpensive - use these for development. Before deploying to prod, you can run an exhaustive dataset that is integrated in your CI/CD.
+> [!TIP]
+> **Create Multiple Testsets** — It might make sense for you to have some core tests that run relatively quickly and inexpensive - use these for development. Before deploying to prod, you can run an exhaustive dataset that is integrated in your CI/CD.
 
-!!! tip "Separate Evaluation Experiments"
-    Create dedicated MLflow experiments for evaluations. Don't mix evaluation traces with production traces.
+> [!TIP]
+> **Separate Evaluation Experiments** — Create dedicated MLflow experiments for evaluations. Don't mix evaluation traces with production traces.
 
-!!! tip "Use Domain Experts"
-    Have domain experts define evaluation criteria rather than relying solely on generic LLM judges.
+> [!TIP]
+> **Use Domain Experts** — Have domain experts define evaluation criteria rather than relying solely on generic LLM judges.
 
-!!! tip "Version Your Tests"
-    Keep test datasets in version control alongside your code.
+> [!TIP]
+> **Version Your Tests** — Keep test datasets in version control alongside your code.
 
 ## Documentation
 
-Full documentation is available at [your-docs-url] including:
+Full documentation is available at [joelgotsch.github.io/ragpill](https://joelgotsch.github.io/ragpill/) including:
 
 - **Installation Guide**: Setup instructions
 - **Quickstart Tutorial**: Run your first evaluation
@@ -142,14 +162,15 @@ Full documentation is available at [your-docs-url] including:
 - [x] Adapter for testset from CSV
 - [x] Documentation via mkdocs
 - [x] Evaluators for sources and regex
+- [ ] Repeat Task Evaluations (run task multiple times and evaluate with threshold)
 - [ ] Adapter for task from CSV (upload to mlflow)
 - [ ] Create demo video
 - [ ] CI/CD (tests, build package, publish docs)
-- [ ] Global evaluators from CSV (empty input)
-- [ ] Track git-commit hash
-- [ ] Tests with test-docker containers
+- [x] Global evaluators from CSV (empty input)
+- [ ] Track git-commit hash in experiment
+- [x] Tests with mlflow server
 - [ ] Dependency injection for llm, input_to_key functions
-- [ ] pytest integration (mandatory throws errors, non-mandatory logs warnings)
+- [ ] pytest integration
 
 
 ## Contributing

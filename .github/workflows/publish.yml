@@ -1,9 +1,11 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
-
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
+  
 jobs:
   build:
     name: Build distribution

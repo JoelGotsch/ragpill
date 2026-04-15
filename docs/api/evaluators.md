@@ -38,9 +38,9 @@ It is, however, pretty easy to create your own custom evaluators by inheriting f
       show_source: true
       heading_level: 3
 
-## LiteralQuotationTest
+## LiteralQuoteEvaluator
 
-::: ragpill.evaluators.LiteralQuotationTest
+::: ragpill.evaluators.LiteralQuoteEvaluator
     options:
       show_root_heading: true
       show_source: true

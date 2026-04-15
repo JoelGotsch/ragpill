@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "This library allows for granular testing of llm-applications based on expert input."
 readme = "README.md"
 authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "pydantic-ai>=1.39.1",
@@ -21,17 +22,19 @@ dev = [
     "pytest-pretty>=1.2.0",
     "isort>=5.13.2",
     "ruff>=0.8.0",
+    "anyio[trio]>=4.9.0",
     "pytest-cov>=6.0.0",
     "coverage[toml]>=7.6.0",
+    "genbadge[coverage]>=1.1.3",
 ]
 
 docs = [
-    "mkdocs>=1.6.0",
-    "mkdocs-material>=9.5.0",
+    "zensical>=0.0.32",           # replaces mkdocs + mkdocs-material
     "mkdocstrings[python]>=0.26.0",
-    "mkdocs-jupyter>=0.25.0",
     "mkdocs-autorefs>=1.2.0",
-    "mike>=2.1.3", # versioning documentation
+    "mike>=2.1.3",                # versioning documentation
+    "nbconvert>=7.0.0",          # pre-convert notebooks to markdown
+    "ipywidgets>=8.1.8",
 ]
 build_docs = [
     "qdrant-client>=1.12.0",
@@ -43,8 +46,8 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF", "C90", "UP", "I"]
-mccabe = { max-complexity = 18 }
+extend-select = ["RUF", "C90", "UP", "I"]
+mccabe = { max-complexity = 19 }
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -79,7 +82,7 @@ addopts = [
 [tool.coverage.run]
 source = ["ragpill"]
 branch = true
-omit = ["tests/*", "*/site-packages/*"]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true

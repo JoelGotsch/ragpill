@@ -1,9 +1,9 @@
-from pydantic import ConfigDict, Field, SecretStr
-from pydantic_settings import BaseSettings
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MLFlowSettings(BaseSettings):
-    model_config = ConfigDict(env_prefix="MLFLOW_")
+    model_config = SettingsConfigDict(env_prefix="MLFLOW_")
 
     ragpill_tracking_uri: str = Field("http://localhost:5000", description="MLFlow tracking server URI.")
     ragpill_experiment_name: str = Field("ragpill_experiment", description="MLFlow experiment name.")
@@ -21,7 +21,7 @@ class MLFlowSettings(BaseSettings):
 class LLMJudgeSettings(BaseSettings):
     """All settings related to LLMJudge evaluator."""
 
-    model_config = ConfigDict(env_prefix="RAGPILL_LLMJUDGE_")
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_LLMJUDGE_")
 
     model_name: str = Field("gpt-4o", description="Model name for LLMJudge evaluator.")
     temperature: float = Field(0.0, description="Temperature setting for LLMJudge model.")

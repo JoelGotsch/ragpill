@@ -24,24 +24,73 @@ uv sync --group dev --group docs
 uv run pytest
 ```
 
+## Editor Setup (VS Code)
+
+The repository ships with workspace settings in `.vscode/` that configure linting,
+formatting, and type checking to match CI. When you open the project in VS Code
+you should be prompted to install the recommended extensions. If not, you can
+install them manually:
+
+1. Open the Extensions panel (`Cmd+Shift+X` / `Ctrl+Shift+X`)
+2. Search for **Ruff** (`charliermarsh.ruff`) and install it
+3. Search for **basedpyright** (`detachhead.basedpyright`) and install it
+
+With these extensions installed, the workspace settings will:
+
+- **Sort imports and auto-fix lint issues** on every file save
+- **Auto-format** with ruff on every file save
+- **Show type errors** from basedpyright inline as you type
+
+No additional configuration is needed — the `.vscode/settings.json` and
+`.vscode/extensions.json` files are committed to the repo and will be
+picked up automatically.
+
 ## Development Workflow
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (coverage is enabled by default via pyproject.toml)
 uv run pytest
-
-# Run with coverage
-uv run pytest --cov=ragpill --cov-report=html
 
 # Run specific test file
 uv run pytest tests/test_clean_quote_text.py
+
+# Regenerate the coverage badge after running tests
+uv run genbadge coverage -i coverage.xml -o docs/coverage-badge.svg
 ```
+
+The coverage badge in the README is generated from `coverage.xml` (produced automatically by pytest). Please regenerate it before committing if coverage changed.
 
 ### Code Quality
 
-We use several tools to maintain code quality:
+We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting,
+and [basedpyright](https://docs.basedpyright.com/) for type checking.
+Both are configured in `pyproject.toml` and enforced in CI.
+
+If you set up the recommended VS Code extensions (see above), most issues
+will be caught and fixed automatically as you work. You can also run the
+checks manually:
+
+#### Linting
+
+```bash
+# Check for issues
+uv run ruff check src tests
+
+# Auto-fix issues (including import sorting)
+uv run ruff check --fix src tests
+```
+
+#### Formatting
+
+```bash
+# Check formatting
+uv run ruff format --check src tests
+
+# Auto-format
+uv run ruff format src tests
+```
 
 #### Type Checking
 
@@ -49,30 +98,14 @@ We use several tools to maintain code quality:
 uv run basedpyright
 ```
 
-#### Linting
+#### Run All Checks (same as CI)
 
 ```bash
-# Check for issues
-uv run ruff check .
+# Install tox if you haven't already
+uv tool install tox --with tox-uv
 
-# Auto-fix issues
-uv run ruff check --fix .
-```
-
-#### Formatting
-
-```bash
-# Check formatting
-uv run ruff format --check .
-
-# Auto-format
-uv run ruff format .
-```
-
-#### Import Sorting
-
-```bash
-uv run isort .
+# Run lint + type check
+tox -e lint -e type
 ```
 
 ### Building Documentation
@@ -81,11 +114,14 @@ uv run isort .
 # Install docs dependencies
 uv sync --group docs
 
+# Convert notebooks to markdown (required before build/serve)
+uv run jupyter nbconvert --to markdown docs/how-to/*.ipynb docs/tutorials/*.ipynb
+
 # Serve docs locally
-uv run mkdocs serve
+uv run zensical serve
 
 # Build docs
-uv run mkdocs build
+uv run zensical build
 ```
 
 The docs will be available at http://localhost:8000
@@ -94,10 +130,11 @@ The docs will be available at http://localhost:8000
 
 ### Code Style
 
-- Follow PEP 8 guidelines
-- Use type hints throughout
-- Write docstrings in Google style
-- Keep functions focused and small
+- **Formatting** — handled by ruff (`line-length = 120`, double quotes). Don't worry about manual formatting; save the file and it's done.
+- **Imports** — sorted automatically by ruff on save. Import order: stdlib, third-party, local (`from ragpill...`).
+- **Type hints** — required on all public APIs. basedpyright runs in strict mode; your code must pass with zero errors.
+- **Docstrings** — Google style (see example below).
+- **Lint rules** — ruff enforces `RUF`, `C90` (complexity), `UP` (pyupgrade), and `I` (isort). See `pyproject.toml` for details.
 
 ### Docstring Example
 
@@ -157,15 +194,13 @@ refactor: simplify testset loading logic
 
 ### Pull Request Checklist
 
-- [ ] Tests pass locally with `uv run pytest`
+- [ ] Tests pass locally (`uv run pytest`)
 - [ ] New tests added for new features
-- [ ] Documentation updated
-- [ ] Type hints added
-- [ ] Docstrings written
-- [ ] Code formatted with `uv run ruff format`
-- [ ] No linting errors (`uv run ruff check`)
+- [ ] Type checking passes (`uv run basedpyright`)
+- [ ] Linting and formatting pass (`uv run ruff check src tests && uv run ruff format --check src tests`)
+- [ ] Documentation updated if needed
 - [ ] Commit messages follow conventions
-- [ ] All commands use `uv run` prefix
+- [ ] Coverage badge regenerated if coverage changed
 
 ## Project Structure
 
@@ -184,7 +219,7 @@ ragpill/
 ├── tests/                       # Test files
 ├── docs/                        # Documentation
 ├── pyproject.toml              # Project config
-└── mkdocs.yml                  # Docs config
+└── mkdocs.yml                  # Docs config (used by zensical)
 ```
 
 ## Adding New Features
@@ -207,12 +242,11 @@ class MyEvaluator(BaseEvaluator):
     def __init__(
         self,
         expected: bool,
-        mandatory: bool,
         tags: str,
         check: str,
         custom_param: str,
     ):
-        super().__init__(expected, mandatory, tags, check)
+        super().__init__(expected, tags, check)
         self.custom_param = custom_param
     
     async def evaluate(self, input_val: str, output: str) -> EvalOutput:
@@ -228,7 +262,7 @@ class MyEvaluator(BaseEvaluator):
 ### Adding Documentation
 
 1. Add markdown files to `docs/`
-2. Update `mkdocs.yml` navigation
+2. Update `mkdocs.yml` navigation (zensical reads this file)
 3. Use autodoc for API references: `::: module.ClassName`
 4. Add examples and usage
 
