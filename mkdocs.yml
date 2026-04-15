@@ -42,6 +42,10 @@ theme:
 
 plugins:
   - search
+  - mike:
+      alias_type: symlink
+      canonical_version: latest
+      version_selector: true
   - mkdocstrings:
       handlers:
         python:
@@ -100,6 +104,9 @@ nav:
     - Contributing: development/contributing.md
     - Roadmap: development/roadmap.md
 extra:
+  version:
+    provider: mike
+    default: latest
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/JoelGotsch/ragpill

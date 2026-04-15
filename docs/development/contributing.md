@@ -14,7 +14,7 @@ Thank you for your interest in contributing to ragpill!
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/ragpill.git
+git clone https://github.com/JoelGotsch/ragpill.git
 cd ragpill
 
 # Install dependencies

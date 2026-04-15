@@ -2,36 +2,83 @@ name: Documentation
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches:
-  #     - main
+    inputs:
+      version:
+        description: "Version to deploy (e.g. 0.1). Leave empty to read from pyproject.toml."
+        required: false
+        type: string
+      alias:
+        description: "Alias for this version (e.g. latest)"
+        required: false
+        default: "latest"
+        type: string
+      set_default:
+        description: "Set this version as the default (root redirect)"
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/configure-pages@v5
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
-      - run: pip install mkdocs-material mkdocstrings-python jupyter
+
+      - name: Install dependencies
+        run: pip install mkdocs-material mkdocstrings-python mike jupyter
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch gh-pages branch
+        run: git fetch origin gh-pages --depth=1 || true
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(python -c "
+          import re
+          with open('pyproject.toml') as f:
+              match = re.search(r'version\s*=\s*\"([^\"]+)\"', f.read())
+              v = match.group(1)
+              parts = v.split('.')
+              print(f'{parts[0]}.{parts[1]}')
+          ")
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Convert notebooks to markdown
         run: |
           jupyter nbconvert --to markdown docs/how-to/custom-evaluator.ipynb
           jupyter nbconvert --to markdown docs/how-to/custom-type-evaluator.ipynb
           jupyter nbconvert --to markdown docs/tutorials/full.ipynb
-      - run: mkdocs build --clean
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
-      - uses: actions/deploy-pages@v4
-        id: deployment
+
+      - name: Deploy docs with mike
+        run: |
+          mike deploy --push --update-aliases ${{ steps.version.outputs.version }} ${{ inputs.alias || 'latest' }}
+
+      - name: Set default version
+        if: ${{ inputs.set_default != false }}
+        run: |
+          mike set-default --push ${{ inputs.alias || 'latest' }}

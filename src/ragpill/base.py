@@ -178,8 +178,8 @@ class BaseEvaluator(Evaluator):
 
         Example:
             For CSV usage examples, see the
-            [CSV Adapter Guide](https://your-docs-url.com/guide/csv-adapter/) and
-            [Custom Evaluators Tutorial](https://your-docs-url.com/tutorials/custom-evaluators/).
+            [CSV Adapter Guide](https://joelgotsch.github.io/ragpill/latest/guide/csv-adapter/) and
+            [Custom Evaluators Guide](https://joelgotsch.github.io/ragpill/latest/guide/evaluators/).
 
             ```python
             class MyEvaluator(BaseEvaluator):

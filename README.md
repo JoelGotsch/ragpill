@@ -12,6 +12,7 @@
   <a href="https://pypi.org/project/ragpill/"><img src="https://img.shields.io/pypi/pyversions/ragpill?style=flat-square" alt="Python versions"></a>
   <a href="https://codecov.io/gh/JoelGotsch/ragpill"><img src="https://img.shields.io/codecov/c/github/JoelGotsch/ragpill?style=flat-square&label=coverage" alt="Codecov"></a>
   <a href="https://github.com/JoelGotsch/ragpill/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JoelGotsch/ragpill?style=flat-square" alt="License: MIT"></a>
+  <a href="https://joelgotsch.github.io/ragpill/latest/"><img src="https://img.shields.io/badge/docs-latest-blue?style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square" alt="Ruff"></a>
   <img src="https://img.shields.io/badge/types-basedpyright-blue?style=flat-square" alt="basedpyright">
 </p>
@@ -148,7 +149,7 @@ As this library is built on pydantic-ai evals, please have a look [here](https:/
 
 ## Documentation
 
-Full documentation is available at [joelgotsch.github.io/ragpill](https://joelgotsch.github.io/ragpill/) including:
+Full documentation is available at [joelgotsch.github.io/ragpill/latest](https://joelgotsch.github.io/ragpill/latest/) including:
 
 - **Installation Guide**: Setup instructions
 - **Quickstart Tutorial**: Run your first evaluation
