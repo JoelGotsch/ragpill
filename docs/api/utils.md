@@ -2,13 +2,10 @@
 
 Utility functions for ragpill.
 
-::: ragpill.utils
+## merge_settings
+
+::: ragpill.utils.merge_settings
     options:
       show_root_heading: true
       show_source: true
-
-## Common Utilities
-
-This module provides various utility functions used throughout ragpill.
-
-Check the source code for available utilities.
+      heading_level: 3

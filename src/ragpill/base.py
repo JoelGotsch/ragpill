@@ -1,16 +1,35 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import uuid
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, Field
 from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.evaluators.evaluator import EvaluationReason, Evaluator
 
+if TYPE_CHECKING:
+    from ragpill.settings import MLFlowSettings
+
+_current_run_span_id: ContextVar[str | None] = ContextVar("_current_run_span_id", default=None)
+
 
 def default_input_to_key(input: Any) -> str:
-    """Default function to convert input to a string key."""
+    """Convert a task input to a deterministic string key.
+
+    Used by span-based evaluators to look up the MLflow trace that corresponds
+    to a given input. The default implementation hashes the string representation
+    of the input with MD5.
+
+    Args:
+        input: The task input value (any type; converted to string before hashing).
+
+    Returns:
+        A hex-encoded MD5 digest of the stringified input.
+    """
     return hashlib.md5(str(input).encode()).hexdigest()
 
 
@@ -28,6 +47,17 @@ class TestCaseMetadata(BaseModel):
     )
     attributes: dict[str, Any] = Field(default_factory=dict)
     tags: set[str] = Field(default_factory=set)
+    repeat: int | None = Field(
+        default=None,
+        ge=1,
+        description="Per-case override: number of times to run this test case. None defers to MLFlowSettings.ragpill_repeat.",
+    )
+    threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Per-case override: minimum fraction of runs that must pass. None defers to MLFlowSettings.ragpill_threshold.",
+    )
 
 
 CaseMetadataT = TypeVar("CaseMetadataT", bound=TestCaseMetadata)
@@ -62,7 +92,24 @@ def merge_metadata(
     case_metadata: TestCaseMetadata,
     evaluator_metadata: EvaluatorMetadata,
 ) -> EvaluatorMetadata:
-    """Merge case and evaluator metadata, with precedence: Case Evaluator attribute > Case attribute > Global Evaluator attribute."""
+    """Merge case and evaluator metadata into a single resolved metadata.
+
+    Precedence depends on whether the evaluator is global:
+
+    - **Non-global evaluators:** evaluator attribute > case attribute.
+    - **Global evaluators:** case attribute > evaluator attribute.
+
+    The ``expected`` flag defaults to ``True`` when neither source sets it.
+    Tags are always unioned from both sources.
+
+    Args:
+        case_metadata: Metadata attached to the test case.
+        evaluator_metadata: Metadata attached to the evaluator instance.
+
+    Returns:
+        A new ``EvaluatorMetadata`` with merged attributes, tags, and resolved
+        ``expected`` flag.
+    """
     merged_metadata = evaluator_metadata.model_copy()
     if merged_metadata.is_global_evaluator:
         merged_metadata.attributes |= case_metadata.attributes
@@ -126,7 +173,7 @@ class BaseEvaluator(Evaluator):
     is_global: bool = field(default=False)
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "BaseEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> BaseEvaluator:
         """Create an evaluator from a CSV line.
 
         This class method is required for CSV integration with
@@ -233,13 +280,13 @@ class BaseEvaluator(Evaluator):
         self,
         ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],  # pyright: ignore[reportUnusedParameter]  # ctx used by subclasses
     ) -> EvaluationReason:
-        """
-        The method to implement the evaluation logic. Overwrite this in subclasses.
+        """Implement the evaluation logic. Overwrite this in subclasses.
 
-        :param ctx: The evaluator context
-        :type ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]
-        :return: The evaluation result with reason
-        :rtype: EvaluationReason
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result with a boolean value and reason string.
         """
         raise NotImplementedError("Subclasses must implement the run method.")
 
@@ -247,6 +294,17 @@ class BaseEvaluator(Evaluator):
         self,
         ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
+        """Run the evaluator and apply the ``expected`` polarity logic.
+
+        Calls :meth:`run` and then flips the result value when the merged
+        metadata's ``expected`` flag is ``False``.
+
+        Args:
+            ctx: The evaluator context containing inputs, output, and metadata.
+
+        Returns:
+            The evaluation result with the ``expected`` polarity applied.
+        """
         # handle common logic for expected:
         eval_result = await self.run(ctx)
 
@@ -257,3 +315,22 @@ class BaseEvaluator(Evaluator):
         merged_metadata = merge_metadata(case_metadata=ctx.metadata, evaluator_metadata=self.metadata)
         eval_result.value = eval_result.value == merged_metadata.expected
         return eval_result
+
+
+def resolve_repeat(case_metadata: TestCaseMetadata | None, settings: MLFlowSettings) -> tuple[int, float]:
+    """Resolve effective repeat count and pass threshold from per-case override or global default.
+
+    Args:
+        case_metadata: Per-case metadata (may be None or have None fields).
+        settings: Global MLFlowSettings providing default repeat/threshold.
+
+    Returns:
+        Tuple of (repeat, threshold) with per-case values taking precedence over globals.
+    """
+    repeat = case_metadata.repeat if (case_metadata and case_metadata.repeat is not None) else settings.ragpill_repeat
+    threshold = (
+        case_metadata.threshold
+        if (case_metadata and case_metadata.threshold is not None)
+        else settings.ragpill_threshold
+    )
+    return repeat, threshold

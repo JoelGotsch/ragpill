@@ -1,6 +1,5 @@
 """Test LiteralQuoteEvaluator"""
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -59,149 +58,160 @@ def evaluator():
     )
 
 
-class TestEvaluatorRun:
-    """Test the main evaluator run method."""
+# ---------------------------------------------------------------------------
+# Evaluator run
+# ---------------------------------------------------------------------------
 
-    def test_all_quotes_found(self, evaluator, sample_documents):
-        """Test when all quotes are found in documents."""
-        output = """The report states:
+
+@pytest.mark.anyio
+async def test_all_quotes_found(evaluator, sample_documents):
+    output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
 
-        # Mock get_documents to return sample_documents
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_insensitive_quote_matching(self, evaluator, sample_documents):
-        """Test that quote matching is case-insensitive."""
-        output = """The report states:
+
+@pytest.mark.anyio
+async def test_insensitive_quote_matching(evaluator, sample_documents):
+    output = """The report states:
 > '"No longer outstanding at this stage" does not mean "Resolved".'
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_case_insensitive_chat_output(self, evaluator, sample_documents):
-        """Test when all quotes are found in documents, ignoring case."""
-        output = """The report states:
+
+@pytest.mark.anyio
+async def test_case_insensitive_chat_output(evaluator, sample_documents):
+    output = """The report states:
 > "'No longer outstanding at this stage' does not mean 'Resolved'."
 (File: [31-May-2025_GOV-2025-25.txt](link), Paragraph: 38)"""
 
-        # Mock get_documents to return sample_documents
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_multi_line_quote(self, evaluator, sample_documents):
-        """Test when a quote spans multiple lines in the output."""
-        output = """The report includes the following statement:
+
+@pytest.mark.anyio
+async def test_multi_line_quote(evaluator, sample_documents):
+    output = """The report includes the following statement:
 > "this is a very long quote that spans multiple lines with Different capitalization."
 (File: [test-doc.txt](link))"""
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_quote_from_wrong_source(self, evaluator, sample_documents):
-        """Test when a quote is from the wrong source. But still evaluates to True."""
-        output = """The report states:
+
+@pytest.mark.anyio
+async def test_quote_from_wrong_source(evaluator, sample_documents):
+    """Quote is from the wrong source but still evaluates to True."""
+    output = """The report states:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
 (File: [fake.txt](link), Paragraph: 38)"""
 
-        # Mock get_documents to return sample_documents
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_block_quote(self, evaluator, sample_documents):
-        """Test a block quote with multiple lines."""
-        output = """The report includes the following statement:
-> "this is a very long Quote 
+
+@pytest.mark.anyio
+async def test_block_quote(evaluator, sample_documents):
+    output = """The report includes the following statement:
+> "this is a very long Quote
 > that spans Multiple Lines with different capitalization."
 (File: [test-doc.txt](link))"""
 
-        # Mock get_documents to return sample_documents
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_quote_not_found(self, evaluator, sample_documents):
-        """Test when a quote is not found in documents."""
-        output = """The report claims:
+
+@pytest.mark.anyio
+async def test_quote_not_found(evaluator, sample_documents):
+    output = """The report claims:
 > "This quote does not exist in any document."
 (File: [nonexistent.txt](link))"""
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is False
-            assert "this quote does not exist in any document" in result.reason
-            assert "nonexistent.txt" in result.reason
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is False
+        assert "this quote does not exist in any document" in result.reason
+        assert "nonexistent.txt" in result.reason
 
-    def test_partial_quotes_found(self, evaluator, sample_documents):
-        """Test when some quotes are found and some are not."""
-        output = """First quote:
+
+@pytest.mark.anyio
+async def test_partial_quotes_found(evaluator, sample_documents):
+    output = """First quote:
 > "'no longer outstanding at this stage' does not mean 'resolved'."
 
 Second quote:
 > "This quote is not in any document."
 (File: [fake.txt](link))"""
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is False
-            assert "this quote is not in any document" in result.reason
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is False
+        assert "this quote is not in any document" in result.reason
 
-    def test_syria_quote(self, evaluator, sample_documents):
-        """Test a real quote from the Syria report."""
-        output = "The Director General highlighted in his letter to Syria's new Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, dated 14 January 2025, the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\n\n> \"The Director General contacted the new Syrian Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter dated 14 January 2025, to convey the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\"\n(File: 01-september-2025_gov-2025-52.txt, Para: 7)"
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
 
-    def test_no_quotes_in_output(self, evaluator, sample_documents):
-        """Test when there are no quotes in the output."""
-        output = "This is just regular text without any quotes."
+@pytest.mark.anyio
+async def test_syria_quote(evaluator, sample_documents):
+    output = "The Director General highlighted in his letter to Syria's new Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, dated 14 January 2025, the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\n\n> \"The Director General contacted the new Syrian Minister of Foreign Affairs and Expatriates, HE Mr Asaad Hassan al-Shaybani, in a letter dated 14 January 2025, to convey the importance of continuing and reinforcing cooperation between Syria and the Agency to address unresolved safeguards issues related to Syria's past nuclear activities.\"\n(File: 01-september-2025_gov-2025-52.txt, Para: 7)"
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
-            assert "No quotes found" in result.reason
 
-    def test_ellipsis_in_quote(self, evaluator, sample_documents):
-        """Test when a quote contains an ellipsis."""
-        output = """The report states:
+@pytest.mark.anyio
+async def test_no_quotes_in_output(evaluator, sample_documents):
+    output = "This is just regular text without any quotes."
+
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
+        assert "No quotes found" in result.reason
+
+
+@pytest.mark.anyio
+async def test_ellipsis_in_quote(evaluator, sample_documents):
+    output = """The report states:
 > "... document with different ... verification processes..."
 (File: [other-document.txt](link))"""
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_whitespace_differences_ignored(self, evaluator, sample_documents):
-        """Test that whitespace differences are ignored when matching."""
-        output = """Quote with different whitespace:
+
+@pytest.mark.anyio
+async def test_whitespace_differences_ignored(evaluator, sample_documents):
+    output = """Quote with different whitespace:
 >   \t"Another     document\t with different Content"
 """
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_multiple_quotes_some_not_found(self, evaluator, sample_documents):
-        """Test multiple quotes where only some are missing."""
-        output = """First quote (exists):
+
+@pytest.mark.anyio
+async def test_multiple_quotes_some_not_found(evaluator, sample_documents):
+    output = """First quote (exists):
 > "exact match test for validation purposes"
 
 Second quote (missing):
@@ -212,99 +222,101 @@ Third quote (missing without file):
 > "Another fake quote"
 """
 
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is False
-            assert "this is completely made up" in result.reason
-            assert "fake-source.txt" in result.reason
-            assert "another fake quote" in result.reason
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is False
+        assert "this is completely made up" in result.reason
+        assert "fake-source.txt" in result.reason
+        assert "another fake quote" in result.reason
 
 
-class TestFromCSVLine:
-    """Test creating evaluator from CSV line."""
-
-    def test_from_csv_line_basic(self):
-        """Test creating evaluator from CSV line with basic parameters."""
-        evaluator = LiteralQuoteEvaluator.from_csv_line(
-            expected=True,
-            tags={"tag1", "tag2"},
-            check="",  # Not used for this evaluator
-        )
-
-        assert evaluator.expected is True
-        assert evaluator.tags == {"tag1", "tag2"}
-
-    def test_from_csv_line_with_attributes(self):
-        """Test creating evaluator from CSV line with additional attributes."""
-        evaluator = LiteralQuoteEvaluator.from_csv_line(
-            expected=False,
-            tags={"verification"},
-            check="",
-            custom_attr="custom_value",
-        )
-
-        assert evaluator.expected is False
-        assert evaluator.attributes["custom_attr"] == "custom_value"
+# ---------------------------------------------------------------------------
+# from_csv_line
+# ---------------------------------------------------------------------------
 
 
-class TestEdgeCases:
-    """Test edge cases and error conditions."""
+def test_from_csv_line_basic():
+    evaluator = LiteralQuoteEvaluator.from_csv_line(
+        expected=True,
+        tags={"tag1", "tag2"},
+        check="",
+    )
 
-    def test_empty_documents(self, evaluator):
-        """Test when there are no documents to check against."""
-        output = """Quote:
+    assert evaluator.expected is True
+    assert evaluator.tags == {"tag1", "tag2"}
+
+
+def test_from_csv_line_with_attributes():
+    evaluator = LiteralQuoteEvaluator.from_csv_line(
+        expected=False,
+        tags={"verification"},
+        check="",
+        custom_attr="custom_value",
+    )
+
+    assert evaluator.expected is False
+    assert evaluator.attributes["custom_attr"] == "custom_value"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_empty_documents(evaluator):
+    output = """Quote:
 > "Some quote"
 """
 
-        with patch.object(evaluator, "get_documents", return_value=[]):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is False
+    with patch.object(evaluator, "get_documents", return_value=[]):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is False
 
-    def test_quote_with_special_characters(self, evaluator):
-        """Test quotes containing special characters."""
-        docs = [Document(page_content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
 
-        output = """Scientific quote:
+@pytest.mark.anyio
+async def test_quote_with_special_characters(evaluator):
+    docs = [Document(page_content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
+
+    output = """Scientific quote:
 > "E=mc² and π≈3.14159"
 """
 
-        with patch.object(evaluator, "get_documents", return_value=docs):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
+    with patch.object(evaluator, "get_documents", return_value=docs):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True
 
-    def test_empty_output(self, evaluator, sample_documents):
-        """Test with empty output."""
-        with patch.object(evaluator, "get_documents", return_value=sample_documents):
-            ctx = create_test_context("some input", "")
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
-            assert "No quotes found" in result.reason
 
-    def test_real(self, evaluator):
-        """Test with a real example from the report."""
-        docs = [
-            Document(
-                page_content="51. No new information was provided by Iran with respect to the issue of\n\n    testing of centrifuges using nuclear material until October 2003. In\n\n    its letter of 21 October 2003, Iran acknowledged that, in order to\n\n    ensure the performance of centrifuge machines, a limited number of\n\n    tests using small amounts of UF~6~ imported in 1991 had been carried\n\n    out at the Kalaye Electric Company. According to Iran, the first\n\n    test of the centrifuges was conducted in 1998 using an inert gas\n\n    (xenon). Series of tests using UF~6~ were performed between 1999\n\n    and 2002. In the course of the last series of tests, an enrichment\n\n    level of 1.2% U-235 was achieved.",
-                metadata={"source": "science.txt"},
-            )
-        ]
+@pytest.mark.anyio
+async def test_empty_output(evaluator, sample_documents):
+    with patch.object(evaluator, "get_documents", return_value=sample_documents):
+        ctx = create_test_context("some input", "")
+        result = await evaluator.run(ctx)
+        assert result.value is True
+        assert "No quotes found" in result.reason
 
-        output = """The first known use of uranium hexafluoride (UF₆) by Iran occurred between **1999 and 2002**, as confirmed by Iran itself in its letter to the IAEA on 21 October 2003. During this period, Iran conducted a series of tests using UF₆ at the Kalaye Electric Company in Tehran, following earlier tests with inert gases (xenon) in 1998. These tests achieved an enrichment level of 1.2% U-235.
 
-> "According to Iran, the first test of the centrifuges was conducted in 1998 using an inert gas (xenon). Series of tests using UF~6~ were performed between 1999 and 2002. In the course of the last series of tests, an enrichment level of 1.2% U-235 was achieved."  
+@pytest.mark.anyio
+async def test_real_iran_quote(evaluator):
+    docs = [
+        Document(
+            page_content="51. No new information was provided by Iran with respect to the issue of\n\n    testing of centrifuges using nuclear material until October 2003. In\n\n    its letter of 21 October 2003, Iran acknowledged that, in order to\n\n    ensure the performance of centrifuge machines, a limited number of\n\n    tests using small amounts of UF~6~ imported in 1991 had been carried\n\n    out at the Kalaye Electric Company. According to Iran, the first\n\n    test of the centrifuges was conducted in 1998 using an inert gas\n\n    (xenon). Series of tests using UF~6~ were performed between 1999\n\n    and 2002. In the course of the last series of tests, an enrichment\n\n    level of 1.2% U-235 was achieved.",
+            metadata={"source": "science.txt"},
+        )
+    ]
+
+    output = """The first known use of uranium hexafluoride (UF₆) by Iran occurred between **1999 and 2002**, as confirmed by Iran itself in its letter to the IAEA on 21 October 2003. During this period, Iran conducted a series of tests using UF₆ at the Kalaye Electric Company in Tehran, following earlier tests with inert gases (xenon) in 1998. These tests achieved an enrichment level of 1.2% U-235.
+
+> "According to Iran, the first test of the centrifuges was conducted in 1998 using an inert gas (xenon). Series of tests using UF~6~ were performed between 1999 and 2002. In the course of the last series of tests, an enrichment level of 1.2% U-235 was achieved."
 (source: [GOV/2003/75](https://portal.sg.iaea.org/sg/SGVI/OfficeLAN/Chat%20SG%20%20Iran%20reports/PROD/10-November-2003_GOV-2003-75.docx?web=1), paragraph 51)
 
 This marks the earliest documented use of UF₆ in Irans nuclear program. While Iran had imported UF₆ as early as 1991, the first actual testing of centrifuges with UF₆ began in 1999.
 """
 
-        with patch.object(evaluator, "get_documents", return_value=docs):
-            ctx = create_test_context("some input", output)
-            result = asyncio.run(evaluator.run(ctx))
-            assert result.value is True
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    with patch.object(evaluator, "get_documents", return_value=docs):
+        ctx = create_test_context("some input", output)
+        result = await evaluator.run(ctx)
+        assert result.value is True

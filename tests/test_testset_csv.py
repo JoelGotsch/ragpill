@@ -148,6 +148,33 @@ def test_load_testset_with_global_evaluators():
     )
 
 
-if __name__ == "__main__":
-    test_load_testset()
-    test_load_testset_with_global_evaluators()
+def test_csv_with_repeat_and_threshold():
+    """CSV has repeat=3, threshold=0.7 -> TestCaseMetadata has those values."""
+    csv_path = Path(__file__).parent / "data" / "testset_repeat.csv"
+    dataset = load_testset(csv_path=csv_path, skip_unknown_evaluators=True)
+    assert len(dataset.cases) >= 1
+
+    # "What is X?" case has repeat=3, threshold=0.6
+    x_case = next(c for c in dataset.cases if "X" in c.inputs)
+    assert x_case.metadata.repeat == 3
+    assert x_case.metadata.threshold == 0.6
+
+
+def test_csv_without_repeat_threshold():
+    """CSV that lacks repeat/threshold columns -> defaults (None, None)."""
+    csv_path = Path(__file__).parent / "data" / "testset_repeat.csv"
+    dataset = load_testset(csv_path=csv_path, skip_unknown_evaluators=True)
+    # "What is Y?" has empty repeat/threshold -> None
+    y_case = next(c for c in dataset.cases if "Y" in c.inputs)
+    assert y_case.metadata.repeat is None
+    assert y_case.metadata.threshold is None
+
+
+def test_csv_repeat_not_in_evaluator_attributes():
+    """repeat column should not leak into evaluator.attributes."""
+    csv_path = Path(__file__).parent / "data" / "testset_repeat.csv"
+    dataset = load_testset(csv_path=csv_path, skip_unknown_evaluators=True)
+    for case in dataset.cases:
+        for evaluator in case.evaluators:
+            assert "repeat" not in evaluator.attributes
+            assert "threshold" not in evaluator.attributes

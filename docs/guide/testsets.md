@@ -11,6 +11,25 @@ When creating test sets, keep the following principles in mind:
 - **LLMJudge**: Think of it like an autistic kid that follows instructions literally. Be explicit in your rubric.
 
 
+## Repeat and Threshold
+
+Each test case can specify how many times to run and what pass fraction is required:
+
+- **`repeat`**: Number of times to execute the task for this case (default: 1, inherited from `MLFlowSettings.ragpill_repeat`).
+- **`threshold`**: Minimum fraction of runs that must pass (default: 1.0, inherited from `MLFlowSettings.ragpill_threshold`).
+
+Set these on `TestCaseMetadata` when building test cases programmatically:
+
+```python
+case = Case(
+    inputs="What is the capital of France?",
+    metadata=TestCaseMetadata(repeat=3, threshold=0.8),
+    evaluators=[...],
+)
+```
+
+Or add `repeat` and `threshold` columns in your CSV files. See the [Repeated Runs Guide](repeated-runs.md) for full details.
+
 ## Best Practices
 
 !!! tip "TDD Mindset"

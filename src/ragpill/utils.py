@@ -274,16 +274,30 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # py
 
 
 def merge_settings(settings_prefixes: Sequence[tuple[BaseSettings | dict[str, Any], str]]) -> dict[str, Any]:
-    """
-    Used to merge muliple pydantic settings into a single dict with prefixed keys to log in mlflow.
+    """Merge multiple pydantic settings into a single dict with prefixed keys for MLflow logging.
 
-    :param settings_prefixes: Description
-    :type settings_prefixes: Sequence[tuple[BaseSettings|dict, str]]
-    :return: Description
-    :rtype: dict[str, Any]
+    Each settings object's fields are flattened and prefixed with the given string,
+    producing a dict suitable for passing as ``model_params`` to
+    [`evaluate_testset_with_mlflow`][ragpill.mlflow_helper.evaluate_testset_with_mlflow].
+
+    Args:
+        settings_prefixes: Sequence of ``(settings_object, prefix)`` tuples. Each
+            settings object (a ``BaseSettings`` instance or plain dict) is flattened
+            and its keys are prefixed with ``prefix_``.
+
+    Returns:
+        A single merged dictionary with prefixed keys from all settings objects.
 
     Example:
-    merge_settings((settings.mlflow_settings, "mlflow"),(settings.agent_settings, "agent"), (settings.llm_settings, "llm"), (settings.embedding_settings, "embedding"), (settings.retrieval_settings, "retrieval"))
+        ```python
+        from ragpill import merge_settings
+
+        params = merge_settings([
+            (mlflow_settings, "mlflow"),
+            (agent_settings, "agent"),
+            (llm_settings, "llm"),
+        ])
+        ```
     """
     return reduce(lambda x, y: x | y, map(_prefix_settings_key, settings_prefixes))
 
@@ -300,7 +314,7 @@ def _fix_evaluator_global_flag(dataset: Dataset[Any, Any, CaseMetadataT]) -> Non
             evaluator.is_global = True
 
 
-def get_pydantic_ai_llm_model(base_url: str, api_key: str, model_name: str, temperature: float = 0.0) -> models.Model:
+def _get_pydantic_ai_llm_model(base_url: str, api_key: str, model_name: str, temperature: float = 0.0) -> models.Model:  # pyright: ignore[reportUnusedFunction]
     """Get a pydantic-ai LLM model based on provided settings."""
     http_client = AsyncClient()
     openai_client = AsyncOpenAI(

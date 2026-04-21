@@ -83,6 +83,29 @@ print(f"\n📊 Evaluation Results:")
 print(f"Total cases: {len(results.results)}")
 ```
 
+## Repeated Runs
+
+LLM outputs are non-deterministic. Run each test case multiple times for statistical confidence:
+
+```python
+from ragpill import evaluate_testset_with_mlflow
+from ragpill.base import TestCaseMetadata
+from ragpill.evaluators import RegexInOutputEvaluator
+from pydantic_evals import Case, Dataset
+
+case = Case(
+    inputs="What is the capital of France?",
+    metadata=TestCaseMetadata(repeat=3, threshold=0.8),
+    evaluators=[RegexInOutputEvaluator(pattern="paris", expected=True)],
+)
+testset = Dataset(cases=[case])
+
+result = await evaluate_testset_with_mlflow(testset=testset, task=my_agent)
+print(result.summary)  # One row per case: passed, pass_rate, threshold
+```
+
+See the [Repeated Runs Guide](../guide/repeated-runs.md) for details on `task_factory`, threshold semantics, and MLflow integration.
+
 ## CSV Format Guide
 
 Your CSV file should have these columns:

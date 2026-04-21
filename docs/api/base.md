@@ -26,7 +26,16 @@ This module contains the base classes for building custom evaluators and test ca
       show_source: true
       heading_level: 3
 
+## resolve_repeat
+
+::: ragpill.base.resolve_repeat
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 3
+
 ## See Also
 
 - [Evaluators Module](evaluators.md) - Pre-built evaluators
-- [Custom Evaluators Tutorial](../how-to/custom-evaluator.ipynb)
+- [Custom Evaluators Tutorial](../how-to/custom-evaluator.md)
+- [Repeated Runs Guide](../guide/repeated-runs.md) - Using repeat/threshold

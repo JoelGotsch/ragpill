@@ -241,11 +241,29 @@ def _create_case_from_rows(
     # Remove common metadata from evaluators
     _remove_common_metadata_from_evaluators(evaluators, case_tags, case_attributes)
 
+    # Extract repeat/threshold (must be consistent across rows for same question)
+    # Use None when absent — resolve_repeat() will apply global defaults from MLFlowSettings
+    repeat_values: set[int | None] = set()
+    threshold_values: set[float | None] = set()
+    for row in rows:
+        raw_repeat = row.get("repeat", "").strip()
+        raw_threshold = row.get("threshold", "").strip()
+        repeat_values.add(int(raw_repeat) if raw_repeat else None)
+        threshold_values.add(float(raw_threshold) if raw_threshold else None)
+
+    if len(repeat_values) > 1:
+        raise ValueError(f"Inconsistent 'repeat' values for question '{question}': {repeat_values}")
+    if len(threshold_values) > 1:
+        raise ValueError(f"Inconsistent 'threshold' values for question '{question}': {threshold_values}")
+
+    repeat = repeat_values.pop() if repeat_values else None
+    threshold = threshold_values.pop() if threshold_values else None
+
     # Create Case with metadata
     return Case(
         inputs=question,
         evaluators=evaluators,  # pyright: ignore[reportArgumentType]
-        metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags),
+        metadata=TestCaseMetadata(attributes=case_attributes, tags=case_tags, repeat=repeat, threshold=threshold),
     )
 
 
@@ -359,8 +377,16 @@ def load_testset(
     # Group by question
     question_to_rows = _group_rows_by_question(rows, question_column)
 
-    # Standard columns
-    standard_columns = {question_column, test_type_column, expected_column, tags_column, check_column}
+    # Standard columns (repeat/threshold are handled separately, not passed to evaluator attributes)
+    standard_columns = {
+        question_column,
+        test_type_column,
+        expected_column,
+        tags_column,
+        check_column,
+        "repeat",
+        "threshold",
+    }
 
     # Extract global evaluators (rows with empty questions)
     global_evaluators: list[BaseEvaluator] = []

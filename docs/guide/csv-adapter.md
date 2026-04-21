@@ -32,6 +32,11 @@ While the column names can be customized, by default the CSV adapter expects the
 ### Optional Columns
 
 - **tags**: Comma separated tags
+- **repeat**: Number of times to run this test case (integer, e.g. `3`). Empty or absent defers to `MLFlowSettings.ragpill_repeat` (default: 1).
+- **threshold**: Minimum fraction of runs that must pass (float, e.g. `0.8`). Empty or absent defers to `MLFlowSettings.ragpill_threshold` (default: 1.0).
+
+!!! note
+    All rows for the same question must have the same `repeat` and `threshold` values. Inconsistent values will raise a `ValueError`.
 
 ### Understanding Column Mapping
 
@@ -59,6 +64,19 @@ Name a primary color,LLMJudge,true,"art,colors",Should name red blue or yellow
 ```
 
 Note the third row uses `expected=false` to check that the output does NOT contain something (negative test for hallucinations).
+
+### Example CSV with Repeated Runs
+
+```csv
+Question,test_type,expected,tags,check,repeat,threshold
+What is the capital of France?,RegexInOutputEvaluator,true,"geography,factual",paris,3,0.8
+What is 2+2?,RegexInOutputEvaluator,true,"math,arithmetic",4,,
+```
+
+- The geography question runs 3 times, requiring 80% pass rate
+- The math question uses global defaults (repeat=1, threshold=1.0)
+
+See [Repeated Runs](repeated-runs.md) for full documentation.
 
 ## Loading Test Sets
 
