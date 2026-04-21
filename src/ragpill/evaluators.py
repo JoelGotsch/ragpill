@@ -17,27 +17,16 @@ from ragpill.base import (
     _current_run_span_id,  # pyright: ignore[reportPrivateUsage]
     default_input_to_key,
 )
-from ragpill.settings import LLMJudgeSettings, MLFlowSettings
+from ragpill.settings import MLFlowSettings, get_llm_judge_settings
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
-    _get_pydantic_ai_llm_model,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
 )
 
 
 def _get_default_judge_llm() -> models.Model:
-    """Get default LLMJudge settings instance."""
-    settings = LLMJudgeSettings()  # pyright: ignore[reportCallIssue]
-    if not settings.api_key or not settings.base_url or not settings.model_name:
-        raise ValueError(
-            "LLMJudgeSettings must have api_key, base_url, and model_name set to get default LLM model. Set them via environment variables RAGPILL_LLMJUDGE_API_KEY, RAGPILL_LLMJUDGE_BASE_URL, and RAGPILL_LLMJUDGE_MODEL_NAME respectively."
-        )
-    return _get_pydantic_ai_llm_model(
-        base_url=settings.base_url,
-        api_key=settings.api_key.get_secret_value(),
-        model_name=settings.model_name,
-        temperature=settings.temperature,
-    )
+    """Get default LLM model from the global :class:`LLMJudgeSettings` singleton."""
+    return get_llm_judge_settings().llm_model
 
 
 @dataclass(kw_only=True, repr=False)
