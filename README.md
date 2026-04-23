@@ -106,22 +106,25 @@ Metrics are automatically calculated per tag and attribute.
 
 ## Key Concepts
 
-As this library is built on pydantic-ai evals, please have a look [here](https://ai.pydantic.dev/evals/core-concepts/)
+ragpill is built around three independent layers — execute, evaluate, upload — so you can mix and match them to fit your workflow. See the [Layered Architecture Guide](docs/guide/layered-architecture.md) for details.
 
 
 ### Key Components
 
-- **Dataset**: From pydantic-ai, contains test cases with inputs, evaluators, and metadata
+- **Dataset / Case**: Plain dataclasses from `ragpill.eval_types` that hold test cases with inputs, evaluators, and metadata
 - **Evaluators**: Check if outputs meet criteria (LLMJudge, regex matchers, custom evaluators)
-- **MLflow Integration**: Wraps execution, traces runs, evaluates outputs, uploads results
+- **Three-Layer Pipeline**: `execute_dataset` (run tasks + capture traces) → `evaluate_results` (apply evaluators) → `upload_to_mlflow` (persist). Use the layers independently or together via `evaluate_testset_with_mlflow`. See the [Layered Architecture Guide](docs/guide/layered-architecture.md).
 
 ## Features
 
+- **Async-only API**: Integrates naturally with modern async frameworks. Wrap in `asyncio.run()` if you need sync.
+- **Dual-backend tracing**: Capture traces to a local temp SQLite DB (no server needed) or directly to an MLflow server.
+- **Run once, evaluate many**: The captured `DatasetRunOutput` is JSON-serializable, so you can re-evaluate historical outputs against new evaluator sets without re-running the task.
 - **Great MLflow Integration**: Traces your agent/function execution to MLflow with evaluations in the native format
 - **CSV/Excel Adapter**: Load test cases from CSV files with evaluator configurations
 - **Flexible Evaluators**: Built-in LLM judges, regex matchers, and easy custom evaluator creation
 - **Metrics per Tags/Attributes**: Automatic metric calculation for each tag and attribute combination
-- **Type Safety**: Built on pydantic-ai with full type safety throughout
+- **Type Safety**: Built on plain dataclasses with full type safety throughout
 
 ## [Built-in Evaluators](docs/api/evaluators.md)
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -18,18 +17,15 @@ from ragpill.eval_types import (
 if TYPE_CHECKING:
     from ragpill.settings import MLFlowSettings
 
-_current_run_span_id: ContextVar[str | None] = ContextVar("_current_run_span_id", default=None)
-
 
 def default_input_to_key(input: Any) -> str:
     """Convert a task input to a deterministic string key.
 
-    Used by span-based evaluators to look up the MLflow trace that corresponds
-    to a given input. The default implementation hashes the string representation
-    of the input with MD5.
+    MD5 hash of the stringified input. Used internally by
+    :mod:`ragpill.execution` to namespace per-case trace data.
 
     Args:
-        input: The task input value (any type; converted to string before hashing).
+        input: The task input value (any type).
 
     Returns:
         A hex-encoded MD5 digest of the stringified input.

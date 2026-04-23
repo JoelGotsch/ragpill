@@ -20,8 +20,7 @@ All custom evaluators must:
 ```python
 from typing import Any
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
-from pydantic_evals.evaluators import EvaluationReason
-from pydantic_evals.evaluators.context import EvaluatorContext
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
 
 class MyEvaluator(BaseEvaluator):
     """Description of what this evaluator checks."""

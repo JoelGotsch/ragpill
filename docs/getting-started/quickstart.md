@@ -71,27 +71,35 @@ async def my_agent(question: str) -> str:
     return "Paris"
 
 # Run evaluation
-from pydantic_evals import eval_
+from ragpill import evaluate_testset_with_mlflow
+from ragpill.settings import MLFlowSettings
 
-results = await eval_(
-    dataset=dataset,
-    callable=my_agent,
+results = await evaluate_testset_with_mlflow(
+    testset=dataset,
+    task=my_agent,
+    mlflow_settings=MLFlowSettings(),
 )
 
 # Print results
 print(f"\n📊 Evaluation Results:")
-print(f"Total cases: {len(results.results)}")
+print(results.summary)
 ```
+
+!!! tip "Three independent layers"
+    `evaluate_testset_with_mlflow` is a convenience that chains three layers
+    — execute, evaluate, upload. See the
+    [Layered Architecture Guide](../guide/layered-architecture.md) to use each
+    layer independently (e.g., run once + evaluate many, CI without a server).
+
 
 ## Repeated Runs
 
 LLM outputs are non-deterministic. Run each test case multiple times for statistical confidence:
 
 ```python
-from ragpill import evaluate_testset_with_mlflow
+from ragpill import Case, Dataset, evaluate_testset_with_mlflow
 from ragpill.base import TestCaseMetadata
 from ragpill.evaluators import RegexInOutputEvaluator
-from pydantic_evals import Case, Dataset
 
 case = Case(
     inputs="What is the capital of France?",

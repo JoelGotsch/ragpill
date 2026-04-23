@@ -85,6 +85,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
   - Guide:
     - Overview: guide/overview.md
+    - Layered Architecture: guide/layered-architecture.md
     - Evaluators: guide/evaluators.md
     - Test Sets: guide/testsets.md
     - CSV Adapter: guide/csv-adapter.md
@@ -92,13 +93,19 @@ nav:
   - How-To:
     - Custom Evaluator: how-to/custom-evaluator.md
     - Custom Type Evaluator: how-to/custom-type-evaluator.md
+    - Evaluate Historical Outputs: how-to/evaluate-historical-outputs.md
     - Task Factory: how-to/task-factory.md
   - Tutorials:
     - Full Tutorial: tutorials/full.md
   - API Reference:
     - Base Classes: api/base.md
+    - Evaluation Primitives: api/eval_types.md
     - Evaluators: api/evaluators.md
+    - LLM Judge: api/llm_judge.md
     - CSV Module: api/csv.md
+    - Execution Layer: api/execution.md
+    - Evaluation Layer: api/evaluation.md
+    - Upload Layer: api/upload.md
     - MLflow Helper: api/mlflow.md
     - Result Types: api/types.md
     - Environment Settings: api/environment.md

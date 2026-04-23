@@ -59,14 +59,6 @@ It is, however, pretty easy to create your own custom evaluators by inheriting f
 
 These are Evaluators that are useful to inherit from. See [Create custom evaluators](../guide/evaluators.md#creating-custom-evaluators)
 
-### WrappedPydanticEvaluator
-
-::: ragpill.evaluators.WrappedPydanticEvaluator
-    options:
-      show_root_heading: true
-      show_source: true
-      heading_level: 4
-
 ### SpanBaseEvaluator
 
 ::: ragpill.evaluators.SpanBaseEvaluator

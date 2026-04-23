@@ -7,9 +7,8 @@ LLM outputs are stochastic. The same input can produce different answers across 
 Run each test case 3 times and require at least 80% of runs to pass:
 
 ```python
-from ragpill import evaluate_testset_with_mlflow
+from ragpill import Case, Dataset, evaluate_testset_with_mlflow
 from ragpill.settings import MLFlowSettings
-from pydantic_evals import Case, Dataset
 from ragpill.base import TestCaseMetadata
 from ragpill.evaluators import RegexInOutputEvaluator
 
