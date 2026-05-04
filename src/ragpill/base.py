@@ -3,29 +3,29 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, Field
-from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.evaluators.evaluator import EvaluationReason, Evaluator
+
+from ragpill.eval_types import (
+    EvaluationReason,
+    EvaluatorContext,
+    _build_serialization_arguments,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from ragpill.settings import MLFlowSettings
-
-_current_run_span_id: ContextVar[str | None] = ContextVar("_current_run_span_id", default=None)
 
 
 def default_input_to_key(input: Any) -> str:
     """Convert a task input to a deterministic string key.
 
-    Used by span-based evaluators to look up the MLflow trace that corresponds
-    to a given input. The default implementation hashes the string representation
-    of the input with MD5.
+    MD5 hash of the stringified input. Used internally by
+    :mod:`ragpill.execution` to namespace per-case trace data.
 
     Args:
-        input: The task input value (any type; converted to string before hashing).
+        input: The task input value (any type).
 
     Returns:
         A hex-encoded MD5 digest of the stringified input.
@@ -135,8 +135,8 @@ def dict_factory(x: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 @dataclass
-class BaseEvaluator(Evaluator):
-    """Base class for all evaluators.
+class BaseEvaluator:
+    """Base class for all ragpill evaluators.
 
     All custom evaluators must inherit from this class and implement:
 
@@ -164,13 +164,33 @@ class BaseEvaluator(Evaluator):
             Create datasets from CSV files
     """
 
-    evaluation_name: uuid.UUID = field(
-        default_factory=uuid.uuid4
-    )  # this is used by pydantic-ai to create the name of the reportcase.assertion
+    evaluation_name: uuid.UUID = field(default_factory=uuid.uuid4)
     expected: bool | None = field(default=None)
     attributes: dict[str, Any] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
     is_global: bool = field(default=False)
+
+    @classmethod
+    def get_serialization_name(cls) -> str:
+        """Return the class name used to identify this evaluator.
+
+        Returns:
+            The evaluator's class name.
+        """
+        return cls.__name__
+
+    def build_serialization_arguments(self) -> dict[str, Any]:
+        """Return a dict of non-default field values for this evaluator.
+
+        Iterates over the dataclass fields and returns those whose value differs
+        from the declared default (either ``field.default`` or
+        ``field.default_factory()``). Useful for logging/debugging evaluator
+        configuration.
+
+        Returns:
+            A dictionary mapping field names to their non-default values.
+        """
+        return _build_serialization_arguments(self)
 
     @classmethod
     def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> BaseEvaluator:

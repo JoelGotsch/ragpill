@@ -152,8 +152,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.csv.testset import load_testset, default_evaluator_classes
-from pydantic_evals.evaluators import EvaluationReason
-from pydantic_evals.evaluators.context import EvaluatorContext
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
 
 class MyEvaluatorSettings(BaseSettings):
     """Settings loaded from environment variables."""
@@ -212,8 +211,7 @@ Use this when different test cases need different parameters (e.g., different re
 import json
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.csv.testset import load_testset, default_evaluator_classes
-from pydantic_evals.evaluators import EvaluationReason
-from pydantic_evals.evaluators.context import EvaluatorContext
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
 
 class MyJsonConfigEvaluator(BaseEvaluator):
     """Evaluator with per-instance configuration via JSON in check column."""
@@ -378,5 +376,5 @@ check: "Correct answer"
 
 ## See Also
 
-- [Loading TestSets Tutorial](../tutorials/loading-testsets.ipynb)
+- [TestSets Guide](testsets.md)
 - [CSV Module API](../api/csv.md)

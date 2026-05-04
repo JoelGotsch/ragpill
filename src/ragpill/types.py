@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from pydantic_evals.evaluators.evaluator import EvaluationResult
 
 from ragpill.base import TestCaseMetadata
+from ragpill.eval_types import EvaluationResult
+
+if TYPE_CHECKING:
+    from ragpill.execution import DatasetRunOutput
 
 
 @dataclass
@@ -115,6 +118,7 @@ class EvaluationOutput:
     runs: pd.DataFrame
     cases: pd.DataFrame
     case_results: list[CaseResult]
+    dataset_run: DatasetRunOutput | None = None
 
     @property
     def summary(self) -> pd.DataFrame:

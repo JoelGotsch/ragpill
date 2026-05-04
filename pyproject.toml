@@ -4,15 +4,19 @@ build-backend = "uv_build"
 
 [project]
 name = "ragpill"
-version = "0.2.1"
+version = "0.3.0"
 description = "This library allows for granular testing of llm-applications based on expert input."
 readme = "README.md"
 authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
-    "pydantic-ai>=1.39.1",
-    "mlflow>=3.8.1",
+    "pydantic-ai-slim[openai]>=1.55.0",
+    "mlflow-skinny>=3.8.1",
+    "sqlalchemy>=2.0.31", # for mlflow
+    "alembic>=1.10.1", # for mlflow
+    "pandas>=2.2.3",
+    "pydantic-settings>=2.0.0",
 ]
 
 [dependency-groups]

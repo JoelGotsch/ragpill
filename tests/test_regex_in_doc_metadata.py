@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import pytest
 from mlflow.entities import Document
-from pydantic_evals.evaluators import EvaluatorContext
 
 from ragpill.base import EvaluatorMetadata
+from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import RegexInDocumentMetadataEvaluator
 
 
@@ -20,7 +20,6 @@ def create_test_context(inputs: str, output: str) -> EvaluatorContext:
         name="test",
         expected_output=None,
         duration=0,
-        _span_tree=None,
         attributes={},
         metrics={},
     )

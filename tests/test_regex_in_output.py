@@ -1,9 +1,9 @@
 """Tests for RegexInOutputEvaluator."""
 
 import pytest
-from pydantic_evals.evaluators import EvaluatorContext
 
 from ragpill.base import EvaluatorMetadata
+from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import RegexInOutputEvaluator
 
 
@@ -16,7 +16,6 @@ def create_test_context(inputs: str, output: str) -> EvaluatorContext:
         name="test",
         expected_output=None,
         duration=0,
-        _span_tree=None,
         attributes={},
         metrics={},
     )

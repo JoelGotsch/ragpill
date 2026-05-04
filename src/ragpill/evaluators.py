@@ -8,16 +8,11 @@ from typing import Any
 import mlflow
 from mlflow.entities import Document, SpanType, Trace
 from pydantic_ai import models
-from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output, judge_output
 
-from ragpill.base import (
-    BaseEvaluator,
-    EvaluatorMetadata,
-    _current_run_span_id,  # pyright: ignore[reportPrivateUsage]
-    default_input_to_key,
-)
-from ragpill.settings import MLFlowSettings, get_llm_judge_settings
+from ragpill.base import BaseEvaluator, EvaluatorMetadata
+from ragpill.eval_types import EvaluationReason, EvaluatorContext
+from ragpill.llm_judge import judge_input_output, judge_output
+from ragpill.settings import get_llm_judge_settings
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
@@ -129,7 +124,7 @@ class LLMJudge(BaseEvaluator):
         )
 
     def build_serialization_arguments(self) -> dict[str, Any]:
-        result = super(BaseEvaluator, self).build_serialization_arguments()
+        result = super().build_serialization_arguments()
         # always serialize the model as a string when present; use its name if it's a KnownModelName
         if (model := result.get("model")) and isinstance(model, models.Model):  # pragma: no branch
             result["model"] = f"{model.system}:{model.model_name}"
@@ -148,53 +143,6 @@ class LLMJudge(BaseEvaluator):
             is_global_evaluator=self.is_global,
             other_evaluator_data=self.rubric,
         )
-
-
-@dataclass(kw_only=True, repr=False)
-class WrappedPydanticEvaluator(BaseEvaluator):
-    """Wrapper to use any pydantic-evals Evaluator as a ragpill BaseEvaluator.
-    See https://ai.pydantic.dev/evals/evaluators/overview/ for a list.
-    Limitation: Span-Based evaluators are not supported as logfire is not supported in ragpill yet.
-
-    **Note**:
-    If you want to use pydantic-evals evaluators in your csv-defined testsets,
-    you need to define a subclass of this class that implements from_csv_line to
-    create the specific pydantic evaluator.
-
-    Attributes:
-        pydantic_evaluator: The pydantic-evals Evaluator instance to wrap.
-
-    Example:
-        ```python
-        from pydantic_evals.evaluators import SomePydanticEvaluator
-        from ragpill.base import WrappedPydanticEvaluator
-        ragpill_evaluator = WrappedPydanticEvaluator(
-            pydantic_evaluator=SomePydanticEvaluator(...),
-            expected=True,
-            tags={"tag1", "tag2"},
-            attributes={"attr1": "value1"},
-        )
-    """
-
-    pydantic_evaluator: Evaluator = field(repr=False)
-
-    async def run(
-        self,
-        ctx: EvaluatorContext[object, object, EvaluatorMetadata],
-    ) -> EvaluationReason:
-        """Delegate evaluation to the wrapped pydantic-evals evaluator.
-
-        Args:
-            ctx: The evaluator context containing inputs, output, and metadata.
-
-        Returns:
-            The evaluation result from the wrapped evaluator.
-        """
-        eval_output: Any = await self.pydantic_evaluator.evaluate(ctx)  # pyright: ignore[reportGeneralTypeIssues,reportUnknownVariableType]
-        assert isinstance(eval_output, EvaluationReason), (
-            "Wrapped pydantic evaluator did not return an EvaluationReason."
-        )
-        return eval_output
 
 
 def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
@@ -226,104 +174,42 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
 
 @dataclass(kw_only=True, repr=False)
 class SpanBaseEvaluator(BaseEvaluator):
-    """
-    This base class that retrieves the spans from mlflow trace.
-    This allows subclasses to implement evaluation logic based on spans.
-    Why is this useful? See https://ai.pydantic.dev/evals/evaluators/span-based/
+    """Base class for evaluators that inspect the MLflow trace of a run.
 
-    **Why Span-Based Evaluation?**
-    Traditional evaluators assess task inputs and outputs. For simple tasks, this may be sufficient—if the output is correct, the task succeeded. But for complex multi-step agents, the process matters as much as the result:
+    Subclasses call :meth:`get_trace` to obtain a :class:`mlflow.entities.Trace`
+    scoped to the current run. This is populated by the Phase 1 execute layer
+    and passed through :class:`~ragpill.eval_types.EvaluatorContext`.
 
-    **A correct answer reached incorrectly** - An agent might produce the right output by accident (e.g., guessing, using cached data when it should have searched, calling the wrong tools but getting lucky)
-    **Verification of required behaviors** - You need to ensure specific tools were called, certain code paths executed, or particular patterns followed
-    **Performance and efficiency** - The agent should reach the answer efficiently, without unnecessary tool calls, infinite loops, or excessive retries
-    **Safety and compliance** - Critical to verify that dangerous operations weren't attempted, sensitive data wasn't accessed inappropriately, or guardrails weren't bypassed
-
-    **Real-World Scenarios**
-    Span-based evaluation is particularly valuable for:
-
-    **RAG systems** - Verify documents were retrieved and reranked before generation, not just that the answer included citations
-    **Multi-agent coordination** - Ensure the orchestrator delegated to the right specialist agents in the correct order
-    **Tool-calling agents** - Confirm specific tools were used (or avoided), and in the expected sequence
-    **Debugging and regression testing** - Catch behavioral regressions where outputs remain correct but the internal logic deteriorates
-    **Production alignment** - Ensure your evaluation assertions operate on the same telemetry data captured in production, so eval insights directly translate to production monitoring
-
-    **How It Works**
-    When tracing the mlflow experiment, a hash of the input is stored as a span attribute (input_key). The evaluator uses this to find the trace for the given input of the running experiment.
-
-    **Which tools were called** - HasMatchingSpan(query={'name_contains': 'search_tool'})
-    **Code paths executed** - Verify specific functions ran or particular branches taken
-    **Timing characteristics** - Check that operations complete within SLA bounds
-    **Error conditions** - Detect retries, fallbacks, or specific failure modes
-    **Execution structure** - Verify parent-child relationships, delegation patterns, or execution order
-    This creates a fundamentally different evaluation paradigm: you're testing behavioral contracts, not just input-output relationships.
-
+    Why Span-Based Evaluation?
+    Traditional evaluators assess task inputs and outputs. For simple tasks,
+    that's sufficient. For complex multi-step agents, the process matters as
+    much as the result — ``RegexInSourcesEvaluator``, for example, needs to
+    look inside retriever/tool spans to verify that certain sources were
+    actually used.
     """
 
-    _mlflow_settings: MLFlowSettings | None = None
-    _mlflow_experiment_id: str | None = None
-    _mlflow_run_id: str | None = None
-    inputs_to_key_function: Callable[[Any], str] = field(default=default_input_to_key, repr=False)
+    def get_trace(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> Trace:
+        """Return the trace associated with the current evaluation context.
 
-    @property
-    def mlflow_settings(self) -> MLFlowSettings:
-        if self._mlflow_settings is None:
-            self._mlflow_settings = MLFlowSettings()  # pyright: ignore[reportCallIssue]
-        return self._mlflow_settings
+        Args:
+            ctx: The evaluator context. ``ctx.trace`` must be non-None.
 
-    @property
-    def mlflow_experiment_id(self) -> str:
-        if self._mlflow_experiment_id is None:
-            experiment = mlflow.get_experiment_by_name(self.mlflow_settings.ragpill_experiment_name)
-            if not experiment or not experiment.experiment_id:
-                raise ValueError(f"Experiment {self.mlflow_settings.ragpill_experiment_name} not found.")
-            self._mlflow_experiment_id = experiment.experiment_id
-        result = self._mlflow_experiment_id
-        assert result is not None
-        return result
+        Returns:
+            The MLflow ``Trace`` for this run, filtered to the run's subtree
+            when ``ctx.run_span_id`` is set.
 
-    @property
-    def mlflow_run_id(self) -> str:
-        if self._mlflow_run_id is None:
-            run = mlflow.active_run()
-            if run is None:
-                raise ValueError("No active mlflow run found.")
-            self._mlflow_run_id = run.info.run_id
-        result = self._mlflow_run_id
-        assert result is not None
-        return result
-
-    def get_trace(self, inputs: Any) -> Trace:
-        """Find the MLflow trace for the given inputs and optionally filter to the current run's subtree.
-
-        When ``_current_run_span_id`` is set (during multi-run evaluation Phase 2),
-        the returned trace is filtered to only contain spans from the current run's subtree.
-        This prevents evaluators from accidentally inspecting spans from other runs.
+        Raises:
+            ValueError: If ``ctx.trace`` is ``None``.
         """
-        target_key = self.inputs_to_key_function(inputs)
-        traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
-            locations=[self.mlflow_experiment_id],
-            run_id=self.mlflow_run_id,
-            return_type="list",
-        )
-        # Match traces by input_key on any span (not just root), since in multi-run
-        # mode the root span is the case-level parent and run spans are children.
-        matching: list[Trace] = []
-        for t in traces:
-            for span in t.data.spans or []:
-                if span.attributes.get("input_key", "") == target_key:
-                    matching.append(t)
-                    break
-        if len(matching) == 0:
-            raise ValueError(f"No trace found for input {inputs}.")
-
-        trace = matching[0]
-
-        # If we're inside a multi-run evaluation, filter to only the current run's subtree.
-        run_span_id = _current_run_span_id.get()
-        if run_span_id is not None:
-            trace = _filter_trace_to_subtree(trace, run_span_id)
-
+        if ctx.trace is None:
+            raise ValueError(
+                "SpanBaseEvaluator.get_trace requires ctx.trace to be populated. "
+                "Make sure execute_dataset() was called with capture_traces=True "
+                "before running evaluators."
+            )
+        trace = ctx.trace
+        if ctx.run_span_id:
+            trace = _filter_trace_to_subtree(trace, ctx.run_span_id)
         return trace
 
 
@@ -339,19 +225,18 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
     custom_reason_true: str = field(default="Evaluation function returned True.", repr=False)
     custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
-    def get_documents(self, inputs: Any) -> list[Document]:
-        """Retrieve source documents from MLflow trace spans.
-
-        Searches retriever, tool, and reranker spans in the trace for the given
-        inputs and collects all documents found in their outputs.
+    def get_documents(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> list[Document]:
+        """Retrieve source documents from the run's MLflow trace.
 
         Args:
-            inputs: The task inputs used to look up the corresponding trace.
+            ctx: The evaluator context; ``ctx.trace`` is read via
+                :meth:`SpanBaseEvaluator.get_trace`.
 
         Returns:
-            List of documents extracted from the trace spans.
+            List of documents extracted from retriever, tool, and reranker
+            spans in the trace.
         """
-        trace = self.get_trace(inputs)
+        trace = self.get_trace(ctx)
         retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         reranker_spans = trace.search_spans(span_type=SpanType.RERANKER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
@@ -381,7 +266,7 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
         Returns:
             The evaluation result with a custom reason message.
         """
-        documents = self.get_documents(ctx.inputs)
+        documents = self.get_documents(ctx)
         result = self.evaluation_function(documents)
         return EvaluationReason(
             value=result,
@@ -736,7 +621,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         ctx: EvaluatorContext[Any, Any, EvaluatorMetadata],
     ) -> EvaluationReason:
         """Override run to have access to both output and documents."""
-        documents = self.get_documents(ctx.inputs)
+        documents = self.get_documents(ctx)
         output_str = str(ctx.output)
 
         # Extract normalized quotes from output

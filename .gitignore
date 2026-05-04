@@ -7,6 +7,7 @@ scribble**
 **/site/
 coverage.xml
 .coverage
+*.db
 
 # Generated notebook markdown (nbconvert output)
 docs/how-to/custom-evaluator.md

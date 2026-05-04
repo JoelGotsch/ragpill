@@ -143,7 +143,7 @@ def load_testset(
     csv_path: Path,
     evaluator_classes: dict[str, type[BaseEvaluator]],
 ) -> Dataset:
-    """Create a pydantic_evals Dataset from a CSV file.
+    """Create a ragpill Dataset from a CSV file.
     
     Args:
         csv_path: Path to the CSV file containing test cases

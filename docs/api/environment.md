@@ -22,6 +22,22 @@ This file is automatically loaded by pydantic-settings in the `LLMJudgeSettings`
       show_source: true
       heading_level: 4
 
+### get_llm_judge_settings
+
+::: ragpill.settings.get_llm_judge_settings
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 4
+
+### configure_llm_judge
+
+::: ragpill.settings.configure_llm_judge
+    options:
+      show_root_heading: true
+      show_source: true
+      heading_level: 4
+
 
 ## Example .env File
 

@@ -23,6 +23,14 @@
 
 ## What is RAGPill?
 
+If you are building an LLM-based application, ragpill's ultimate goal is to help you:
+
+1. **Build a testset** that captures what "good" looks like for your application — facts, sources, tool calls, and domain-specific criteria.
+2. **Run it locally** against your app, with first-class integrations for **MLflow** (today) and **Langfuse** (planned), so traces and evaluations live next to your existing observability stack.
+3. **Integrate it into your workflow** (CI/CD, pre-deploy checks, local iteration loops) to **prevent regressions** and **objectively measure progress** when you tweak system prompts, swap models, change retrieval parameters, or refactor agent logic.
+
+It specializes in "offline" evaluation of LLM-based systems — meant to be part of your CI/CD pipeline or scheduled tests, not real-time monitoring.
+
 RAGPill helps you:
 
 - **Create test datasets from CSV files** - Easy collaboration with domain experts
@@ -30,7 +38,14 @@ RAGPill helps you:
 - **Track results in MLflow** - Full experiment tracking and tracing
 - **Follow best practices** - Opinionated design guides you to robust testing
 
-It specializes in "offline" evaluation of LLM-based systems, meaning it's supposed to be part of your CI/CD pipeline or run as scheduled tests, not real-time monitoring.
+### Where this is heading: agent-assisted evaluation
+
+ragpill is built so that an agent (e.g. Claude Code) can be a first-class participant in the evaluation loop:
+
+- **Testset co-creation**: ragpill will expose a **skill** that your agent can consume to build the testset *together with the developer* — turning vague product expectations into concrete cases, evaluators, tags, and attributes.
+- **Investigative harness**: the package will provide the harness an agent needs to **investigate an evaluation run and suggest improvements** — to the testset, the application config, or the overall solution.
+
+  *Example:* a question asks about the **timeline of events** scattered across different chunks. The agent analyzes the failed run, notices the timestamps are already present in chunk metadata but can't be filtered on, which clutters retrieval with irrelevant chunks — and suggests adding a metadata filter on the date field.
 
 <!--
 ## Demo!
@@ -106,22 +121,25 @@ Metrics are automatically calculated per tag and attribute.
 
 ## Key Concepts
 
-As this library is built on pydantic-ai evals, please have a look [here](https://ai.pydantic.dev/evals/core-concepts/)
+ragpill is built around three independent layers — execute, evaluate, upload — so you can mix and match them to fit your workflow. See the [Layered Architecture Guide](docs/guide/layered-architecture.md) for details.
 
 
 ### Key Components
 
-- **Dataset**: From pydantic-ai, contains test cases with inputs, evaluators, and metadata
+- **Dataset / Case**: Plain dataclasses from `ragpill.eval_types` that hold test cases with inputs, evaluators, and metadata
 - **Evaluators**: Check if outputs meet criteria (LLMJudge, regex matchers, custom evaluators)
-- **MLflow Integration**: Wraps execution, traces runs, evaluates outputs, uploads results
+- **Three-Layer Pipeline**: `execute_dataset` (run tasks + capture traces) → `evaluate_results` (apply evaluators) → `upload_to_mlflow` (persist). Use the layers independently or together via `evaluate_testset_with_mlflow`. See the [Layered Architecture Guide](docs/guide/layered-architecture.md).
 
 ## Features
 
+- **Async-only API**: Integrates naturally with modern async frameworks. Wrap in `asyncio.run()` if you need sync.
+- **Dual-backend tracing**: Capture traces to a local temp SQLite DB (no server needed) or directly to an MLflow server.
+- **Run once, evaluate many**: The captured `DatasetRunOutput` is JSON-serializable, so you can re-evaluate historical outputs against new evaluator sets without re-running the task.
 - **Great MLflow Integration**: Traces your agent/function execution to MLflow with evaluations in the native format
 - **CSV/Excel Adapter**: Load test cases from CSV files with evaluator configurations
 - **Flexible Evaluators**: Built-in LLM judges, regex matchers, and easy custom evaluator creation
 - **Metrics per Tags/Attributes**: Automatic metric calculation for each tag and attribute combination
-- **Type Safety**: Built on pydantic-ai with full type safety throughout
+- **Type Safety**: Built on plain dataclasses with full type safety throughout
 
 ## [Built-in Evaluators](docs/api/evaluators.md)
 
