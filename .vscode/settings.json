@@ -13,5 +13,10 @@
   "python.analysis.typeCheckingMode": "off",
 
   // Use basedpyright for type checking (matches CI)
-  "basedpyright.analysis.typeCheckingMode": "standard"
+  "basedpyright.analysis.typeCheckingMode": "standard",
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }

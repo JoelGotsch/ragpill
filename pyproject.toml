@@ -12,7 +12,10 @@ license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "pydantic-ai-slim[openai]>=1.55.0",
-    "mlflow>=3.8.1",
+    "mlflow-skinny>=3.8.1",
+    "sqlalchemy>=2.0", # for mlflow
+    "alembic>=1.10.1", # for mlflow
+    "pandas>=2.2.2",
     "pydantic-settings>=2.0.0",
 ]
 
