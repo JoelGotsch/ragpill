@@ -11,7 +11,7 @@ authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
-    "pydantic-ai>=1.39.1",
+    "pydantic-ai-slim[openai]>=1.55.0",
     "mlflow>=3.8.1",
 ]
 
