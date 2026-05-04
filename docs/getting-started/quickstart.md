@@ -138,6 +138,6 @@ What is the capital of France?,LLMJudge,false,quality,Should NOT mention histori
 
 ## Next Steps
 
-- Learn more about [Loading TestSets](../tutorials/02-defining-testset.ipynb) in detail
+- Learn more about [Loading TestSets](../guide/csv-adapter.md) in detail
 - Explore [Custom Evaluators](../how-to/custom-evaluator.ipynb)
 - Set up [MLflow Integration](../api/mlflow.md) for tracking

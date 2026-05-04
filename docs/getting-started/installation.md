@@ -52,4 +52,4 @@ dataset = load_testset(Path("testset.csv"))
 ## Next Steps
 
 - Check out the [Quick Start Guide](quickstart.md) to create your first evaluation
-- Learn about [Loading TestSets from CSV](../tutorials/02-defining-testset.ipynb)
+- Learn about [Loading TestSets from CSV](../guide/csv-adapter.md)

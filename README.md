@@ -23,6 +23,14 @@
 
 ## What is RAGPill?
 
+If you are building an LLM-based application, ragpill's ultimate goal is to help you:
+
+1. **Build a testset** that captures what "good" looks like for your application — facts, sources, tool calls, and domain-specific criteria.
+2. **Run it locally** against your app, with first-class integrations for **MLflow** (today) and **Langfuse** (planned), so traces and evaluations live next to your existing observability stack.
+3. **Integrate it into your workflow** (CI/CD, pre-deploy checks, local iteration loops) to **prevent regressions** and **objectively measure progress** when you tweak system prompts, swap models, change retrieval parameters, or refactor agent logic.
+
+It specializes in "offline" evaluation of LLM-based systems — meant to be part of your CI/CD pipeline or scheduled tests, not real-time monitoring.
+
 RAGPill helps you:
 
 - **Create test datasets from CSV files** - Easy collaboration with domain experts
@@ -30,7 +38,14 @@ RAGPill helps you:
 - **Track results in MLflow** - Full experiment tracking and tracing
 - **Follow best practices** - Opinionated design guides you to robust testing
 
-It specializes in "offline" evaluation of LLM-based systems, meaning it's supposed to be part of your CI/CD pipeline or run as scheduled tests, not real-time monitoring.
+### Where this is heading: agent-assisted evaluation
+
+ragpill is built so that an agent (e.g. Claude Code) can be a first-class participant in the evaluation loop:
+
+- **Testset co-creation**: ragpill will expose a **skill** that your agent can consume to build the testset *together with the developer* — turning vague product expectations into concrete cases, evaluators, tags, and attributes.
+- **Investigative harness**: the package will provide the harness an agent needs to **investigate an evaluation run and suggest improvements** — to the testset, the application config, or the overall solution.
+
+  *Example:* a question asks about the **timeline of events** scattered across different chunks. The agent analyzes the failed run, notices the timestamps are already present in chunk metadata but can't be filtered on, which clutters retrieval with irrelevant chunks — and suggests adding a metadata filter on the date field.
 
 <!--
 ## Demo!

@@ -376,5 +376,5 @@ check: "Correct answer"
 
 ## See Also
 
-- [Loading TestSets Tutorial](../tutorials/loading-testsets.ipynb)
+- [TestSets Guide](testsets.md)
 - [CSV Module API](../api/csv.md)

@@ -1,10 +1,21 @@
 # Plan: Layered Execution / Evaluation Architecture
 
-**Status:** Ready for implementation
+**Status:** Implemented ✅
 **Date:** 2026-04-21
+**Last verified:** 2026-04-27
 **Design:** [designs/layered-execution-evaluation.md](../designs/layered-execution-evaluation.md)
 **Dependency baked in:** [designs/remove-pydantic-evals.md](../designs/remove-pydantic-evals.md) — executed in Phase 0
 **Approach:** Test-Driven Development (red → green → refactor) per phase
+
+## Verification (2026-04-27)
+
+- `uv run pytest tests/ -v` → **352 passed, 10 skipped** ✅
+- `uv run basedpyright src/` → **0 errors, 0 warnings** ✅
+- `grep -r "pydantic_evals" src/ tests/` → only historical docstring references in
+  `eval_types.py` / `llm_judge.py` (no imports, no live code) ✅
+- `grep -r "evaluate_testset_with_mlflow_sync\|_current_run_span_id\|inputs_to_key_function\|WrappedPydanticEvaluator" src/ tests/`
+  → zero hits ✅
+- `uv run mkdocs build --strict` → **passes** ✅
 
 ---
 
@@ -32,13 +43,13 @@ Along the way:
 
 ## 3. Phase Map
 
-| Phase | Focus | Output |
-|---|---|---|
-| 0 | Remove `pydantic_evals`, make library async-only | `eval_types.py`, `llm_judge.py`, no `_sync` wrappers |
-| 1 | Output types + Execute layer (with JSON serialization + dual-backend tracing) | `execution.py`, `DatasetRunOutput` |
-| 2 | Evaluate layer + evaluator refactor | `evaluation.py`, `evaluate_results()`, refactored `SpanBaseEvaluator` |
-| 3 | Upload layer + full pipeline rewire | `upload.py`, `upload_to_mlflow()`, thin `evaluate_testset_with_mlflow()` |
-| 4 | Documentation | Docstrings, API pages, guide, notebooks, README |
+| Phase | Focus | Output | Status |
+|---|---|---|---|
+| 0 | Remove `pydantic_evals`, make library async-only | `eval_types.py`, `llm_judge.py`, no `_sync` wrappers | ✅ Done |
+| 1 | Output types + Execute layer (with JSON serialization + dual-backend tracing) | `execution.py`, `DatasetRunOutput` | ✅ Done |
+| 2 | Evaluate layer + evaluator refactor | `evaluation.py`, `evaluate_results()`, refactored `SpanBaseEvaluator` | ✅ Done |
+| 3 | Upload layer + full pipeline rewire | `upload.py`, `upload_to_mlflow()`, thin `evaluate_testset_with_mlflow()` | ✅ Done |
+| 4 | Documentation | Docstrings, API pages, guide, notebooks, README | ✅ Done |
 
 ---
 
@@ -529,9 +540,9 @@ when file is written, not upfront.
 
 ## 6. Exit Criteria (whole plan)
 
-- All phases landed and tested.
-- No `pydantic_evals` imports, no `_sync` entry points, no `_current_run_span_id`
+- ✅ All phases landed and tested.
+- ✅ No `pydantic_evals` imports, no `_sync` entry points, no `_current_run_span_id`
   ContextVar, no `inputs_to_key_function`.
-- Four design use cases (§7.1–§7.4) each exercised by an integration test.
-- Docs build cleanly.
-- `uv run pytest tests/ -v` green; `uv run basedpyright src/` clean.
+- ✅ Four design use cases (§7.1–§7.4) each exercised by an integration test.
+- ✅ Docs build cleanly (`uv run mkdocs build --strict` passes).
+- ✅ `uv run pytest tests/ -v` green (352 passed, 10 skipped); `uv run basedpyright src/` clean.
