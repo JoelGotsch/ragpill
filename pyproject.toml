@@ -13,6 +13,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic-ai-slim[openai]>=1.55.0",
     "mlflow>=3.8.1",
+    "pydantic-settings>=2.0.0",
 ]
 
 [dependency-groups]
