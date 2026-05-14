@@ -139,6 +139,34 @@ class EvaluationOutput:
             )
         return pd.DataFrame(rows)
 
+    def per_tag_accuracy(self) -> dict[str, float]:
+        """Mean ``evaluator_result`` grouped by tag, across all runs and evaluators.
+
+        Tags appear on both case metadata (``TestCaseMetadata.tags``) and
+        evaluator metadata (``BaseEvaluator.tags``); these are union-merged
+        during evaluation so each row in ``self.runs`` carries the full tag
+        set. Rows with NaN ``evaluator_result`` (evaluator failures) are
+        excluded.
+
+        For boolean evaluators (the common case) the returned value is the
+        pass rate. For numeric evaluators the mean of the raw values is
+        returned alongside, since both share the ``evaluator_result``
+        column.
+
+        Returns:
+            Mapping from tag -> mean evaluator result in [0.0, 1.0]. Empty
+            dict when ``self.runs`` is empty, has no ``evaluator_result``
+            column, or has no tagged rows.
+        """
+        if self.runs.empty or "evaluator_result" not in self.runs.columns:
+            return {}
+        runs: Any = self.runs
+        df_valid = runs[runs["evaluator_result"].notna()]
+        if df_valid.empty:
+            return {}
+        grouped = df_valid.explode("tags").groupby("tags")["evaluator_result"].mean()
+        return {str(tag): float(acc) for tag, acc in grouped.items() if pd.notna(tag)}  # pyright: ignore[reportUnknownMemberType]
+
     def to_llm_text(
         self,
         *,

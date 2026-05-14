@@ -186,6 +186,44 @@ def test_truncation_drops_passing_section_first():
     assert "the failing case" in truncated
 
 
+def test_tag_breakdown_section_appears_when_runs_have_tags():
+    failing = _case(
+        "Q",
+        "case-1",
+        "in",
+        runs=[_run(0, "k0", "out", {"E": _result("E", False)})],
+        aggregated=_aggregated(passed=False, pass_rate=0.0),
+    )
+    runs_df = pd.DataFrame(
+        [
+            {"tags": {"flaky"}, "evaluator_result": False},
+            {"tags": {"flaky"}, "evaluator_result": True},
+            {"tags": {"flaky"}, "evaluator_result": False},
+            {"tags": {"baseline"}, "evaluator_result": True},
+            {"tags": {"baseline"}, "evaluator_result": True},
+        ]
+    )
+    eo = EvaluationOutput(runs=runs_df, cases=pd.DataFrame(), case_results=[failing])
+    out = render_evaluation_output_as_triage(eo)
+    assert "## Pass rate by tag" in out
+    # Worst tag (flaky, 33%) listed before baseline (100%).
+    assert out.index("`flaky`") < out.index("`baseline`")
+    assert "33%" in out
+    assert "100%" in out
+
+
+def test_tag_breakdown_omitted_when_runs_have_no_tags():
+    failing = _case(
+        "Q",
+        "case-1",
+        "in",
+        runs=[_run(0, "k0", "out", {"E": _result("E", False)})],
+        aggregated=_aggregated(passed=False, pass_rate=0.0),
+    )
+    out = render_evaluation_output_as_triage(_eval_output([failing]))
+    assert "Pass rate by tag" not in out
+
+
 def test_relevant_spans_pulled_from_dataset_run_when_present():
     # We don't need a real trace here — just verify that when dataset_run is None,
     # no spans section is emitted, and when present-but-trace-None, ditto.

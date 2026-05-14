@@ -79,26 +79,23 @@ def _delete_llm_judge_traces(settings: MLFlowSettings, experiment_id: str, run_i
 
 
 def _log_table_and_metrics(
-    runs_df: pd.DataFrame,
+    evaluation: EvaluationOutput,
     model_params: dict[str, str] | None,
 ) -> None:
     """Log the runs DataFrame as an MLflow table plus overall/per-tag accuracy."""
-    mlflow.log_table(runs_df, "evaluation_results.json")
+    mlflow.log_table(evaluation.runs, "evaluation_results.json")
     if model_params:
         mlflow.log_params(model_params)
-    if runs_df.empty:
+    if evaluation.runs.empty:
         return
 
-    eval_df: Any = runs_df
+    eval_df: Any = evaluation.runs
     df_valid = eval_df[eval_df["evaluator_result"].notna()]
     if len(df_valid) > 0:
         overall_accuracy: float = float(df_valid["evaluator_result"].mean())
         mlflow.log_metric("overall_accuracy", overall_accuracy)
-        df_exploded = df_valid.explode("tags")
-        accuracy_per_tag = df_exploded.groupby("tags")["evaluator_result"].mean()
-        for tag, accuracy in accuracy_per_tag.items():
-            if pd.notna(tag):  # pyright: ignore[reportUnknownMemberType]
-                mlflow.log_metric(f"accuracy_tag_{tag}", float(accuracy))
+    for tag, accuracy in evaluation.per_tag_accuracy().items():
+        mlflow.log_metric(f"accuracy_tag_{tag}", accuracy)
 
 
 def _log_assessments_and_tags(case_results: list[CaseResult]) -> None:
@@ -215,7 +212,7 @@ def upload_to_mlflow(
 
     previous_uri = _reattach_run(settings, run_id)
     try:
-        _log_table_and_metrics(evaluation.runs, model_params)
+        _log_table_and_metrics(evaluation, model_params)
         _log_assessments_and_tags(evaluation.case_results)
         if upload_traces:
             _log_traces_as_artifact(evaluation)

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 from mlflow.entities import SpanType
 
 from ragpill.report._text import render_value, truncate
@@ -147,7 +148,41 @@ def _render_header(eo: EvaluationOutput) -> str:
         lines.append("- Evaluator rollup:")
         for name, (passed, total) in rollup.items():
             lines.append(f"  - `{name}` — {passed}/{total} passed")
+
+    tag_block = _render_tag_breakdown(eo)
+    if tag_block:
+        lines.append("")
+        lines.append(tag_block)
     return "\n".join(lines)
+
+
+def _render_tag_breakdown(eo: EvaluationOutput) -> str:
+    """Render a markdown table of pass rate per tag, sorted worst-first.
+
+    Returns an empty string when the dataset has no tags or no usable runs.
+    """
+    per_tag = eo.per_tag_accuracy()
+    if not per_tag:
+        return ""
+    counts = _tag_run_counts(eo)
+    rows = sorted(per_tag.items(), key=lambda item: (item[1], item[0]))
+    lines = ["## Pass rate by tag", "", "| Tag | Pass rate | n |", "|---|---|---|"]
+    for tag, accuracy in rows:
+        n = counts.get(tag, 0)
+        lines.append(f"| `{tag}` | {accuracy * 100:.0f}% | {n} |")
+    return "\n".join(lines)
+
+
+def _tag_run_counts(eo: EvaluationOutput) -> dict[str, int]:
+    """Return ``{tag: number_of_rows}`` after exploding the runs ``tags`` column."""
+    if eo.runs.empty or "evaluator_result" not in eo.runs.columns:
+        return {}
+    runs: Any = eo.runs
+    df_valid = runs[runs["evaluator_result"].notna()]
+    if df_valid.empty:
+        return {}
+    grouped = df_valid.explode("tags").groupby("tags").size()
+    return {str(tag): int(count) for tag, count in grouped.items() if pd.notna(tag)}  # pyright: ignore[reportUnknownMemberType]
 
 
 def _per_evaluator_rollup(case_results: list[CaseResult]) -> dict[str, tuple[int, int]]:
