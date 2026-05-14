@@ -14,9 +14,30 @@ def test_normalize_text_preserves_plain_text():
 
 
 def test_normalize_real():
-    input = "51. No new information was provided by Iran with respect to the issue of\n\n    testing of centrifuges using nuclear material until October 2003. In\n\n    its letter of 21 October 2003, Iran acknowledged that, in order to\n\n    ensure the performance of centrifuge machines, a limited number of\n\n    tests using small amounts of UF~6~ imported in 1991 had been carried\n\n    out at the Kalaye Electric Company. According to Iran, the first\n\n    test of the centrifuges was conducted in 1998 using an inert gas\n\n    (xenon). Series of tests using UF~6~ were performed between 1999\n\n    and 2002. In the course of the last series of tests, an enrichment\n\n    level of 1.2% U-235 was achieved."
+    input = (
+        "51. No new information was provided by Acme with respect to the issue of\n\n"
+        "    testing of modules using sample material until October 2023. In\n\n"
+        "    its letter of 21 October 2023, Acme acknowledged that, in order to\n\n"
+        "    ensure the performance of module units, a limited number of\n\n"
+        "    tests using small amounts of H~2~O imported in 1991 had been carried\n\n"
+        "    out at the Acme Industrial site. According to Acme, the first\n\n"
+        "    test of the modules was conducted in 1998 using an inert gas\n\n"
+        "    (xenon). Series of tests using H~2~O were performed between 1999\n\n"
+        "    and 2002. In the course of the last series of tests, a yield\n\n"
+        "    level of 1.2% was achieved."
+    )
     # Note: trailing period is stripped by normalization
-    expected = "51. no new information was provided by iran with respect to the issue of testing of centrifuges using nuclear material until october 2003. in its letter of 21 october 2003, iran acknowledged that, in order to ensure the performance of centrifuge machines, a limited number of tests using small amounts of uf6 imported in 1991 had been carried out at the kalaye electric company. according to iran, the first test of the centrifuges was conducted in 1998 using an inert gas (xenon). series of tests using uf6 were performed between 1999 and 2002. in the course of the last series of tests, an enrichment level of 1.2% u-235 was achieved"
+    expected = (
+        "51. no new information was provided by acme with respect to the issue of "
+        "testing of modules using sample material until october 2023. in its letter "
+        "of 21 october 2023, acme acknowledged that, in order to ensure the "
+        "performance of module units, a limited number of tests using small "
+        "amounts of h2o imported in 1991 had been carried out at the acme "
+        "industrial site. according to acme, the first test of the modules was "
+        "conducted in 1998 using an inert gas (xenon). series of tests using h2o "
+        "were performed between 1999 and 2002. in the course of the last series "
+        "of tests, a yield level of 1.2% was achieved"
+    )
     assert _normalize_text(input) == expected
 
 
@@ -36,8 +57,8 @@ def test_normalize_text_strips_single_tilde_subscripts_up_to_10_chars():
 
 def test_normalize_quotes():
     assert _normalize_text('He said, "This is a quote."') == _normalize_text("he said, 'this is a quote.'")
-    assert _normalize_text("syria\u2019s past nuclear activities") == _normalize_text(
-        "Syria\u2019s past nuclear\n\n    activities."
+    assert _normalize_text("beta labs\u2019 past sample activities") == _normalize_text(
+        "Beta Labs\u2019 past sample\n\n    activities."
     )
 
 

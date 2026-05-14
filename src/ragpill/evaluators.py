@@ -633,12 +633,32 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
                 reason="No quotes found in output.",
             )
 
+        # Zero-retrieval case: distinct error so the failure is attributed to
+        # the missing retrieval step, not the quote text.
+        if not documents:
+            return EvaluationReason(
+                value=False,
+                reason=(
+                    f"No documents were retrieved, so the {len(quotes)} quote(s) "
+                    "in the output cannot be verified. This usually means the agent "
+                    "skipped retrieval — the quote may or may not be supported by the corpus."
+                ),
+            )
+
+        # Deduplicate identical quotes so the failure message doesn't repeat them.
+        unique_quotes: list[tuple[str, str | None]] = []
+        seen: set[str] = set()
+        for quote, ref in quotes:
+            if quote not in seen:
+                seen.add(quote)
+                unique_quotes.append((quote, ref))
+
         # Normalize all document contents
         normalized_docs = [_normalize_text(doc.page_content) for doc in documents]
 
         # Check each quote
         not_found: list[str] = []
-        for quote, referenced_file in quotes:
+        for quote, referenced_file in unique_quotes:
             # Check if quote appears in any document
             # Use regex search if quote contains .* (from ellipsis conversion), otherwise use substring match
             if ".*" in quote:
@@ -648,10 +668,9 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
                 found = any(quote in doc_content for doc_content in normalized_docs)
 
             if not found:
-                if referenced_file:
-                    not_found.append(f'"{quote}" (Referenced file: {referenced_file})')
-                else:
-                    not_found.append(f'"{quote}"')
+                hint = _closest_window_hint(quote, normalized_docs)
+                ref_str = f" (Referenced file: {referenced_file})" if referenced_file else ""
+                not_found.append(f'"{quote}"{ref_str}{hint}')
 
         if not_found:
             reason = f"Quotes not found in sources: {'; '.join(not_found)}"
@@ -664,6 +683,35 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
             value=True,
             reason=f"All {len(quotes)} quote(s) found in source documents.",
         )
+
+
+def _closest_window_hint(quote: str, normalized_docs: list[str], width: int = 80) -> str:
+    """Return a short hint of the closest matching substring across the docs.
+
+    Cheap diagnostic that shows the reader *what* the source actually said near
+    the longest shared run of characters with the quote. Empty string when no
+    overlap is meaningful (< 12 chars) or no docs are available.
+    """
+    from difflib import SequenceMatcher
+
+    best_len = 0
+    best_doc_start = 0
+    best_doc: str | None = None
+    for doc in normalized_docs:
+        matcher = SequenceMatcher(a=quote, b=doc, autojunk=False)
+        block = matcher.find_longest_match(0, len(quote), 0, len(doc))
+        if block.size > best_len:
+            best_len = block.size
+            best_doc_start = block.b
+            best_doc = doc
+    if best_doc is None or best_len < 12:
+        return ""
+    start = max(0, best_doc_start - 10)
+    end = min(len(best_doc), best_doc_start + best_len + 10)
+    snippet = best_doc[start:end].strip()
+    if len(snippet) > width:
+        snippet = snippet[:width] + "…"
+    return f" [closest source span: …{snippet}…]"
 
 
 @dataclass(kw_only=True, repr=False)
