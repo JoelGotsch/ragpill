@@ -139,6 +139,52 @@ class EvaluationOutput:
             )
         return pd.DataFrame(rows)
 
+    def per_attribute_accuracy(self, attribute: str) -> dict[str, float]:
+        """Mean evaluator result grouped by value of a single attribute key.
+
+        Iterates ``self.case_results`` and looks up
+        ``cr.metadata.attributes[attribute]`` for each case. Cases missing
+        the key are skipped (not counted as failures). For each surviving
+        case, every assertion across every run contributes its value
+        (``True`` -> 1.0, ``False`` -> 0.0, numeric passthrough). Returns
+        an empty dict when no case carries the key or no usable
+        assertions exist. Attribute values are stringified for dict-key
+        safety (covers unhashable values such as lists).
+        """
+        buckets: dict[str, list[float]] = {}
+        for cr in self.case_results:
+            attrs = cr.metadata.attributes
+            if attribute not in attrs:
+                continue
+            value_key = str(attrs[attribute])
+            bucket = buckets.setdefault(value_key, [])
+            for rr in cr.run_results:
+                for r in rr.assertions.values():
+                    v = r.value
+                    if isinstance(v, bool):
+                        bucket.append(1.0 if v else 0.0)
+                    elif isinstance(v, (int, float)):
+                        bucket.append(float(v))
+        return {k: sum(vs) / len(vs) for k, vs in buckets.items() if vs}
+
+    def per_attribute_accuracy_all(self) -> dict[str, dict[str, float]]:
+        """Auto-discovered per-attribute breakdown across the dataset.
+
+        Returns a ``{attribute_key: {value: mean_score}}`` mapping for every
+        attribute key that appears on at least one case and yields at least
+        one usable score. Useful for surfacing every attribute breakdown
+        in a single call (e.g. the triage report).
+        """
+        keys: set[str] = set()
+        for cr in self.case_results:
+            keys.update(cr.metadata.attributes.keys())
+        out: dict[str, dict[str, float]] = {}
+        for k in sorted(keys):
+            scores = self.per_attribute_accuracy(k)
+            if scores:
+                out[k] = scores
+        return out
+
     def per_tag_accuracy(self) -> dict[str, float]:
         """Mean ``evaluator_result`` grouped by tag, across all runs and evaluators.
 

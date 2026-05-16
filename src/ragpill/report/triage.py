@@ -153,7 +153,52 @@ def _render_header(eo: EvaluationOutput) -> str:
     if tag_block:
         lines.append("")
         lines.append(tag_block)
+    attr_block = _render_attribute_breakdown(eo)
+    if attr_block:
+        lines.append("")
+        lines.append(attr_block)
     return "\n".join(lines)
+
+
+def _render_attribute_breakdown(eo: EvaluationOutput) -> str:
+    """Render per-attribute-value pass-rate tables, one section per attribute.
+
+    Skips attributes with fewer than two distinct values across the dataset —
+    a single value carries no breakdown signal. Empty string when no
+    qualifying attribute exists.
+    """
+    per_attr = eo.per_attribute_accuracy_all()
+    if not per_attr:
+        return ""
+    counts = _attribute_run_counts(eo)
+    sections: list[str] = []
+    for attr_key in sorted(per_attr):
+        value_map = per_attr[attr_key]
+        if len(value_map) < 2:
+            continue
+        rows = sorted(value_map.items(), key=lambda item: (item[1], item[0]))
+        block = [f"### `{attr_key}`", "", "| Value | Pass rate | n |", "|---|---|---|"]
+        for value, accuracy in rows:
+            n = counts.get(attr_key, {}).get(value, 0)
+            block.append(f"| `{value}` | {accuracy * 100:.1f}% | {n} |")
+        sections.append("\n".join(block))
+    if not sections:
+        return ""
+    return "## Pass rate by attribute\n\n" + "\n\n".join(sections)
+
+
+def _attribute_run_counts(eo: EvaluationOutput) -> dict[str, dict[str, int]]:
+    """Return ``{attribute_key: {value: number_of_scoreable_rows}}``."""
+    counts: dict[str, dict[str, int]] = {}
+    for cr in eo.case_results:
+        for attr_key, raw_value in cr.metadata.attributes.items():
+            value = str(raw_value)
+            n_scoreable = sum(
+                1 for rr in cr.run_results for r in rr.assertions.values() if isinstance(r.value, (bool, int, float))
+            )
+            counts.setdefault(attr_key, {}).setdefault(value, 0)
+            counts[attr_key][value] += n_scoreable
+    return counts
 
 
 def _render_tag_breakdown(eo: EvaluationOutput) -> str:
@@ -169,7 +214,7 @@ def _render_tag_breakdown(eo: EvaluationOutput) -> str:
     lines = ["## Pass rate by tag", "", "| Tag | Pass rate | n |", "|---|---|---|"]
     for tag, accuracy in rows:
         n = counts.get(tag, 0)
-        lines.append(f"| `{tag}` | {accuracy * 100:.0f}% | {n} |")
+        lines.append(f"| `{tag}` | {accuracy * 100:.1f}% | {n} |")
     return "\n".join(lines)
 
 

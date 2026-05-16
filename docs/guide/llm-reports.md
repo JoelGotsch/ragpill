@@ -117,12 +117,41 @@ The same tag breakdown is available as a plain dict for programmatic use:
 
 ```python
 result.per_tag_accuracy()
-# {"q2-numerics": 0.33, "factual-recall": 0.75, "tone": 1.0}
+# {"q2-numerics": 0.3333333333333333, "factual-recall": 0.75, "tone": 1.0}
+# API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.
 ```
 
 Tags can sit on cases (`TestCaseMetadata.tags`) or on evaluators
 (`BaseEvaluator.tags`) — both are union-merged before grouping. Rows where
 an evaluator raised an exception are excluded from the denominator.
+
+### Per-attribute accuracy (key → value breakdown)
+
+Attributes are key→value pairs on `TestCaseMetadata.attributes` (and
+`EvaluatorMetadata.attributes`). Where tags answer "do you have this
+label?", attributes answer "which value of this label?". Pass rates are
+computed per value:
+
+```python
+result.per_attribute_accuracy("difficulty")
+# {"easy": 1.0, "medium": 0.75, "hard": 0.3333333333333333}
+
+result.per_attribute_accuracy_all()
+# {
+#   "difficulty": {"easy": 1.0, "medium": 0.75, "hard": 0.3333333333333333},
+#   "domain":     {"chemistry": 0.95, "biology": 0.4},
+# }
+```
+
+API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.
+
+Cases missing the attribute are skipped (not counted as failures).
+Unhashable attribute values are silently stringified for dict-key
+safety. The triage view emits a "Pass rate by attribute" section with
+one table per attribute that has at least two distinct values; uniform
+attributes are skipped. The upload layer logs each `(key, value)` pair
+as an `accuracy_attr_{key}_{value}` MLflow metric, mirroring how
+`accuracy_tag_{tag}` is logged.
 
 ---
 
