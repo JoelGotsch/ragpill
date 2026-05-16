@@ -929,6 +929,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#per-attribute-accuracy-key-value-breakdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-attribute accuracy (key → value breakdown)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1980,41 +1991,64 @@ not shown)</code> marker).</p>
 <h3 id="per-tag-accuracy-without-the-markdown-wrapper">Per-tag accuracy without the markdown wrapper<a class="headerlink" href="#per-tag-accuracy-without-the-markdown-wrapper" title="Permanent link">&para;</a></h3>
 <p>The same tag breakdown is available as a plain dict for programmatic use:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">result</span><span class="o">.</span><span class="n">per_tag_accuracy</span><span class="p">()</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># {&quot;q2-numerics&quot;: 0.33, &quot;factual-recall&quot;: 0.75, &quot;tone&quot;: 1.0}</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># {&quot;q2-numerics&quot;: 0.3333333333333333, &quot;factual-recall&quot;: 0.75, &quot;tone&quot;: 1.0}</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.</span>
 </span></code></pre></div>
 <p>Tags can sit on cases (<code>TestCaseMetadata.tags</code>) or on evaluators
 (<code>BaseEvaluator.tags</code>) — both are union-merged before grouping. Rows where
 an evaluator raised an exception are excluded from the denominator.</p>
+<h3 id="per-attribute-accuracy-key-value-breakdown">Per-attribute accuracy (key → value breakdown)<a class="headerlink" href="#per-attribute-accuracy-key-value-breakdown" title="Permanent link">&para;</a></h3>
+<p>Attributes are key→value pairs on <code>TestCaseMetadata.attributes</code> (and
+<code>EvaluatorMetadata.attributes</code>). Where tags answer "do you have this
+label?", attributes answer "which value of this label?". Pass rates are
+computed per value:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span><span class="o">.</span><span class="n">per_attribute_accuracy</span><span class="p">(</span><span class="s2">&quot;difficulty&quot;</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># {&quot;easy&quot;: 1.0, &quot;medium&quot;: 0.75, &quot;hard&quot;: 0.3333333333333333}</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">result</span><span class="o">.</span><span class="n">per_attribute_accuracy_all</span><span class="p">()</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># {</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1">#   &quot;difficulty&quot;: {&quot;easy&quot;: 1.0, &quot;medium&quot;: 0.75, &quot;hard&quot;: 0.3333333333333333},</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1">#   &quot;domain&quot;:     {&quot;chemistry&quot;: 0.95, &quot;biology&quot;: 0.4},</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1"># }</span>
+</span></code></pre></div>
+<p>API and MLflow upload carry raw float means. Triage markdown rounds to 1 decimal place for display.</p>
+<p>Cases missing the attribute are skipped (not counted as failures).
+Unhashable attribute values are silently stringified for dict-key
+safety. The triage view emits a "Pass rate by attribute" section with
+one table per attribute that has at least two distinct values; uniform
+attributes are skipped. The upload layer logs each <code>(key, value)</code> pair
+as an <code>accuracy_attr_{key}_{value}</code> MLflow metric, mirroring how
+<code>accuracy_tag_{tag}</code> is logged.</p>
 <hr />
 <h2 id="exploration-looking-at-what-the-agent-did">Exploration: looking at what the agent did<a class="headerlink" href="#exploration-looking-at-what-the-agent-did" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">run_output</span> <span class="o">=</span> <span class="k">await</span> <span class="n">execute_dataset</span><span class="p">(</span><span class="n">testset</span><span class="p">,</span> <span class="n">task</span><span class="o">=</span><span class="n">my_agent</span><span class="p">)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">run_output</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">())</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">run_output</span> <span class="o">=</span> <span class="k">await</span> <span class="n">execute_dataset</span><span class="p">(</span><span class="n">testset</span><span class="p">,</span> <span class="n">task</span><span class="o">=</span><span class="n">my_agent</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">run_output</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">())</span>
 </span></code></pre></div>
 <p>This view has no opinion on pass/fail — it just walks each case, each run,
 and the captured trace tree:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a># Dataset run
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>- Cases: 1
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>- Tracking URI: sqlite:///:memory:
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>- MLflow run: r1
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>- MLflow experiment: e1
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>## Case `1a2b…`: &quot;What is the company fiscal year-end?&quot;
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>- Inputs: What is the company fiscal year-end?
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>- Expected output: December 31
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>- Runs: 3
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>### Run 0 (duration=1.40s)
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>- Output: The fiscal year ends December 31.
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>- agent (AGENT, 1402ms)
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>  - retriever (RETRIEVER, 120ms)
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>    output: [&quot;bylaws-2021.txt&quot;, &quot;handbook-2023.pdf&quot;]
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>  - llm (LLM, 1242ms)
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>    input: You are a compliance assistant…
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>    output: The fiscal year ends December 31.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a># Dataset run
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>- Cases: 1
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>- Tracking URI: sqlite:///:memory:
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>- MLflow run: r1
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>- MLflow experiment: e1
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>## Case `1a2b…`: &quot;What is the company fiscal year-end?&quot;
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>- Inputs: What is the company fiscal year-end?
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>- Expected output: December 31
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>- Runs: 3
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>### Run 0 (duration=1.40s)
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>- Output: The fiscal year ends December 31.
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>- agent (AGENT, 1402ms)
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>  - retriever (RETRIEVER, 120ms)
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>    output: [&quot;bylaws-2021.txt&quot;, &quot;handbook-2023.pdf&quot;]
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>  - llm (LLM, 1242ms)
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>    input: You are a compliance assistant…
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    output: The fiscal year ends December 31.
 </span></code></pre></div>
 <p>By default every span type is included — the exploration view doesn't filter
 by span type since the goal is breadth, not focus.</p>
@@ -2028,14 +2062,14 @@ rendering. The default pattern set is intentionally narrow:</p>
 </ul>
 <p>Any dict key matching these regexes gets its value replaced with
 <code>&lt;redacted&gt;</code>. To customize:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">text</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">(</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">redact</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">redact_patterns</span><span class="o">=</span><span class="p">[</span><span class="sa">r</span><span class="s2">&quot;(?i)password&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;(?i)secret&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;(?i)token&quot;</span><span class="p">],</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">text</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">(</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">redact</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">redact_patterns</span><span class="o">=</span><span class="p">[</span><span class="sa">r</span><span class="s2">&quot;(?i)password&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;(?i)secret&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;(?i)token&quot;</span><span class="p">],</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>To disable entirely (e.g., in a private dev environment where you trust the
 output):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">text</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">(</span><span class="n">redact</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">text</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">(</span><span class="n">redact</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Redaction is <strong>not</strong> a security barrier — it's a guard against pasting
 obvious credentials into a chat. Treat it like <code>.gitignore</code>, not like a
@@ -2043,17 +2077,17 @@ firewall.</p>
 <hr />
 <h2 id="saving-for-later-or-sharing-with-a-tool">Saving for later (or sharing with a tool)<a class="headerlink" href="#saving-for-later-or-sharing-with-a-tool" title="Permanent link">&para;</a></h2>
 <p><code>EvaluationOutput</code> and <code>DatasetRunOutput</code> both serialize to JSON:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Save:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;eval-output.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1"># Reload (e.g., in a different process):</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ragpill.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluationOutput</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;eval-output.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">EvaluationOutput</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">())</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Save:</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;eval-output.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="c1"># Reload (e.g., in a different process):</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ragpill.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluationOutput</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;eval-output.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">EvaluationOutput</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">to_llm_text</span><span class="p">())</span>
 </span></code></pre></div>
 <p>DataFrames are encoded with the JSON Table Schema (<code>orient="table"</code>), so
 dtypes survive the round trip. Traces are encoded via MLflow's own
