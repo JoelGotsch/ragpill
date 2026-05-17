@@ -118,9 +118,14 @@ class LLMJudge(BaseEvaluator):
             else:
                 grading_output = await judge_output(ctx.output, self.rubric, self.model)
             span.set_outputs({"pass": grading_output.pass_, "reason": grading_output.reason})
+        # Embed the rubric verbatim alongside the judge's reasoning so anyone
+        # reading the assessment in the MLflow UI (or the triage markdown, or
+        # the runs DataFrame) can see what "passing" was supposed to mean
+        # without context-switching to the testset. Applied unconditionally —
+        # downstream code shouldn't have to special-case pass vs fail.
         return EvaluationReason(
             value=grading_output.pass_,
-            reason=grading_output.reason,
+            reason=f"Rubric: {self.rubric}\nVerdict: {grading_output.reason}",
         )
 
     def build_serialization_arguments(self) -> dict[str, Any]:
