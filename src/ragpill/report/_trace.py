@@ -1,4 +1,12 @@
-"""Render MLflow traces (or subtrees) as nested markdown bullets."""
+"""Render captured traces (or subtrees) as nested markdown bullets.
+
+Today the trace object is MLflow-flavoured (``mlflow.entities.Trace``).
+The dialect-specific bits — which attribute keys count as "internal" so
+they get surfaced through dedicated paths instead of the attribute
+bullet — live in :mod:`ragpill.backends._dialects`. Phase 2 / the OTel
+ingestion plan replaces the type alias with a normalised dataclass and
+lets each backend register its own internal-attr set.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +14,7 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from ragpill.backends._dialects import MLFLOW_INTERNAL_SPAN_ATTRS
 from ragpill.report._text import render_value, truncate
 
 if TYPE_CHECKING:
@@ -23,15 +32,10 @@ Kept intentionally narrow — secret redaction is opt-out, not a security barrie
 
 REDACTED = "<redacted>"
 
-# Span attributes that are MLflow internals; we surface them through dedicated
-# rendering paths (inputs/outputs/type) rather than dumping them in the bullet.
-_INTERNAL_ATTR_KEYS = {
-    "mlflow.traceRequestId",
-    "mlflow.spanType",
-    "mlflow.spanInputs",
-    "mlflow.spanOutputs",
-    "mlflow.spanFunctionName",
-}
+# Span attributes the renderer treats as "internal" — surfaced through
+# dedicated paths (inputs/outputs/type) rather than dumped in the attribute
+# bullet. Phase 1 ships only the MLflow dialect.
+_INTERNAL_ATTR_KEYS: frozenset[str] = MLFLOW_INTERNAL_SPAN_ATTRS
 
 
 def render_spans(
@@ -47,15 +51,14 @@ def render_spans(
     """Render a trace (or a subtree) as nested markdown bullets.
 
     Args:
-        trace: The MLflow trace to render. Returns an empty string if ``None``.
+        trace: The captured trace to render. Returns an empty string if ``None``.
         root_span_id: When set, only render the subtree rooted at this span.
             Falls back to rendering nothing if no span with that id exists.
         max_chars: Total character budget for the rendered output. When the
             budget is hit a ``… (+N more spans)`` line is appended.
-        filter_types: Optional iterable of MLflow ``SpanType`` values (as
-            strings) to keep. Spans with non-matching types are dropped *unless*
-            they expose at least one ``ragpill_*`` attribute. ``None`` keeps
-            every span.
+        filter_types: Optional iterable of span-type strings to keep. Spans
+            with non-matching types are dropped *unless* they expose at least
+            one ``ragpill_*`` attribute. ``None`` keeps every span.
         per_span_chars: Per-span budget for inputs/outputs lines.
         redact: When True (default), values whose key matches one of
             ``redact_patterns`` are replaced with ``<redacted>``.

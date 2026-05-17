@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import mlflow
-from mlflow.entities import Document, SpanType, Trace
 from pydantic_ai import models
 
+if TYPE_CHECKING:
+    from mlflow.entities import Document, Trace
+
+from ragpill.backends import SpanKind, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
@@ -49,7 +53,7 @@ class LLMJudge(BaseEvaluator):
         check: str,
         get_llm: Callable[[], models.Model] = _get_default_judge_llm,
         **kwargs: Any,
-    ) -> "LLMJudge":
+    ) -> LLMJudge:
         """Create an LLMJudge from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -111,7 +115,7 @@ class LLMJudge(BaseEvaluator):
         # causes a UNIQUE constraint violation in MLflow's SQLite backend.
         # The "ragpill_is_judge_trace" attribute lets _delete_llm_judge_traces identify
         # and remove these traces after evaluation.
-        with mlflow.start_span(name="llm-judge-evaluation", span_type=SpanType.LLM) as span:
+        with get_backend().start_span(name="llm-judge-evaluation", span_type=SpanKind.LLM) as span:
             span.set_attribute("ragpill_is_judge_trace", True)
             if self.include_input:
                 grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
@@ -163,6 +167,8 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
     Returns:
         A new Trace with only the matching subtree spans.
     """
+    from mlflow.entities import Trace as _Trace
+
     all_spans = trace.data.spans
     included: set[str] = set()
     queue = [root_span_id]
@@ -174,7 +180,7 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
                 queue.append(span.span_id)
     filtered_data = copy(trace.data)
     filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return Trace(info=trace.info, data=filtered_data)
+    return _Trace(info=trace.info, data=filtered_data)
 
 
 @dataclass(kw_only=True, repr=False)
@@ -241,6 +247,8 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
             List of documents extracted from retriever, tool, and reranker
             spans in the trace.
         """
+        from mlflow.entities import Document as _Document, SpanType
+
         trace = self.get_trace(ctx)
         retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
@@ -250,7 +258,7 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
             if isinstance(span.outputs, list) and len(span.outputs) > 0:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 try:
                     docs = [
-                        Document(**output)  # pyright: ignore[reportUnknownArgumentType]
+                        _Document(**output)  # pyright: ignore[reportUnknownArgumentType]
                         for output in span.outputs  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
                         if isinstance(output, dict) and "page_content" in output and "metadata" in output
                     ]
@@ -331,7 +339,7 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
     pattern: str
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInSourcesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> RegexInSourcesEvaluator:
         """Create a RegexInSourcesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -407,7 +415,7 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
     @classmethod
     def from_csv_line(
         cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "RegexInDocumentMetadataEvaluator":
+    ) -> RegexInDocumentMetadataEvaluator:
         """Create a RegexInDocumentMetadataEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -467,7 +475,7 @@ class RegexInOutputEvaluator(BaseEvaluator):
             raise ValueError(f"Invalid regex pattern '{self.pattern}': {exc}") from exc
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInOutputEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> RegexInOutputEvaluator:
         """Create a RegexInOutputEvaluator from a CSV line."""
         if not check or not check.strip():
             raise ValueError("RegexInOutputEvaluator requires a non-empty 'check' pattern.")
@@ -603,7 +611,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         )
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "LiteralQuoteEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> LiteralQuoteEvaluator:
         """Create a LiteralQuoteEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -783,7 +791,7 @@ class HasQuotesEvaluator(BaseEvaluator):
     max_quotes: int = field(default=-1)
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "HasQuotesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> HasQuotesEvaluator:
         """Create a HasQuotesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.

@@ -56,8 +56,8 @@ def _render_header(dr: DatasetRunOutput) -> str:
         "",
         f"- Cases: {len(dr.cases)}",
         f"- Tracking URI: {dr.tracking_uri or '(none)'}",
-        f"- MLflow run: {dr.mlflow_run_id or '(none)'}",
-        f"- MLflow experiment: {dr.mlflow_experiment_id or '(none)'}",
+        f"- Run: {dr.mlflow_run_id or '(none)'}",
+        f"- Experiment: {dr.mlflow_experiment_id or '(none)'}",
     ]
     return "\n".join(lines)
 

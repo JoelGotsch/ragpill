@@ -30,11 +30,12 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import mlflow
-from mlflow.entities import SpanType, Trace
+from ragpill.backends import SpanKind, get_backend
 
+if TYPE_CHECKING:
+    from mlflow.entities import Trace
 from ragpill.base import (
     CaseMetadataT,
     TestCaseMetadata,
@@ -206,7 +207,12 @@ def _task_run_to_dict(tr: TaskRunOutput) -> dict[str, Any]:
 
 def _task_run_from_dict(d: dict[str, Any]) -> TaskRunOutput:
     trace_json: str | None = d.get("trace")
-    trace = Trace.from_json(trace_json) if trace_json else None
+    if trace_json:
+        from mlflow.entities import Trace
+
+        trace = Trace.from_json(trace_json)
+    else:
+        trace = None
     return TaskRunOutput(
         run_index=d["run_index"],
         input_key=d["input_key"],
@@ -233,7 +239,12 @@ def _case_run_to_dict(cr: CaseRunOutput) -> dict[str, Any]:
 
 def _case_run_from_dict(d: dict[str, Any]) -> CaseRunOutput:
     trace_json: str | None = d.get("trace")
-    trace = Trace.from_json(trace_json) if trace_json else None
+    if trace_json:
+        from mlflow.entities import Trace
+
+        trace = Trace.from_json(trace_json)
+    else:
+        trace = None
     return CaseRunOutput(
         case_name=d["case_name"],
         inputs=d.get("inputs"),
@@ -281,64 +292,63 @@ class _TracingContext:
 
 
 def _setup_local_tracing(experiment_name: str) -> _TracingContext:
-    """Configure a temporary local SQLite MLflow backend.
+    """Configure a temporary local SQLite backend.
 
     Used when no server URI is provided. The temp directory (containing
     ``mlflow.db`` and the ``mlartifacts`` folder) is deleted by
-    :func:`_teardown_tracing`.
+    :func:`_teardown_tracing`. The SQLite URI is MLflow-specific; backends
+    that don't use a local-file store will ignore the path and fall back to
+    their own destination logic.
     """
-    previous_uri = mlflow.get_tracking_uri()
+    backend = get_backend()
+    previous_uri = backend.get_tracking_uri()
     temp_dir = tempfile.mkdtemp(prefix="ragpill_exec_")
     db_path = os.path.join(temp_dir, "mlflow.db")
     artifacts_path = os.path.join(temp_dir, "mlartifacts")
     os.makedirs(artifacts_path, exist_ok=True)
     uri = f"sqlite:///{db_path}"
-    mlflow.set_tracking_uri(uri)
-    mlflow.set_experiment(experiment_name)  # pyright: ignore[reportUnknownMemberType]
-    mlflow.pydantic_ai.autolog()  # pyright: ignore[reportPrivateImportUsage]
-    run = mlflow.start_run()
-    experiment = mlflow.get_experiment_by_name(experiment_name)
-    assert experiment is not None
+    backend.set_destination(uri, experiment_name)
+    backend.autolog_pydantic_ai()
+    handle = backend.start_run()
     return _TracingContext(
         tracking_uri=uri,
-        experiment_id=str(experiment.experiment_id),  # pyright: ignore[reportUnknownArgumentType]
-        run_id=str(run.info.run_id),  # pyright: ignore[reportUnknownArgumentType]
+        experiment_id=handle.experiment_id,
+        run_id=handle.run_id,
         previous_uri=previous_uri,
         temp_dir=temp_dir,
     )
 
 
 def _setup_server_tracing(uri: str, settings: MLFlowSettings) -> _TracingContext:
-    """Configure the tracking URI to point at an existing MLflow server."""
-    previous_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(uri)
-    mlflow.set_experiment(settings.ragpill_experiment_name)  # pyright: ignore[reportUnknownMemberType]
-    mlflow.pydantic_ai.autolog()  # pyright: ignore[reportPrivateImportUsage]
-    run = mlflow.start_run(description=settings.ragpill_run_description)
-    experiment = mlflow.get_experiment_by_name(settings.ragpill_experiment_name)
-    assert experiment is not None
+    """Configure the tracking URI to point at an existing tracking server."""
+    backend = get_backend()
+    previous_uri = backend.get_tracking_uri()
+    backend.set_destination(uri, settings.ragpill_experiment_name)
+    backend.autolog_pydantic_ai()
+    handle = backend.start_run(description=settings.ragpill_run_description)
     return _TracingContext(
         tracking_uri=uri,
-        experiment_id=str(experiment.experiment_id),  # pyright: ignore[reportUnknownArgumentType]
-        run_id=str(run.info.run_id),  # pyright: ignore[reportUnknownArgumentType]
+        experiment_id=handle.experiment_id,
+        run_id=handle.run_id,
         previous_uri=previous_uri,
         temp_dir=None,
     )
 
 
 def _teardown_tracing(ctx: _TracingContext | None) -> None:
-    """End the active MLflow run and restore the previous tracking URI.
+    """End the active run and restore the previous tracking URI.
 
     For the local-temp backend, also removes the temp directory.
     """
     if ctx is None:
         return
+    backend = get_backend()
     try:
-        if mlflow.active_run() is not None:
-            mlflow.end_run()
+        if backend.is_run_active():
+            backend.end_run()
     finally:
         if ctx.previous_uri is not None:
-            mlflow.set_tracking_uri(ctx.previous_uri)
+            backend.set_tracking_uri(ctx.previous_uri)
         if ctx.temp_dir is not None and os.path.isdir(ctx.temp_dir):
             shutil.rmtree(ctx.temp_dir, ignore_errors=True)
 
@@ -353,6 +363,8 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
     ``root_span_id``, or ``None`` when that span is not present."""
     from copy import copy
 
+    from mlflow.entities import Trace as _Trace
+
     all_spans = trace.data.spans or []
     if not any(s.span_id == root_span_id for s in all_spans):
         return None
@@ -366,16 +378,12 @@ def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace | None:
                 queue.append(span.span_id)
     filtered_data = copy(trace.data)
     filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return Trace(info=trace.info, data=filtered_data)
+    return _Trace(info=trace.info, data=filtered_data)
 
 
 def _fetch_trace(experiment_id: str, run_id: str, parent_trace_id: str) -> Trace | None:
-    """Fetch the MLflow trace whose request_id matches ``parent_trace_id``."""
-    traces: list[Trace] = mlflow.search_traces(  # pyright: ignore[reportAssignmentType]
-        locations=[experiment_id],
-        run_id=run_id,
-        return_type="list",
-    )
+    """Fetch the trace whose request_id matches ``parent_trace_id``."""
+    traces = get_backend().search_traces(run_id=run_id, experiment_id=experiment_id)
     for t in traces:
         if t.info.trace_id == parent_trace_id:
             return t
@@ -400,7 +408,9 @@ async def _execute_case_runs(
     parent_trace_id = ""
 
     if capture_traces and tracing is not None:
-        with mlflow.start_span(name=(case.name or str(case.inputs))[:60], span_type=SpanType.TASK) as parent_span:
+        with get_backend().start_span(
+            name=(case.name or str(case.inputs))[:60], span_type=SpanKind.TASK
+        ) as parent_span:
             parent_span.set_inputs(case.inputs)
             parent_span.set_attribute("input_key", base_key)
             parent_span.set_attribute("n_runs", repeat)
@@ -455,7 +465,7 @@ async def _execute_single_run(
 
     if capture_traces:
         try:
-            with mlflow.start_span(name=f"run-{run_index}", span_type=SpanType.TASK) as run_span:
+            with get_backend().start_span(name=f"run-{run_index}", span_type=SpanKind.TASK) as run_span:
                 run_span_id = run_span.span_id
                 run_span.set_attribute("run_index", run_index)
                 run_span.set_attribute("input_key", input_key)
