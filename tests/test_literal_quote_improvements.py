@@ -22,7 +22,11 @@ from mlflow.entities import Document
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import LiteralQuoteEvaluator
-from ragpill.utils import _extract_markdown_quotes, _normalize_text  # pyright: ignore[reportPrivateUsage]
+from ragpill.utils import (  # pyright: ignore[reportPrivateUsage]
+    _extract_markdown_quotes,
+    _normalize_for_quote_comparison,
+    _normalize_text,
+)
 
 
 def _ctx(output: str) -> EvaluatorContext[str, str, EvaluatorMetadata]:
@@ -69,7 +73,9 @@ def _ctx(output: str) -> EvaluatorContext[str, str, EvaluatorMetadata]:
     ],
 )
 def test_category_a_normalization_strips_artifacts(source: str, agent_quote: str) -> None:
-    assert _normalize_text(agent_quote) in _normalize_text(source)
+    # Aggressive normalization is comparison-only — _normalize_text stays lean
+    # so the runs-table text keeps emphasis / citation noise verbatim.
+    assert _normalize_for_quote_comparison(agent_quote) in _normalize_for_quote_comparison(source)
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +126,35 @@ def test_category_b_bracketed_paraphrase_markers_become_wildcards(source: str, a
 # ---------------------------------------------------------------------------
 
 
-def test_category_c_inline_referenced_file_marker_is_stripped() -> None:
+def test_category_c_inline_referenced_file_marker_is_stripped_at_compare_time() -> None:
+    """Inline ``(Referenced file: …)`` is preserved in extraction (so the runs
+    DataFrame shows the agent's verbatim wording) but stripped during the
+    comparison-only normalization so LiteralQuoteEvaluator still matches."""
     output = (
         "> the inspector verified that the lab was feeding (Referenced file: REPORT/2024/12) up to 1044 module-1 units"
     )
     quotes = _extract_markdown_quotes(output)
     quote, _ = quotes[0]
-    assert "referenced file" not in quote
-    assert "report/2024/12" not in quote
+    # Extraction preserves the marker verbatim.
+    assert "referenced file" in quote
+    assert "report/2024/12" in quote
+    # Comparison normalization removes it.
+    compared = _normalize_for_quote_comparison(quote)
+    assert "referenced file" not in compared
+    assert "report/2024/12" not in compared
 
 
-def test_category_c_inline_file_marker_is_stripped() -> None:
+def test_category_c_inline_file_marker_is_stripped_at_compare_time() -> None:
     output = "> the verification step (File: foo.txt) completed successfully"
     quotes = _extract_markdown_quotes(output)
     quote, _ = quotes[0]
-    assert "file:" not in quote
-    assert "foo.txt" not in quote
+    # Extraction preserves the marker verbatim.
+    assert "file:" in quote
+    assert "foo.txt" in quote
+    # Comparison normalization removes it.
+    compared = _normalize_for_quote_comparison(quote)
+    assert "file:" not in compared
+    assert "foo.txt" not in compared
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +213,8 @@ def test_category_g_stray_leading_quote_is_trimmed() -> None:
     ],
 )
 def test_category_i_dash_and_space_variants_normalize(source: str, agent_quote: str) -> None:
-    assert _normalize_text(agent_quote) in _normalize_text(source)
+    # Dash / NBSP / soft-hyphen folding lives in the comparison-only normalization.
+    assert _normalize_for_quote_comparison(agent_quote) in _normalize_for_quote_comparison(source)
 
 
 # ---------------------------------------------------------------------------

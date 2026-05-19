@@ -264,41 +264,25 @@ _DASH_TRANSLATIONS: dict[int, int | None] = {
 
 
 def _normalize_text(text: str) -> str:
-    """Normalize text for citation comparison.
+    """Lean normalization: NFKC + casefold + whitespace + quote-char map.
 
-    Idempotent and symmetric: applying it to both the rubric quote and the
-    source ``page_content`` brings them to the same canonical form for
-    substring/regex comparison.
+    Used everywhere ragpill compares strings — regex evaluators, DataFrame
+    text columns, etc. Intentionally conservative: does NOT strip markdown
+    emphasis, citation markers, LaTeX wrappers, or dash variants, because
+    those are sometimes legitimate content (nested-quote source markers,
+    content with ``**bold**`` that should survive in the runs table, etc.).
 
-    Aligns visually similar but byte-different text: ``UF₆`` vs ``UF6``,
-    ``${uf}_{6}$`` vs ``uf6``, en-dashes vs hyphens, pandoc-escaped
-    brackets, bold/italic markdown, and inline ``(File: …)`` markers.
+    The richer comparison-only normalization used by
+    :class:`~ragpill.evaluators.LiteralQuoteEvaluator` lives in
+    :func:`_normalize_for_quote_comparison`.
+
+    Aligns visually similar but byte-different text: ``UF₆`` vs ``UF6``
+    (via NFKC), curly vs straight quotes, collapsed whitespace, trailing
+    periods.
     """
-    # 1. Pandoc/LaTeX math + subscripts BEFORE NFKC (NFKC folds some of these).
+    # Strip single-tilde markdown subscripts (e.g., UF~6~ -> UF6).
     text = _SUBSCRIPT_TILDE_RE.sub(r"\1", text)
-    text = _SUPERSCRIPT_CARET_RE.sub(r"\1", text)
-    text = _LATEX_BRACE_RE.sub(r"\1", text)
-    text = _LATEX_MATH_RE.sub(r"\1", text)
-    text = _LATEX_IDENT_BRACE_RE.sub(r"\1", text)
-    # 2. Unescape pandoc-escaped meta characters.
-    text = _PANDOC_ESCAPE_RE.sub(r"\1", text)
-    # 3. Strip markdown emphasis but keep the inner text.
-    text = _MD_EMPHASIS_RE.sub(lambda m: m.group(2) or m.group(4) or "", text)
-    # 4. Remove dashed table separator rows.
-    text = _TABLE_SEP_RE.sub("", text)
-    # 5. Remove inline citation markers.
-    text = _INLINE_CITATION_RE.sub("", text)
-    # 6. Dash and space variants NFKC does not handle.
-    text = text.translate(_DASH_TRANSLATIONS)
-    # 7. NFKC + casefold.
     normalized = unicodedata.normalize("NFKC", text).casefold()
-    # 8. Collapse whitespace, including pandoc soft-wrap newlines.
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    # 8b. Collapse whitespace adjacent to brackets so ``X[Y]`` and ``X [Y]``
-    # canonicalize the same way — pandoc-escaped ``\[`` (which loses any
-    # surrounding space when unescaped) lines up with the agent's ``[``.
-    normalized = re.sub(r"\s*\[\s*", " [", normalized)
-    normalized = re.sub(r"\s*\]\s*", "] ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     # Normalize all quote-like characters to straight single quote:
     # - Straight double quote: " (U+0022)
@@ -311,33 +295,71 @@ def _normalize_text(text: str) -> str:
     normalized = re.sub(
         r'["\u201C\u201D\u201E\'\u2018\u2019\u201A\u00AB\u00BB\u2039\u203A\u2032\u2033`\u00B4]', "'", normalized
     )
-    # Strip trailing soft punctuation, not just periods.
+    return normalized.strip(".")
+
+
+def _normalize_for_quote_comparison(text: str) -> str:  # pyright: ignore[reportUnusedFunction]
+    """Aggressive normalization used only for LiteralQuoteEvaluator matching.
+
+    Applies the full dialect-stripping pipeline (LaTeX math/braces,
+    pandoc-escaped meta chars, markdown emphasis, table separators,
+    inline ``(Referenced file: \u2026)`` markers, dash / soft-hyphen / NBSP
+    variants, bracket-padding normalization) on top of the lean
+    :func:`_normalize_text`.
+
+    Symmetric: applying it to both the agent's quote and the source
+    document yields canonical forms that should match for content
+    differing only in markdown formatting or citation noise. The regex
+    evaluators and DataFrame text columns keep the lean
+    :func:`_normalize_text` so legitimate content like ``**bold**``
+    and nested-quote ``(source: \u2026)`` markers survive in the runs view.
+    """
+    text = _SUBSCRIPT_TILDE_RE.sub(r"\1", text)
+    text = _SUPERSCRIPT_CARET_RE.sub(r"\1", text)
+    text = _LATEX_BRACE_RE.sub(r"\1", text)
+    text = _LATEX_MATH_RE.sub(r"\1", text)
+    text = _LATEX_IDENT_BRACE_RE.sub(r"\1", text)
+    text = _PANDOC_ESCAPE_RE.sub(r"\1", text)
+    text = _MD_EMPHASIS_RE.sub(lambda m: m.group(2) or m.group(4) or "", text)
+    text = _TABLE_SEP_RE.sub("", text)
+    text = _INLINE_CITATION_RE.sub("", text)
+    text = text.translate(_DASH_TRANSLATIONS)
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # Collapse whitespace adjacent to brackets so ``X[Y]`` and ``X [Y]``
+    # canonicalize the same way \u2014 pandoc-escaped ``\[`` (which loses any
+    # surrounding space when unescaped) lines up with the agent's ``[``.
+    normalized = re.sub(r"\s*\[\s*", " [", normalized)
+    normalized = re.sub(r"\s*\]\s*", "] ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(
+        r'["\u201C\u201D\u201E\'\u2018\u2019\u201A\u00AB\u00BB\u2039\u203A\u2032\u2033`\u00B4]', "'", normalized
+    )
     return normalized.strip(_TRAIL_PUNCT)
 
 
 # Bracketed elision / gloss markers an agent inserts inside a blockquote.
-# Cases handled:
-#   "..."           ellipsis           -> .*
+# Cases handled (each substituted with `.*` by the matcher):
+#   "..."           ellipsis           -> .*  (no whitespace absorption)
 #   ".."            two dots           -> .*
-#   "[...]"         bracketed ellipsis -> .*
+#   "[...]"         bracketed ellipsis -> .*  (absorbs surrounding whitespace)
 #   "[..]"          bracketed two dots -> .*
 #   "[.*]"          author elision     -> .*
 #   "[ ... ]"       padded             -> .*
-#   "[and]" "[note: ...]" "[edited]"  -> .*  (any bracketed gloss <= 80 chars)
+#   "[and]" "[note: ...]" "[edited]"  -> .*  (bracketed gloss starting with a
+#                                              letter, ≤80 chars, NOT followed
+#                                              by ``(`` so markdown links like
+#                                              ``[link text](url)`` survive)
 _AGENT_ELISION_RE = re.compile(
     r"""
-    \s* \[[\s\.\*]{1,5}\] \s*      # bracketed dots / asterisks (with whitespace)
+    \s* \[[\s\.\*]{1,5}\] \s*                  # bracketed dots / asterisks
     |
-    \s* \[[^\[\]]{1,80}\] \s*      # any bracketed gloss <= 80 chars
+    \s* \[[A-Za-z][^\[\]]{0,79}\] (?!\() \s*   # bracketed gloss, not a markdown link
     |
-    \s* \.{2,} \s*                 # ASCII ellipsis or two+ dots
+    \.{2,}                                     # bare ellipsis — preserves whitespace
     """,
     re.VERBOSE,
 )
-# Stray leading/trailing quote-like chars that survive the recursive cleanup
-# in ``_clean_quote_text`` (most commonly a single ``'`` or backtick).
-_STRAY_LEADING_QUOTE = "'\"`"
-_STRAY_TRAILING_QUOTE = "'\"`,;:"
 
 
 def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # pyright: ignore[reportUnusedFunction]
@@ -345,14 +367,19 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # py
 
     Only lines that start with '>' (after leading whitespace) are considered
     markdown quotes. Regular quoted text is ignored. Quotation marks are
-    stripped from the extracted quotes. Quote text is normalized with
-    ``_normalize_text`` (NFKC + casefold + pandoc/LaTeX/dash cleanup) so
-    visually similar but byte-different text compares equal.
+    stripped by :func:`_clean_quote_text`. Quote text is normalized with
+    the lean :func:`_normalize_text` (NFKC + casefold + whitespace +
+    quote-char map + trailing-period strip) — content like ``**bold**``,
+    ``[link text](url)``, nested-quote ``(source: …)`` markers, and
+    inline citations all survive verbatim so the runs DataFrame and
+    triage view see the agent's original words.
 
-    Bracketed paraphrase markers an agent might insert (``[and]``, ``[.*]``,
-    ``[...]``, ``[note: …]``) are converted to a regex ``.*`` placeholder so
-    the matcher in :class:`~ragpill.evaluators.LiteralQuoteEvaluator` can
-    accept the elision.
+    Bracketed paraphrase markers (``[and]``, ``[.*]``, ``[...]``,
+    ``[note: …]``) and bare ellipsis (``..+``) are converted to a regex
+    ``.*`` placeholder so the matcher in
+    :class:`~ragpill.evaluators.LiteralQuoteEvaluator` can accept the
+    elision. Markdown link text ``[link text](url)`` is NOT substituted —
+    that's content, not paraphrase.
 
     Args:
         output: The text to extract quotes from
@@ -368,9 +395,8 @@ def _extract_markdown_quotes(output: str) -> list[tuple[str, str | None]]:  # py
     for quote_lines, source, _, _ in found_quotes:
         quote_text = " ".join(quote_lines).strip() if quote_lines else ""
         quote_text = _normalize_text(quote_text)
-        # Defensive trim of stray quote chars that survived recursive cleanup.
-        quote_text = quote_text.lstrip(_STRAY_LEADING_QUOTE).rstrip(_STRAY_TRAILING_QUOTE)
-        # Convert ellipsis / bracketed elisions / glosses to regex ``.*``.
+        # Convert agent elisions / bare ellipsis to regex ``.*``. Markdown
+        # links ``[text](url)`` are excluded by the regex.
         quote_text = _AGENT_ELISION_RE.sub(".*", quote_text)
         quotes.append((quote_text, source))
     return quotes

@@ -5,6 +5,7 @@ scribble**
 **/__pycache__/
 **/dist/
 **/site/
+.tox/
 coverage.xml
 .coverage
 *.db

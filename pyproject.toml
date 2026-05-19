@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ragpill"
-version = "0.4.4"
+version = "0.4.5"
 description = "This library allows for granular testing of llm-applications based on expert input."
 readme = "README.md"
 authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
@@ -30,10 +30,22 @@ dev = [
     "pytest-cov>=6.0.0",
     "coverage[toml]>=7.6.0",
     "genbadge[coverage]>=1.1.3",
+    # Full mlflow (with server: flask/gunicorn/waitress) so contributors can
+    # run a local `uv run mlflow server` for development. The runtime dep
+    # stays mlflow-skinny.
+    "mlflow>=3.8.1",
+    # Pulled in transitively by mlflow's sqlalchemy tracking store, but
+    # neither mlflow-skinny nor sqlalchemy declare it. The test fixtures
+    # that exercise the SQLAlchemy backend error out without it.
+    "cryptography>=42.0.0",
 ]
 
 docs = [
-    "zensical>=0.0.32",           # replaces mkdocs + mkdocs-material
+    "zensical>=0.0.32",
+    # `mike` builds versioned docs through `mkdocs` directly, which resolves
+    # `theme: material` against the installed theme registry — needs the
+    # mkdocs-material package even when zensical is the primary theme.
+    "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.26.0",
     "mkdocs-autorefs>=1.2.0",
     "mike>=2.1.3",                # versioning documentation
@@ -48,6 +60,12 @@ build_docs = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+# The quote-extraction regression tests use carefully-crafted literal strings
+# (mixed single/double quotes, embedded backticks, markdown links) to lock the
+# extractor's verbatim-preservation contract. Both ruff lint and format would
+# otherwise rewrite those strings to the project quote-style and break the
+# tests. Excluding the file leaves it untouched by both passes.
+extend-exclude = ["tests/test_quote_extraction.py"]
 
 [tool.ruff.lint]
 extend-select = ["RUF", "C90", "UP", "I"]

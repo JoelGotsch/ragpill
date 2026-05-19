@@ -15,6 +15,7 @@ from ragpill.llm_judge import judge_input_output, judge_output
 from ragpill.settings import get_llm_judge_settings
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
+    _normalize_for_quote_comparison,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -658,22 +659,26 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
                 seen.add(quote)
                 unique_quotes.append((quote, ref))
 
-        # Normalize all document contents
-        normalized_docs = [_normalize_text(doc.page_content) for doc in documents]
+        # Apply the comparison-only aggressive normalization to both sides so
+        # citation noise, LaTeX wrappers, dash variants, and markdown emphasis
+        # don't cause spurious mismatches. The lean extraction in
+        # _extract_markdown_quotes leaves those features in the quote text
+        # so the runs DataFrame still shows the agent's original wording.
+        normalized_docs = [_normalize_for_quote_comparison(doc.page_content) for doc in documents]
 
         # Check each quote
         not_found: list[str] = []
         for quote, referenced_file in unique_quotes:
-            # Check if quote appears in any document
+            compare_quote = _normalize_for_quote_comparison(quote)
             # Use regex search if quote contains .* (from ellipsis conversion), otherwise use substring match
-            if ".*" in quote:
-                pattern = re.escape(quote).replace(r"\.\*", ".*")
+            if ".*" in compare_quote:
+                pattern = re.escape(compare_quote).replace(r"\.\*", ".*")
                 found = any(re.search(pattern, doc_content) for doc_content in normalized_docs)
             else:
-                found = any(quote in doc_content for doc_content in normalized_docs)
+                found = any(compare_quote in doc_content for doc_content in normalized_docs)
 
             if not found:
-                hint = _closest_window_hint(quote, normalized_docs)
+                hint = _closest_window_hint(compare_quote, normalized_docs)
                 ref_str = f" (Referenced file: {referenced_file})" if referenced_file else ""
                 not_found.append(f'"{quote}"{ref_str}{hint}')
 
