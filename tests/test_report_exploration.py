@@ -12,6 +12,7 @@ from mlflow.entities import SpanType, Trace
 
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput
 from ragpill.report.exploration import render_dataset_run_as_exploration
+from ragpill.trace import Trace as RagpillTrace, from_mlflow_trace
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +29,7 @@ def _isolated_mlflow_backend() -> Iterator[None]:
         mlflow.set_tracking_uri(previous)
 
 
-def _trace_with_two_spans() -> tuple[Trace, str]:
+def _trace_with_two_spans() -> tuple[RagpillTrace, str]:
     with mlflow.start_run():
         with mlflow.start_span(name="root", span_type=SpanType.AGENT) as root:
             root.set_inputs("hi")
@@ -38,7 +39,7 @@ def _trace_with_two_spans() -> tuple[Trace, str]:
                 c.set_inputs("prompt")
                 c.set_outputs("out")
     traces: list[Trace] = mlflow.search_traces(return_type="list", max_results=1)  # pyright: ignore[reportAssignmentType]
-    return traces[0], root_id
+    return from_mlflow_trace(traces[0]), root_id
 
 
 def _make_dataset_run(with_trace: bool = True) -> DatasetRunOutput:
@@ -65,7 +66,7 @@ def _make_dataset_run(with_trace: bool = True) -> DatasetRunOutput:
             )
         ],
     )
-    return DatasetRunOutput(cases=[case], tracking_uri="sqlite:///x.db", mlflow_run_id="r1", mlflow_experiment_id="e1")
+    return DatasetRunOutput(cases=[case], tracking_uri="sqlite:///x.db", run_id="r1", experiment_id="e1")
 
 
 def test_header_lists_run_metadata():
@@ -73,8 +74,8 @@ def test_header_lists_run_metadata():
     assert "# Dataset run" in out
     assert "Cases: 1" in out
     assert "Tracking URI: sqlite:///x.db" in out
-    assert "MLflow run: r1" in out
-    assert "MLflow experiment: e1" in out
+    assert "Run: r1" in out
+    assert "Experiment: e1" in out
 
 
 def test_per_case_section_includes_inputs_and_expected():

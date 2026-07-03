@@ -5,6 +5,37 @@ from pydantic_ai import models
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class RagpillTraceSettings(BaseSettings):
+    """Trace-ingestion settings for :func:`ragpill.trace.parse_otel`.
+
+    Controls how externally-produced OTLP traces are normalised into the
+    vendor-neutral model. Does not affect the live ``execute_dataset`` capture
+    path, which is MLflow-native via ``ragpill.trace.from_mlflow_trace``. All
+    fields are settable via environment variables with the ``RAGPILL_TRACE_``
+    prefix.
+
+    Example:
+        ```python
+        from ragpill.settings import RagpillTraceSettings
+
+        settings = RagpillTraceSettings(dialect="openinference")
+        ```
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RAGPILL_TRACE_")
+
+    dialect: str = Field(
+        "auto",
+        description="Dialect for parse_otel: 'auto' to detect per span, or an adapter name "
+        "('mlflow', 'openinference', 'gen_ai'). Env: RAGPILL_TRACE_DIALECT.",
+    )
+    fallback_dialect: str = Field(
+        "gen_ai",
+        description="Adapter used when 'auto' detection matches nothing for a span. "
+        "Env: RAGPILL_TRACE_FALLBACK_DIALECT.",
+    )
+
+
 class MLFlowSettings(BaseSettings):
     """MLflow connection and evaluation settings.
 
@@ -46,6 +77,16 @@ class MLFlowSettings(BaseSettings):
         ge=0.0,
         le=1.0,
         description="Default minimum fraction of runs that must pass for a case to be considered passing. Per-case overrides via TestCaseMetadata.threshold take precedence. Env: MLFLOW_RAGPILL_THRESHOLD.",
+    )
+    ragpill_trace_fetch_timeout_s: float = Field(
+        default=10.0,
+        ge=0.0,
+        description="Max seconds to poll for a trace to be exported before giving up when attaching traces to evaluator context. Backends flush spans asynchronously, so a too-short budget leaves SpanBaseEvaluators without a trace. Env: MLFLOW_RAGPILL_TRACE_FETCH_TIMEOUT_S.",
+    )
+    ragpill_trace_fetch_poll_interval_s: float = Field(
+        default=0.5,
+        gt=0.0,
+        description="Interval in seconds between trace-readiness polls within the trace-fetch timeout. Env: MLFLOW_RAGPILL_TRACE_FETCH_POLL_INTERVAL_S.",
     )
 
 

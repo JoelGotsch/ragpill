@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ragpill"
-version = "0.4.5"
+version = "0.5.0"
 description = "This library allows for granular testing of llm-applications based on expert input."
 readme = "README.md"
 authors = [{ name = "Joel Gotsch", email = "contact@joelgotsch.com" }]
@@ -12,11 +12,33 @@ license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "pydantic-ai-slim[openai]>=1.55.0",
-    "mlflow-skinny>=3.8.1",
-    "sqlalchemy>=2.0.31", # for mlflow
-    "alembic>=1.10.1", # for mlflow
     "pandas>=2.2.3",
     "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+mlflow = [
+    "mlflow-skinny>=3.8.1",
+    "sqlalchemy>=2.0.31", # for mlflow
+    "alembic>=1.10.1",    # for mlflow
+]
+# Arize Phoenix backend (OpenInference-native trace ingestion).
+#
+# NOTE: `phoenix` and `mlflow` are NOT co-installable in one environment.
+# arize-phoenix-otel pulls opentelemetry-* >=1.42 (the otlp-grpc exporter),
+# which is incompatible with the opentelemetry-sdk that mlflow-skinny pins —
+# importing `phoenix.otel` then fails. Pick one tracking backend per env:
+# `pip install ragpill[phoenix]` OR `pip install ragpill[mlflow]`. See
+# plans/phoenix-backend-findings.md (Blocker 1).
+phoenix = [
+    "arize-phoenix-otel>=0.16.1",
+    "arize-phoenix-client>=2.9.0",
+    "openinference-instrumentation-pydantic-ai>=0.1.16",
+]
+# Langfuse backend (v4 OTel-based SDK). Unlike phoenix, langfuse's OTel deps
+# import alongside the mlflow extra without a version conflict.
+langfuse = [
+    "langfuse>=4.9.0",
 ]
 
 [dependency-groups]
@@ -30,9 +52,16 @@ dev = [
     "pytest-cov>=6.0.0",
     "coverage[toml]>=7.6.0",
     "genbadge[coverage]>=1.1.3",
+    # The full test suite exercises the MLflow adapter end-to-end, so dev
+    # installs always pull in the `mlflow` extra. A separate "no extras"
+    # CI job (see .github/workflows/ci.yml) runs the smoke subset to prove
+    # `pip install ragpill` works without it.
+    "mlflow-skinny>=3.8.1",
+    "sqlalchemy>=2.0.31",
+    "alembic>=1.10.1",
     # Full mlflow (with server: flask/gunicorn/waitress) so contributors can
-    # run a local `uv run mlflow server` for development. The runtime dep
-    # stays mlflow-skinny.
+    # run a local `uv run mlflow server`. The runtime / extras path stays on
+    # mlflow-skinny via [project.optional-dependencies].mlflow above.
     "mlflow>=3.8.1",
     # Pulled in transitively by mlflow's sqlalchemy tracking store, but
     # neither mlflow-skinny nor sqlalchemy declare it. The test fixtures

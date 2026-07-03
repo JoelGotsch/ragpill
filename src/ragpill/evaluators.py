@@ -1,23 +1,33 @@
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Callable
-from copy import copy
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, cast
 
-import mlflow
-from mlflow.entities import Document, SpanType, Trace
 from pydantic_ai import models
 
+if TYPE_CHECKING:
+    from ragpill.trace import Trace
+
+from ragpill.backends import SpanKind, get_backend
 from ragpill.base import BaseEvaluator, EvaluatorMetadata
 from ragpill.eval_types import EvaluationReason, EvaluatorContext
 from ragpill.llm_judge import judge_input_output, judge_output
 from ragpill.settings import get_llm_judge_settings
+from ragpill.trace import Document, filter_to_subtree
 from ragpill.utils import (
     _extract_markdown_quotes,  # pyright: ignore[reportPrivateUsage]
     _normalize_for_quote_comparison,  # pyright: ignore[reportPrivateUsage]
     _normalize_text,  # pyright: ignore[reportPrivateUsage]
 )
+
+# Source spans whose outputs count as retrieved documents. Compared against the
+# string value of the neutral ``ragpill.trace.SpanKind`` (a StrEnum) so we don't
+# import a second SpanKind into this module — ``SpanKind`` above is the
+# write-side enum used by ``LLMJudge.start_span``.
+_SOURCE_SPAN_KINDS: frozenset[str] = frozenset({"RETRIEVER", "TOOL", "RERANKER"})
 
 
 def _get_default_judge_llm() -> models.Model:
@@ -50,7 +60,7 @@ class LLMJudge(BaseEvaluator):
         check: str,
         get_llm: Callable[[], models.Model] = _get_default_judge_llm,
         **kwargs: Any,
-    ) -> "LLMJudge":
+    ) -> LLMJudge:
         """Create an LLMJudge from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -112,7 +122,7 @@ class LLMJudge(BaseEvaluator):
         # causes a UNIQUE constraint violation in MLflow's SQLite backend.
         # The "ragpill_is_judge_trace" attribute lets _delete_llm_judge_traces identify
         # and remove these traces after evaluation.
-        with mlflow.start_span(name="llm-judge-evaluation", span_type=SpanType.LLM) as span:
+        with get_backend().start_span(name="llm-judge-evaluation", span_type=SpanKind.LLM) as span:
             span.set_attribute("ragpill_is_judge_trace", True)
             if self.include_input:
                 grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
@@ -151,40 +161,14 @@ class LLMJudge(BaseEvaluator):
         )
 
 
-def _filter_trace_to_subtree(trace: Trace, root_span_id: str) -> Trace:
-    """Return a copy of the trace containing only the subtree rooted at root_span_id.
-
-    This ensures span-based evaluators only see spans from their specific run,
-    not spans from other runs in the same case trace.
-
-    Args:
-        trace: The full trace to filter.
-        root_span_id: The span ID of the subtree root.
-
-    Returns:
-        A new Trace with only the matching subtree spans.
-    """
-    all_spans = trace.data.spans
-    included: set[str] = set()
-    queue = [root_span_id]
-    while queue:
-        current = queue.pop()
-        included.add(current)
-        for span in all_spans:
-            if span.parent_id == current:
-                queue.append(span.span_id)
-    filtered_data = copy(trace.data)
-    filtered_data.spans = [s for s in all_spans if s.span_id in included]
-    return Trace(info=trace.info, data=filtered_data)
-
-
 @dataclass(kw_only=True, repr=False)
 class SpanBaseEvaluator(BaseEvaluator):
-    """Base class for evaluators that inspect the MLflow trace of a run.
+    """Base class for evaluators that inspect the captured trace of a run.
 
-    Subclasses call :meth:`get_trace` to obtain a :class:`mlflow.entities.Trace`
-    scoped to the current run. This is populated by the Phase 1 execute layer
-    and passed through :class:`~ragpill.eval_types.EvaluatorContext`.
+    Subclasses call :meth:`get_trace` to obtain a vendor-neutral
+    :class:`ragpill.trace.Trace` scoped to the current run. This is populated by
+    the execute layer and passed through
+    :class:`~ragpill.eval_types.EvaluatorContext`.
 
     Why Span-Based Evaluation?
     Traditional evaluators assess task inputs and outputs. For simple tasks,
@@ -201,8 +185,8 @@ class SpanBaseEvaluator(BaseEvaluator):
             ctx: The evaluator context. ``ctx.trace`` must be non-None.
 
         Returns:
-            The MLflow ``Trace`` for this run, filtered to the run's subtree
-            when ``ctx.run_span_id`` is set.
+            The ``ragpill.trace.Trace`` for this run, filtered to the run's
+            subtree when ``ctx.run_span_id`` is set.
 
         Raises:
             ValueError: If ``ctx.trace`` is ``None``.
@@ -215,7 +199,13 @@ class SpanBaseEvaluator(BaseEvaluator):
             )
         trace = ctx.trace
         if ctx.run_span_id:
-            trace = _filter_trace_to_subtree(trace, ctx.run_span_id)
+            # Restrict to the run's subtree. When the span isn't present (e.g.
+            # the run's spans were still in flight when the trace was fetched),
+            # return an empty span set rather than the full trace — falling
+            # back to the whole case trace would silently score spans from
+            # OTHER repeats of the same case.
+            subtree = filter_to_subtree(trace, ctx.run_span_id)
+            trace = subtree if subtree is not None else replace(trace, spans=[])
         return trace
 
 
@@ -232,32 +222,42 @@ class SourcesBaseEvaluator(SpanBaseEvaluator):
     custom_reason_false: str = field(default="Evaluation function returned False.", repr=False)
 
     def get_documents(self, ctx: EvaluatorContext[Any, Any, EvaluatorMetadata]) -> list[Document]:
-        """Retrieve source documents from the run's MLflow trace.
+        """Retrieve source documents from the run's trace.
 
         Args:
             ctx: The evaluator context; ``ctx.trace`` is read via
                 :meth:`SpanBaseEvaluator.get_trace`.
 
         Returns:
-            List of documents extracted from retriever, tool, and reranker
-            spans in the trace.
+            List of :class:`ragpill.trace.Document` extracted from retriever,
+            tool, and reranker spans in the trace.
         """
         trace = self.get_trace(ctx)
-        retriever_spans = trace.search_spans(span_type=SpanType.RETRIEVER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
-        tool_spans = trace.search_spans(span_type=SpanType.TOOL)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
-        reranker_spans = trace.search_spans(span_type=SpanType.RERANKER)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
         all_documents: list[Document] = []
-        for span in retriever_spans + tool_spans + reranker_spans:
-            if isinstance(span.outputs, list) and len(span.outputs) > 0:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                try:
-                    docs = [
-                        Document(**output)  # pyright: ignore[reportUnknownArgumentType]
-                        for output in span.outputs  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-                        if isinstance(output, dict) and "page_content" in output and "metadata" in output
-                    ]
-                except Exception:
-                    continue
-                all_documents.extend(docs)
+        for span in trace.spans:
+            if span.kind not in _SOURCE_SPAN_KINDS:
+                continue
+            # Prefer the neutral field: dialect adapters (e.g. OpenInference)
+            # lift retrieved documents into ``Span.documents``. Fall back to
+            # parsing LangChain-shaped dicts out of raw outputs (the MLflow
+            # dialect, whose adapter leaves outputs unparsed).
+            if span.documents:
+                all_documents.extend(span.documents)
+                continue
+            outputs = span.outputs
+            if not isinstance(outputs, list) or not outputs:
+                continue
+            for output in outputs:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(output, dict) and "page_content" in output and "metadata" in output:
+                    doc = cast("dict[str, Any]", output)
+                    all_documents.append(
+                        Document(
+                            content=doc["page_content"],
+                            metadata=doc["metadata"],
+                            id=doc.get("id"),
+                            score=doc.get("score"),
+                        )
+                    )
         return all_documents
 
     async def run(
@@ -287,7 +287,7 @@ def _regex_in_any_document_content(pattern: str) -> Callable[[list[Document]], b
 
     def evaluation_function(documents: list[Document]) -> bool:
         for doc in documents:
-            normalized_content = _normalize_text(doc.page_content)
+            normalized_content = _normalize_text(doc.content)
             if regex.search(normalized_content):
                 return True
         return False
@@ -332,7 +332,7 @@ class RegexInSourcesEvaluator(SourcesBaseEvaluator):
     pattern: str
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInSourcesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> RegexInSourcesEvaluator:
         """Create a RegexInSourcesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -408,7 +408,7 @@ class RegexInDocumentMetadataEvaluator(SourcesBaseEvaluator):
     @classmethod
     def from_csv_line(
         cls, expected: bool, tags: set[str], check: str, **kwargs: Any
-    ) -> "RegexInDocumentMetadataEvaluator":
+    ) -> RegexInDocumentMetadataEvaluator:
         """Create a RegexInDocumentMetadataEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -462,13 +462,16 @@ class RegexInOutputEvaluator(BaseEvaluator):
     pattern: str
 
     def __post_init__(self) -> None:
+        # The output is matched in normalized form, so normalize the pattern
+        # the same way regardless of construction path (constructor or CSV).
+        self.pattern = _normalize_text(self.pattern)
         try:
             self._compiled_pattern = re.compile(self.pattern)
         except re.error as exc:  # pragma: no cover - defensive
             raise ValueError(f"Invalid regex pattern '{self.pattern}': {exc}") from exc
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "RegexInOutputEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> RegexInOutputEvaluator:
         """Create a RegexInOutputEvaluator from a CSV line."""
         if not check or not check.strip():
             raise ValueError("RegexInOutputEvaluator requires a non-empty 'check' pattern.")
@@ -482,7 +485,6 @@ class RegexInOutputEvaluator(BaseEvaluator):
                 pattern = parsed
         except json.JSONDecodeError:
             pass
-        pattern = _normalize_text(pattern)
         return cls(
             pattern=pattern,
             expected=expected,
@@ -604,7 +606,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         )
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "LiteralQuoteEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> LiteralQuoteEvaluator:
         """Create a LiteralQuoteEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.
@@ -664,7 +666,7 @@ class LiteralQuoteEvaluator(SourcesBaseEvaluator):
         # don't cause spurious mismatches. The lean extraction in
         # _extract_markdown_quotes leaves those features in the quote text
         # so the runs DataFrame still shows the agent's original wording.
-        normalized_docs = [_normalize_for_quote_comparison(doc.page_content) for doc in documents]
+        normalized_docs = [_normalize_for_quote_comparison(doc.content) for doc in documents]
 
         # Check each quote
         not_found: list[str] = []
@@ -788,7 +790,7 @@ class HasQuotesEvaluator(BaseEvaluator):
     max_quotes: int = field(default=-1)
 
     @classmethod
-    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> "HasQuotesEvaluator":
+    def from_csv_line(cls, expected: bool, tags: set[str], check: str, **kwargs: Any) -> HasQuotesEvaluator:
         """Create a HasQuotesEvaluator from a CSV line.
 
         This method is used by the CSV testset loader to instantiate the evaluator.

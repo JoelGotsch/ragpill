@@ -11,8 +11,8 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from mlflow.entities import SpanType
 
+from ragpill.backends import SpanKind
 from ragpill.report._text import render_value, truncate
 from ragpill.report._trace import render_spans
 
@@ -23,12 +23,12 @@ if TYPE_CHECKING:
 
 # Span types we surface in the "Relevant spans" subsection of a failing run.
 DEFAULT_TRIAGE_SPAN_TYPES: tuple[str, ...] = (
-    str(SpanType.RETRIEVER),
-    str(SpanType.TOOL),
-    str(SpanType.LLM),
-    str(SpanType.RERANKER),
-    str(SpanType.CHAT_MODEL),
-    str(SpanType.AGENT),
+    str(SpanKind.RETRIEVER),
+    str(SpanKind.TOOL),
+    str(SpanKind.LLM),
+    str(SpanKind.RERANKER),
+    str(SpanKind.CHAT_MODEL),
+    str(SpanKind.AGENT),
 )
 
 _PER_RUN_SPAN_BUDGET = 1500
@@ -240,6 +240,12 @@ def _per_evaluator_rollup(case_results: list[CaseResult]) -> dict[str, tuple[int
                 bucket[1] += 1
                 if result.value is True:
                     bucket[0] += 1
+            # Evaluators that raised never produced an assertion. Count each as
+            # an attempt with zero passes so a silently-dropped evaluator still
+            # shows up in the rollup instead of looking like it never ran.
+            for ef in rr.evaluator_failures:
+                bucket = counts.setdefault(ef.name, [0, 0])
+                bucket[1] += 1
     return {k: (v[0], v[1]) for k, v in sorted(counts.items())}
 
 
@@ -277,7 +283,10 @@ def _render_failing_case(
         lines.append(f"- Summary: {cr.aggregated.summary}")
         return "\n".join(lines)
 
-    failing_runs = [rr for rr in cr.run_results if not rr.all_passed]
+    # ``all_passed`` ignores evaluator_failures by design (pass/fail semantics
+    # unchanged), so include runs that errored an evaluator even when their
+    # assertions passed — otherwise a silently-dropped evaluator is invisible.
+    failing_runs = [rr for rr in cr.run_results if not rr.all_passed or rr.evaluator_failures]
     for rr in failing_runs:
         lines.append("")
         lines.extend(
@@ -304,10 +313,12 @@ def _render_failing_run(
 ) -> list[str]:
     failing_count = sum(1 for r in rr.assertions.values() if r.value is not True)
     total_count = len(rr.assertions)
-    lines: list[str] = [
-        f"#### Run {rr.run_index} — FAIL ({total_count} assertions; {failing_count} failing)",
-        "",
-    ]
+    error_count = len(rr.evaluator_failures)
+    header = f"#### Run {rr.run_index} — FAIL ({total_count} assertions; {failing_count} failing"
+    if error_count:
+        header += f"; {error_count} evaluator error{'s' if error_count != 1 else ''}"
+    header += ")"
+    lines: list[str] = [header, ""]
     if rr.error is not None:
         lines.append(f"- Task error: `{type(rr.error).__name__}: {rr.error}`")
     lines.append(f"- Output: {render_value(rr.output)}")
@@ -315,6 +326,10 @@ def _render_failing_run(
         verdict = "PASS" if result.value is True else "FAIL"
         reason = f" — {render_value(result.reason)}" if result.reason else ""
         lines.append(f"- `{name}`: **{verdict}**{reason}")
+    # Evaluators that raised never produced an assertion above. Surface them so
+    # a run isn't reported as clean when an evaluator was silently dropped.
+    for ef in rr.evaluator_failures:
+        lines.append(f"- `{ef.name}`: **ERROR** — {render_value(ef.error_message)}")
 
     if include_spans and case_run is not None:
         task_run = _find_task_run(case_run, rr)

@@ -15,12 +15,20 @@ Phase 3 upload.
 from __future__ import annotations
 
 import traceback
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
 from pydantic import TypeAdapter
 
-from ragpill.base import BaseEvaluator, CaseMetadataT, TestCaseMetadata, merge_metadata, resolve_repeat
+from ragpill.base import (
+    BaseEvaluator,
+    CaseMetadataT,
+    EvaluatorMetadata,
+    TestCaseMetadata,
+    merge_metadata,
+    resolve_repeat,
+)
 from ragpill.eval_types import (
     Case,
     Dataset,
@@ -127,6 +135,7 @@ async def _evaluate_single_run(
             run_index=task_run.run_index,
             input_key=task_run.input_key,
             run_span_id=task_run.run_span_id,
+            trace_id=task_run.trace_id,
             output=None,
             duration=task_run.duration,
             assertions=assertions,
@@ -180,6 +189,7 @@ async def _evaluate_single_run(
         run_index=task_run.run_index,
         input_key=task_run.input_key,
         run_span_id=task_run.run_span_id,
+        trace_id=task_run.trace_id,
         output=task_run.output,
         duration=task_run.duration,
         assertions=assertions,
@@ -192,16 +202,24 @@ async def _evaluate_single_run(
 # ---------------------------------------------------------------------------
 
 
-def _get_eval_metadata_for_case(cr: CaseResult, eval_result: EvaluationResult):
+def _get_eval_metadata_for_case(
+    cr: CaseResult,
+    eval_result: EvaluationResult,
+    metadata_by_eval_id: Mapping[str, EvaluatorMetadata] | None = None,
+) -> EvaluatorMetadata:
     """Look up :class:`~ragpill.base.EvaluatorMetadata` for a given evaluator result.
 
-    Falls back to a default metadata if the evaluator can't be located.
+    The evaluator is located via the ``evaluation_name`` uuid recorded on the
+    result's source, so its own tags/attributes/expected participate in the
+    merge. Falls back to a case-metadata-only default when the evaluator can't
+    be located (e.g. results deserialized without the testset).
     """
-    from ragpill.base import EvaluatorMetadata
-
     eval_uuid: str = ""
     if eval_result.source:
         eval_uuid = str(eval_result.source.arguments.get("evaluation_name", ""))
+    found = (metadata_by_eval_id or {}).get(eval_uuid)
+    if found is not None:
+        return found
     return EvaluatorMetadata(
         expected=True,
         attributes=cr.metadata.attributes,
@@ -211,14 +229,22 @@ def _get_eval_metadata_for_case(cr: CaseResult, eval_result: EvaluationResult):
     )
 
 
-def _create_runs_dataframe(case_results: list[CaseResult]) -> pd.DataFrame:
-    """Build a DataFrame with one row per ``(run, evaluator)``."""
+def _create_runs_dataframe(
+    case_results: list[CaseResult],
+    metadata_by_eval_id: Mapping[str, EvaluatorMetadata] | None = None,
+) -> pd.DataFrame:
+    """Build a DataFrame with one row per ``(run, evaluator)``.
+
+    ``metadata_by_eval_id`` maps ``str(evaluator.evaluation_name)`` to the
+    evaluator's own metadata so tags/attributes merge per ``merge_metadata``;
+    without it, rows carry case metadata only.
+    """
     rows: list[dict[str, Any]] = []
     for cr in case_results:
         assert isinstance(cr.metadata, TestCaseMetadata)
         for rr in cr.run_results:
             for eval_name, eval_result in rr.assertions.items():
-                eval_metadata_map = _get_eval_metadata_for_case(cr, eval_result)
+                eval_metadata_map = _get_eval_metadata_for_case(cr, eval_result, metadata_by_eval_id)
                 merged_metadata = merge_metadata(cr.metadata, eval_metadata_map)
                 source_type = "LLM_JUDGE" if "LLMJudge" in eval_result.source.name else "CODE"
                 rows.append(
@@ -346,6 +372,9 @@ async def evaluate_results(
         raise ValueError(f"dataset_run has {len(dataset_run.cases)} cases but testset has {len(testset.cases)}")
 
     case_results: list[CaseResult] = []
+    # Evaluator metadata by evaluation_name uuid, so the runs DataFrame can
+    # merge each evaluator's own tags/attributes into its rows.
+    metadata_by_eval_id: dict[str, EvaluatorMetadata] = {}
     for case_run, case in zip(dataset_run.cases, testset.cases):
         # Resolve evaluators: case-level + dataset-level.
         evaluators: list[BaseEvaluator] = []
@@ -355,6 +384,7 @@ async def evaluate_results(
         for ev in testset.evaluators:
             assert isinstance(ev, BaseEvaluator)
             evaluators.append(ev)
+        metadata_by_eval_id.update({str(ev.evaluation_name): ev.metadata for ev in evaluators})
 
         case_metadata: TestCaseMetadata | None = case.metadata if isinstance(case.metadata, TestCaseMetadata) else None
         _, threshold = resolve_repeat(case_metadata, _settings)
@@ -381,7 +411,7 @@ async def evaluate_results(
             )
         )
 
-    runs_df = _create_runs_dataframe(case_results)
+    runs_df = _create_runs_dataframe(case_results, metadata_by_eval_id)
     cases_df = _create_cases_dataframe(case_results)
     return EvaluationOutput(
         runs=runs_df,

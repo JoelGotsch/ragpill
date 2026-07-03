@@ -7,10 +7,6 @@ refactor, it delegates to:
 - :func:`ragpill.evaluation.evaluate_results` — evaluator application.
 - :func:`ragpill.upload.upload_to_mlflow` — MLflow persistence (runs table,
   metrics, assessments).
-
-The internal helpers ``_aggregate_runs``, ``_create_runs_dataframe``, and
-``_create_cases_dataframe`` are re-exported from :mod:`ragpill.evaluation` to
-preserve backwards-compatible import paths used by existing tests.
 """
 
 from __future__ import annotations
@@ -20,12 +16,7 @@ from typing import Any
 
 from ragpill.base import CaseMetadataT
 from ragpill.eval_types import Dataset
-from ragpill.evaluation import (
-    _aggregate_runs,  # pyright: ignore[reportPrivateUsage]  # re-exported for tests
-    _create_cases_dataframe,  # pyright: ignore[reportPrivateUsage]  # re-exported for tests
-    _create_runs_dataframe,  # pyright: ignore[reportPrivateUsage]  # re-exported for tests
-    evaluate_results,
-)
+from ragpill.evaluation import evaluate_results
 from ragpill.execution import execute_dataset
 from ragpill.settings import MLFlowSettings
 from ragpill.types import EvaluationOutput
@@ -34,13 +25,7 @@ from ragpill.upload import upload_to_mlflow
 TaskType = Callable[[Any], Awaitable[Any]] | Callable[[Any], Any]
 
 
-__all__ = [
-    # Backwards-compat re-exports from ragpill.evaluation:
-    "_aggregate_runs",
-    "_create_cases_dataframe",
-    "_create_runs_dataframe",
-    "evaluate_testset_with_mlflow",
-]
+__all__ = ["evaluate_testset_with_mlflow"]
 
 
 async def evaluate_testset_with_mlflow(

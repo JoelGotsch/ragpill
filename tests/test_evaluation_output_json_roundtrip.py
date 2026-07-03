@@ -14,6 +14,7 @@ from mlflow.entities import SpanType, Trace
 from ragpill.base import TestCaseMetadata
 from ragpill.eval_types import EvaluationResult, EvaluatorSource
 from ragpill.execution import CaseRunOutput, DatasetRunOutput, TaskRunOutput
+from ragpill.trace import from_mlflow_trace
 from ragpill.types import (
     AggregatedResult,
     CaseResult,
@@ -118,7 +119,7 @@ def test_roundtrip_with_dataset_run(_isolated_mlflow_backend: None) -> None:
             root.set_outputs("bye")
             run_span_id = root.span_id
     traces: list[Trace] = mlflow.search_traces(return_type="list", max_results=1)  # pyright: ignore[reportAssignmentType]
-    trace = traces[0]
+    trace = from_mlflow_trace(traces[0])
     case = CaseRunOutput(
         case_name="C1",
         inputs="hi",
@@ -133,7 +134,7 @@ def test_roundtrip_with_dataset_run(_isolated_mlflow_backend: None) -> None:
             )
         ],
     )
-    dr = DatasetRunOutput(cases=[case], tracking_uri="x", mlflow_run_id="r", mlflow_experiment_id="e")
+    dr = DatasetRunOutput(cases=[case], tracking_uri="x", run_id="r", experiment_id="e")
     eo = EvaluationOutput(
         runs=_runs_df(),
         cases=_cases_df(),
@@ -145,8 +146,8 @@ def test_roundtrip_with_dataset_run(_isolated_mlflow_backend: None) -> None:
     assert restored.dataset_run.tracking_uri == "x"
     rcase = restored.dataset_run.cases[0]
     assert rcase.trace is not None
-    orig_ids = sorted(s.span_id for s in trace.data.spans)
-    new_ids = sorted(s.span_id for s in rcase.trace.data.spans)
+    orig_ids = sorted(s.span_id for s in trace.spans)
+    new_ids = sorted(s.span_id for s in rcase.trace.spans)
     assert orig_ids == new_ids
 
 

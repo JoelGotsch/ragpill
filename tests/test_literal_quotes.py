@@ -3,11 +3,11 @@
 from unittest.mock import patch
 
 import pytest
-from mlflow.entities import Document
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import LiteralQuoteEvaluator
+from ragpill.trace import Document
 
 
 def create_test_context(inputs: str, output: str) -> EvaluatorContext:
@@ -29,20 +29,20 @@ def sample_documents():
     """Create sample documents for testing."""
     return [
         Document(
-            page_content="'no longer outstanding at this stage' does not mean 'resolved'.",
+            content="'no longer outstanding at this stage' does not mean 'resolved'.",
             metadata={"source": "report-1.txt"},
         ),
         Document(
-            page_content="Another document with different content about laboratory verification processes.",
+            content="Another document with different content about laboratory verification processes.",
             metadata={"source": "other-document.txt"},
         ),
         Document(
-            page_content="""This document contains the phrase exact match test for validation purposes. This is a very long quote
+            content="""This document contains the phrase exact match test for validation purposes. This is a very long quote
 that spans multiple lines with Different CAPITALIZATION.""",
             metadata={"source": "test-doc.txt"},
         ),
         Document(
-            page_content=(
+            content=(
                 "7.  Following the change of management at Beta Labs towards the end of 2024,\n\n"
                 "    the inspector contacted the new regional director, Mr Smith, in a letter\n\n"
                 "    dated 14 January 2025, to convey the importance of continuing and\n\n"
@@ -301,7 +301,7 @@ async def test_empty_documents(evaluator):
 
 @pytest.mark.anyio
 async def test_quote_with_special_characters(evaluator):
-    docs = [Document(page_content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
+    docs = [Document(content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
 
     output = """Scientific quote:
 > "E=mc² and π≈3.14159"
@@ -326,7 +326,7 @@ async def test_empty_output(evaluator, sample_documents):
 async def test_real_long_quote_with_unicode_subscripts(evaluator):
     docs = [
         Document(
-            page_content=(
+            content=(
                 "51. No new information was provided by Acme with respect to the issue of\n\n"
                 "    testing of modules using sample material until October 2023. In\n\n"
                 "    its letter of 21 October 2023, Acme acknowledged that, in order to\n\n"

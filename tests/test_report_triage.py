@@ -12,6 +12,7 @@ from ragpill.types import (
     AggregatedResult,
     CaseResult,
     EvaluationOutput,
+    EvaluatorFailureInfo,
     RunResult,
 )
 
@@ -325,3 +326,61 @@ def test_relevant_spans_pulled_from_dataset_run_when_present():
     assert "Expected output: expected" in out
     # No "Relevant spans" because trace is None.
     assert "Relevant spans" not in out
+
+
+def _run_with_failure(
+    index: int,
+    key: str,
+    assertions: dict[str, EvaluationResult],
+    failures: list[EvaluatorFailureInfo],
+) -> RunResult:
+    return RunResult(
+        run_index=index,
+        input_key=key,
+        run_span_id="",
+        output="out",
+        duration=0.1,
+        assertions=assertions,
+        evaluator_failures=failures,
+    )
+
+
+def test_evaluator_failures_appear_in_rollup_even_with_no_assertion():
+    """An evaluator that raised (e.g. SpanBaseEvaluator with no trace) shows in
+    the header rollup as 0/N instead of vanishing."""
+    failure = EvaluatorFailureInfo(
+        name="LiteralQuoteEvaluator",
+        error_message="ctx.trace is None",
+        error_stacktrace="...",
+    )
+    case = _case(
+        "Q1",
+        "case-1",
+        "q1?",
+        runs=[_run_with_failure(0, "k0", {"LLMJudge": _result("LLMJudge", True)}, [failure])],
+        aggregated=_aggregated(passed=True, pass_rate=1.0),
+    )
+    out = render_evaluation_output_as_triage(_eval_output([case]))
+    # The errored evaluator is visible in the rollup as 0/1 passed.
+    assert "`LiteralQuoteEvaluator` — 0/1 passed" in out
+
+
+def test_evaluator_failure_renders_error_line_when_assertions_pass():
+    """A run whose assertions all pass but whose evaluator raised is still
+    surfaced, with an ERROR line — not silently treated as clean."""
+    failure = EvaluatorFailureInfo(
+        name="LiteralQuoteEvaluator",
+        error_message="ctx.trace is None",
+        error_stacktrace="...",
+    )
+    case = _case(
+        "Q1",
+        "case-1",
+        "q1?",
+        runs=[_run_with_failure(0, "k0", {"LLMJudge": _result("LLMJudge", True)}, [failure])],
+        aggregated=_aggregated(passed=False, pass_rate=0.0),
+    )
+    out = render_evaluation_output_as_triage(_eval_output([case]))
+    assert "**ERROR**" in out
+    assert "ctx.trace is None" in out
+    assert "1 evaluator error" in out

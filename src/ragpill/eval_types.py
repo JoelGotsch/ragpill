@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
-    from mlflow.entities import Trace
+    from ragpill.trace import Trace
 
 
 InputsT = TypeVar("InputsT", default=Any)
@@ -74,9 +74,9 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
         duration: Wall-clock seconds the task took to run.
         attributes: Arbitrary attributes attached to the run.
         metrics: Arbitrary numeric metrics attached to the run.
-        trace: MLflow Trace captured during the run. Populated by the
-            execute layer and consumed by span-based evaluators. None when
-            tracing was disabled (Phase 1+ only).
+        trace: Vendor-neutral ``ragpill.trace.Trace`` captured during the run.
+            Populated by the execute layer and consumed by span-based
+            evaluators. None when tracing was disabled.
         run_span_id: Span ID of the per-run parent span inside ``trace``.
             Used by span-based evaluators to restrict attention to the current
             run's subtree when multiple runs share a trace. Empty string or

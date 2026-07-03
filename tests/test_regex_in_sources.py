@@ -3,11 +3,11 @@
 from unittest.mock import patch
 
 import pytest
-from mlflow.entities import Document
 
 from ragpill.base import EvaluatorMetadata
 from ragpill.eval_types import EvaluatorContext
 from ragpill.evaluators import RegexInSourcesEvaluator
+from ragpill.trace import Document
 
 
 def create_test_context(inputs: str, output: str) -> EvaluatorContext:
@@ -29,21 +29,21 @@ def sample_documents():
     """Create sample documents for testing."""
     return [
         Document(
-            page_content="This document contains important information about nuclear safeguards.",
+            content="This document contains important information about nuclear safeguards.",
             metadata={"source": "safeguards.txt"},
         ),
         Document(
-            page_content="The verification process requires multiple inspection rounds.",
+            content="The verification process requires multiple inspection rounds.",
             metadata={"source": "verification.txt"},
         ),
         Document(
-            page_content="""Multi-line content here.
+            content="""Multi-line content here.
 Line 2 with some data.
 Line 3 contains SECRET information.
 Final line.""",
             metadata={"source": "multiline.txt"},
         ),
-        Document(page_content="Technical specifications: Model X-100, Version 2.5.1", metadata={"source": "specs.txt"}),
+        Document(content="Technical specifications: Model X-100, Version 2.5.1", metadata={"source": "specs.txt"}),
     ]
 
 
@@ -274,7 +274,7 @@ def test_from_csv_multiple_tags():
 
 @pytest.mark.anyio
 async def test_single_document():
-    docs = [Document(page_content="Single document with test content.", metadata={"source": "single.txt"})]
+    docs = [Document(content="Single document with test content.", metadata={"source": "single.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -289,8 +289,8 @@ async def test_single_document():
 @pytest.mark.anyio
 async def test_empty_document_content():
     docs = [
-        Document(page_content="", metadata={"source": "empty.txt"}),
-        Document(page_content="   ", metadata={"source": "whitespace.txt"}),
+        Document(content="", metadata={"source": "empty.txt"}),
+        Document(content="   ", metadata={"source": "whitespace.txt"}),
     ]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
@@ -305,7 +305,7 @@ async def test_empty_document_content():
 
 @pytest.mark.anyio
 async def test_special_regex_characters_in_content():
-    docs = [Document(page_content="Price: $100.00 (50% off!)", metadata={"source": "prices.txt"})]
+    docs = [Document(content="Price: $100.00 (50% off!)", metadata={"source": "prices.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -319,7 +319,7 @@ async def test_special_regex_characters_in_content():
 
 @pytest.mark.anyio
 async def test_unicode_content():
-    docs = [Document(page_content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
+    docs = [Document(content="The formula is E=mc² and π≈3.14159.", metadata={"source": "science.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -334,7 +334,7 @@ async def test_unicode_content():
 @pytest.mark.anyio
 async def test_very_long_pattern():
     long_content = "This is a very long sentence that we want to match exactly in the document."
-    docs = [Document(page_content=long_content, metadata={"source": "long.txt"})]
+    docs = [Document(content=long_content, metadata={"source": "long.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -348,7 +348,7 @@ async def test_very_long_pattern():
 
 @pytest.mark.anyio
 async def test_word_boundary_pattern():
-    docs = [Document(page_content="The test passed successfully.", metadata={"source": "test.txt"})]
+    docs = [Document(content="The test passed successfully.", metadata={"source": "test.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -362,7 +362,7 @@ async def test_word_boundary_pattern():
 
 @pytest.mark.anyio
 async def test_pattern_with_groups():
-    docs = [Document(page_content="Date: 2025-01-15", metadata={"source": "date.txt"})]
+    docs = [Document(content="Date: 2025-01-15", metadata={"source": "date.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -381,7 +381,7 @@ async def test_pattern_with_groups():
 
 @pytest.mark.anyio
 async def test_whitespace_normalization():
-    docs = [Document(page_content="Multiple   spaces   here", metadata={"source": "spaces.txt"})]
+    docs = [Document(content="Multiple   spaces   here", metadata={"source": "spaces.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -395,7 +395,7 @@ async def test_whitespace_normalization():
 
 @pytest.mark.anyio
 async def test_case_normalization():
-    docs = [Document(page_content="UPPERCASE TEXT HERE", metadata={"source": "upper.txt"})]
+    docs = [Document(content="UPPERCASE TEXT HERE", metadata={"source": "upper.txt"})]
     evaluator = RegexInSourcesEvaluator.from_csv_line(
         expected=True,
         tags=set(),
@@ -411,7 +411,7 @@ async def test_case_normalization():
 async def test_realistic_case_normalization():
     docs = [
         Document(
-            page_content=(
+            content=(
                 "7.  Following the change of management at Beta Labs towards the end of 2024,\n\n"
                 "    the inspector contacted the new regional director, Mr Smith, in a letter\n\n"
                 "    dated 14 January 2025, to convey the importance of continuing and\n\n"
@@ -470,7 +470,7 @@ async def test_realistic_case_normalization():
 @pytest.mark.anyio
 async def test_normalization_end_to_end(pattern, page_content, should_match, desc):
     evaluator = RegexInSourcesEvaluator.from_csv_line(expected=True, tags=set(), check=pattern)
-    docs = [Document(page_content=page_content, metadata={"source": "test.txt"})]
+    docs = [Document(content=page_content, metadata={"source": "test.txt"})]
     with patch.object(evaluator, "get_documents", return_value=docs):
         ctx = create_test_context("input", "output")
         result = await evaluator.run(ctx)
